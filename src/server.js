@@ -754,6 +754,44 @@ function hasAutoConfigEnvVars() {
   return hasKey;
 }
 
+/**
+ * Idempotently force channels.telegram into managed-hosting mode:
+ *   - dmPolicy: "open"  (no pairing code required)
+ *   - allowFrom: ["*"]  (required when dmPolicy is "open")
+ *   - botToken pulled from env
+ *   - plugins.entries.telegram: { enabled: true }
+ *
+ * Runs on EVERY container start when TELEGRAM_BOT_TOKEN is present, regardless
+ * of whether openclaw.json already exists. This prevents the previous bug where
+ * a re-deploy on an existing volume left the config in its old (potentially
+ * "pairing") state because autoConfigureFromEnv() short-circuits on isConfigured().
+ */
+async function reconcileTelegramChannel() {
+  if (!AUTO_CONFIG_TELEGRAM_TOKEN) return;
+  console.log("[reconcile] forcing channels.telegram → dmPolicy=open, allowFrom=['*']");
+
+  const telegramConfig = {
+    enabled: true,
+    dmPolicy: "open",          // No pairing required — managed-hosting default
+    allowFrom: ["*"],          // Required when dmPolicy is "open"
+    botToken: AUTO_CONFIG_TELEGRAM_TOKEN,
+    groupPolicy: "allowlist",
+    // OpenClaw schema coerces this to `streaming` field name internally; both work.
+    streamMode: "partial",
+  };
+  const r1 = await runCmd(OPENCLAW_NODE, clawArgs([
+    "config", "set", "--json", "channels.telegram", JSON.stringify(telegramConfig),
+  ]));
+  console.log(`[reconcile] channels.telegram exit=${r1.code}`);
+  if (r1.output) console.log(r1.output);
+
+  const r2 = await runCmd(OPENCLAW_NODE, clawArgs([
+    "config", "set", "--json", "plugins.entries.telegram", '{"enabled":true}',
+  ]));
+  console.log(`[reconcile] plugins.entries.telegram exit=${r2.code}`);
+  if (r2.output) console.log(r2.output);
+}
+
 async function autoConfigureFromEnv() {
   if (isConfigured()) {
     console.log("[auto-config] already configured, skipping");
@@ -848,37 +886,10 @@ async function autoConfigureFromEnv() {
     await runCmd(OPENCLAW_NODE, clawArgs(["models", "set", AUTO_CONFIG_DEFAULT_MODEL]));
   }
 
-  // Add Telegram channel if token provided
-  // Use "open" dmPolicy for managed hosting (no pairing required)
+  // Add Telegram channel if token provided — delegates to the idempotent
+  // reconciler so the same logic also runs on every restart (not just first deploy).
   if (AUTO_CONFIG_TELEGRAM_TOKEN) {
-    console.log("[auto-config] configuring Telegram channel (open access)...");
-    const telegramConfig = {
-      enabled: true,
-      dmPolicy: "open",  // Allow immediate access without pairing
-      allowFrom: ["*"],  // Required when dmPolicy is "open"
-      botToken: AUTO_CONFIG_TELEGRAM_TOKEN,
-      groupPolicy: "allowlist",
-      streamMode: "partial",
-    };
-    const telegramResult = await runCmd(OPENCLAW_NODE, clawArgs([
-      "config", "set", "--json", "channels.telegram", JSON.stringify(telegramConfig)
-    ]));
-    console.log(`[auto-config] telegram channel exit=${telegramResult.code}`);
-    if (telegramResult.output) {
-      console.log(telegramResult.output);
-    }
-
-    // CRITICAL: Also enable the Telegram plugin in plugins.entries.
-    // The gateway needs BOTH channels.telegram AND plugins.entries.telegram to be enabled.
-    // Without this, gateway shows "Telegram configured, not enabled yet."
-    console.log("[auto-config] enabling Telegram plugin entry...");
-    const pluginResult = await runCmd(OPENCLAW_NODE, clawArgs([
-      "config", "set", "--json", "plugins.entries.telegram", '{"enabled":true}'
-    ]));
-    console.log(`[auto-config] telegram plugin entry exit=${pluginResult.code}`);
-    if (pluginResult.output) {
-      console.log(pluginResult.output);
-    }
+    await reconcileTelegramChannel();
   }
 
   // Configure ClawRouters if key is provided
@@ -1923,6 +1934,23 @@ const server = app.listen(PORT, async () => {
   // Start heartbeat reporting to OneClaw
   if (ONECLAW_INSTANCE_ID) {
     startHeartbeat();
+  }
+
+  // Re-deploy reconciliation: even when openclaw.json already exists (re-deploys
+  // on a persisted Railway volume), force telegram channel into the right state
+  // so users never see a pairing prompt because of a stale openclaw.json.
+  if (isConfigured() && AUTO_CONFIG_TELEGRAM_TOKEN) {
+    console.log("[wrapper] already configured — running channel reconcile pass");
+    setTimeout(async () => {
+      try {
+        await reconcileTelegramChannel();
+        // Reconcile changes config; gateway needs a restart to pick them up.
+        await restartGateway();
+        console.log("[wrapper] reconcile complete, gateway restarted");
+      } catch (err) {
+        console.error(`[wrapper] reconcile failed: ${err.message}`);
+      }
+    }, 2000);
   }
 
   // Auto-configure from environment variables if not already configured

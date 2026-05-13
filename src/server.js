@@ -789,9 +789,33 @@ async function setChannelConfig(name, cfgObj) {
   if (r2.output) console.log(r2.output);
 }
 
+// Wipe the pairing-store files for token-based channels so a pending
+// pairing request left over from an earlier 'pairing' deploy mode can't
+// short-circuit our 'open' dmPolicy. OpenClaw consults <channel>-pairing.json
+// before honoring config-level dmPolicy: once an approve request is queued,
+// the bot keeps asking for `openclaw pairing approve` until that file is
+// cleared, even if dmPolicy is now "open" and allowFrom is ["*"].
+// QR-paired channels (whatsapp/wechat) store their session in auth-dir and
+// must NOT have these files touched — that would force a re-scan.
+function clearPairingStore(channelName) {
+  const credDir = path.join(STATE_DIR, "credentials");
+  for (const suffix of ["pairing.json", "allowFrom.json"]) {
+    const f = path.join(credDir, `${channelName}-${suffix}`);
+    try {
+      if (fs.existsSync(f)) {
+        fs.unlinkSync(f);
+        console.log(`[reconcile] cleared ${f}`);
+      }
+    } catch (err) {
+      console.warn(`[reconcile] failed to clear ${f}: ${err.message}`);
+    }
+  }
+}
+
 async function reconcileTelegramChannel() {
   if (!AUTO_CONFIG_TELEGRAM_TOKEN) return;
   console.log("[reconcile] forcing channels.telegram → dmPolicy=open, allowFrom=['*']");
+  clearPairingStore("telegram");
   await setChannelConfig("telegram", {
     enabled: true,
     dmPolicy: "open",          // No pairing required — managed-hosting default
@@ -806,6 +830,7 @@ async function reconcileTelegramChannel() {
 async function reconcileDiscordChannel() {
   if (!AUTO_CONFIG_DISCORD_TOKEN) return;
   console.log("[reconcile] forcing channels.discord → dm.policy=open, allowFrom=['*']");
+  clearPairingStore("discord");
   await setChannelConfig("discord", {
     enabled: true,
     token: AUTO_CONFIG_DISCORD_TOKEN,
@@ -818,6 +843,7 @@ async function reconcileDiscordChannel() {
 async function reconcileFeishuChannel() {
   if (!AUTO_CONFIG_FEISHU_APP_ID || !AUTO_CONFIG_FEISHU_APP_SECRET) return;
   console.log("[reconcile] forcing channels.feishu → dmPolicy=open, allowFrom=['*']");
+  clearPairingStore("feishu");
   await setChannelConfig("feishu", {
     enabled: true,
     appId: AUTO_CONFIG_FEISHU_APP_ID,

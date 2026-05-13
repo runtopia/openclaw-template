@@ -776,17 +776,29 @@ function hasAutoConfigEnvVars() {
  * "pairing") state because autoConfigureFromEnv() short-circuits on isConfigured().
  */
 async function setChannelConfig(name, cfgObj) {
-  const r1 = await runCmd(OPENCLAW_NODE, clawArgs([
-    "config", "set", "--json", `channels.${name}`, JSON.stringify(cfgObj),
-  ]));
-  console.log(`[reconcile] channels.${name} exit=${r1.code}`);
-  if (r1.output) console.log(r1.output);
-
-  const r2 = await runCmd(OPENCLAW_NODE, clawArgs([
-    "config", "set", "--json", `plugins.entries.${name}`, '{"enabled":true}',
-  ]));
-  console.log(`[reconcile] plugins.entries.${name} exit=${r2.code}`);
-  if (r2.output) console.log(r2.output);
+  // Patch openclaw.json directly instead of `openclaw config set` to bypass the
+  // strict Zod schema in the CLI. The schema for channels.* has drifted across
+  // OpenClaw releases (e.g. streamMode → streaming rename) so even
+  // documented fields can be rejected by a newer pinned version. The gateway's
+  // runtime loader is more lenient and migrates legacy keys on read.
+  // See commit 74166f3 for the same workaround applied to controlUi flags.
+  const cp = configPath();
+  if (!fs.existsSync(cp)) {
+    console.warn(`[reconcile] channels.${name}: skipped, config file not found at ${cp}`);
+    return;
+  }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(cp, "utf8"));
+    if (!cfg.channels) cfg.channels = {};
+    cfg.channels[name] = { ...(cfg.channels[name] || {}), ...cfgObj };
+    if (!cfg.plugins) cfg.plugins = {};
+    if (!cfg.plugins.entries) cfg.plugins.entries = {};
+    cfg.plugins.entries[name] = { ...(cfg.plugins.entries[name] || {}), enabled: true };
+    fs.writeFileSync(cp, JSON.stringify(cfg, null, 2));
+    console.log(`[reconcile] channels.${name} + plugins.entries.${name} patched (direct JSON, bypass CLI schema)`);
+  } catch (err) {
+    console.warn(`[reconcile] channels.${name} patch failed: ${err.message}`);
+  }
 }
 
 // Wipe the pairing-store files for token-based channels so a pending

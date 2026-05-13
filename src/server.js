@@ -822,8 +822,6 @@ async function reconcileTelegramChannel() {
     allowFrom: ["*"],          // Required when dmPolicy is "open"
     botToken: AUTO_CONFIG_TELEGRAM_TOKEN,
     groupPolicy: "allowlist",
-    // OpenClaw schema coerces this to `streaming` field name internally; both work.
-    streamMode: "partial",
   });
 }
 

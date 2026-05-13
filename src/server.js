@@ -739,6 +739,15 @@ async function ensureWebSocketConfig() {
 // For managed hosting: auto-configure from env vars without setup wizard
 
 const AUTO_CONFIG_TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN?.trim();
+const AUTO_CONFIG_DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN?.trim();
+const AUTO_CONFIG_FEISHU_APP_ID = process.env.FEISHU_APP_ID?.trim();
+const AUTO_CONFIG_FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET?.trim();
+function truthyEnv(v) {
+  const s = (v || "").trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+const AUTO_CONFIG_WHATSAPP_ENABLED = truthyEnv(process.env.WHATSAPP_ENABLED);
+const AUTO_CONFIG_WECHAT_ENABLED = truthyEnv(process.env.WECHAT_ENABLED);
 const AUTO_CONFIG_ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY?.trim();
 const AUTO_CONFIG_OPENAI_KEY = process.env.OPENAI_API_KEY?.trim();
 const AUTO_CONFIG_GOOGLE_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim();
@@ -766,11 +775,24 @@ function hasAutoConfigEnvVars() {
  * a re-deploy on an existing volume left the config in its old (potentially
  * "pairing") state because autoConfigureFromEnv() short-circuits on isConfigured().
  */
+async function setChannelConfig(name, cfgObj) {
+  const r1 = await runCmd(OPENCLAW_NODE, clawArgs([
+    "config", "set", "--json", `channels.${name}`, JSON.stringify(cfgObj),
+  ]));
+  console.log(`[reconcile] channels.${name} exit=${r1.code}`);
+  if (r1.output) console.log(r1.output);
+
+  const r2 = await runCmd(OPENCLAW_NODE, clawArgs([
+    "config", "set", "--json", `plugins.entries.${name}`, '{"enabled":true}',
+  ]));
+  console.log(`[reconcile] plugins.entries.${name} exit=${r2.code}`);
+  if (r2.output) console.log(r2.output);
+}
+
 async function reconcileTelegramChannel() {
   if (!AUTO_CONFIG_TELEGRAM_TOKEN) return;
   console.log("[reconcile] forcing channels.telegram → dmPolicy=open, allowFrom=['*']");
-
-  const telegramConfig = {
+  await setChannelConfig("telegram", {
     enabled: true,
     dmPolicy: "open",          // No pairing required — managed-hosting default
     allowFrom: ["*"],          // Required when dmPolicy is "open"
@@ -778,18 +800,73 @@ async function reconcileTelegramChannel() {
     groupPolicy: "allowlist",
     // OpenClaw schema coerces this to `streaming` field name internally; both work.
     streamMode: "partial",
-  };
-  const r1 = await runCmd(OPENCLAW_NODE, clawArgs([
-    "config", "set", "--json", "channels.telegram", JSON.stringify(telegramConfig),
-  ]));
-  console.log(`[reconcile] channels.telegram exit=${r1.code}`);
-  if (r1.output) console.log(r1.output);
+  });
+}
 
-  const r2 = await runCmd(OPENCLAW_NODE, clawArgs([
-    "config", "set", "--json", "plugins.entries.telegram", '{"enabled":true}',
-  ]));
-  console.log(`[reconcile] plugins.entries.telegram exit=${r2.code}`);
-  if (r2.output) console.log(r2.output);
+async function reconcileDiscordChannel() {
+  if (!AUTO_CONFIG_DISCORD_TOKEN) return;
+  console.log("[reconcile] forcing channels.discord → dm.policy=open, allowFrom=['*']");
+  await setChannelConfig("discord", {
+    enabled: true,
+    token: AUTO_CONFIG_DISCORD_TOKEN,
+    dm: { policy: "open" },
+    allowFrom: ["*"],
+    groupPolicy: "allowlist",
+  });
+}
+
+async function reconcileFeishuChannel() {
+  if (!AUTO_CONFIG_FEISHU_APP_ID || !AUTO_CONFIG_FEISHU_APP_SECRET) return;
+  console.log("[reconcile] forcing channels.feishu → dmPolicy=open, allowFrom=['*']");
+  await setChannelConfig("feishu", {
+    enabled: true,
+    appId: AUTO_CONFIG_FEISHU_APP_ID,
+    appSecret: AUTO_CONFIG_FEISHU_APP_SECRET,
+    dmPolicy: "open",
+    allowFrom: ["*"],
+  });
+}
+
+// WhatsApp uses QR pairing — env flag only enables the channel; the user
+// completes pairing through the dashboard after the gateway starts.
+async function reconcileWhatsappChannel() {
+  if (!AUTO_CONFIG_WHATSAPP_ENABLED) return;
+  console.log("[reconcile] enabling channels.whatsapp (QR pairing happens at runtime)");
+  await setChannelConfig("whatsapp", {
+    enabled: true,
+    dmPolicy: "open",
+    allowFrom: ["*"],
+  });
+}
+
+// WeChat ships as a separate plugin (@tencent-weixin/openclaw-weixin); like
+// WhatsApp it requires QR pairing at runtime.
+async function reconcileWechatChannel() {
+  if (!AUTO_CONFIG_WECHAT_ENABLED) return;
+  console.log("[reconcile] enabling channels.wechat (QR pairing happens at runtime)");
+  await setChannelConfig("wechat", {
+    enabled: true,
+    dmPolicy: "open",
+    allowFrom: ["*"],
+  });
+}
+
+async function reconcileAllChannels() {
+  await reconcileTelegramChannel();
+  await reconcileDiscordChannel();
+  await reconcileFeishuChannel();
+  await reconcileWhatsappChannel();
+  await reconcileWechatChannel();
+}
+
+function hasAnyChannelConfig() {
+  return !!(
+    AUTO_CONFIG_TELEGRAM_TOKEN ||
+    AUTO_CONFIG_DISCORD_TOKEN ||
+    (AUTO_CONFIG_FEISHU_APP_ID && AUTO_CONFIG_FEISHU_APP_SECRET) ||
+    AUTO_CONFIG_WHATSAPP_ENABLED ||
+    AUTO_CONFIG_WECHAT_ENABLED
+  );
 }
 
 async function autoConfigureFromEnv() {
@@ -886,11 +963,10 @@ async function autoConfigureFromEnv() {
     await runCmd(OPENCLAW_NODE, clawArgs(["models", "set", AUTO_CONFIG_DEFAULT_MODEL]));
   }
 
-  // Add Telegram channel if token provided — delegates to the idempotent
-  // reconciler so the same logic also runs on every restart (not just first deploy).
-  if (AUTO_CONFIG_TELEGRAM_TOKEN) {
-    await reconcileTelegramChannel();
-  }
+  // Configure every channel whose env vars are present. Each reconciler is
+  // idempotent and no-ops when its env vars are missing, so we can call them
+  // unconditionally on every container start.
+  await reconcileAllChannels();
 
   // Configure ClawRouters if key is provided
   const clawRoutersKey = process.env.CLAWROUTERS_KEY?.trim();
@@ -1937,13 +2013,13 @@ const server = app.listen(PORT, async () => {
   }
 
   // Re-deploy reconciliation: even when openclaw.json already exists (re-deploys
-  // on a persisted Railway volume), force telegram channel into the right state
-  // so users never see a pairing prompt because of a stale openclaw.json.
-  if (isConfigured() && AUTO_CONFIG_TELEGRAM_TOKEN) {
+  // on a persisted Railway volume), force every configured channel into the
+  // right state so users never see a pairing prompt because of a stale openclaw.json.
+  if (isConfigured() && hasAnyChannelConfig()) {
     console.log("[wrapper] already configured — running channel reconcile pass");
     setTimeout(async () => {
       try {
-        await reconcileTelegramChannel();
+        await reconcileAllChannels();
         // Reconcile changes config; gateway needs a restart to pick them up.
         await restartGateway();
         console.log("[wrapper] reconcile complete, gateway restarted");

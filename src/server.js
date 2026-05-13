@@ -827,13 +827,12 @@ async function reconcileTelegramChannel() {
 
 async function reconcileDiscordChannel() {
   if (!AUTO_CONFIG_DISCORD_TOKEN) return;
-  console.log("[reconcile] forcing channels.discord → dm.policy=open, allowFrom=['*']");
+  console.log("[reconcile] forcing channels.discord → dm.policy=open, dm.allowFrom=['*']");
   clearPairingStore("discord");
   await setChannelConfig("discord", {
     enabled: true,
     token: AUTO_CONFIG_DISCORD_TOKEN,
-    dm: { policy: "open" },
-    allowFrom: ["*"],
+    dm: { policy: "open", allowFrom: ["*"] },
     groupPolicy: "allowlist",
   });
 }

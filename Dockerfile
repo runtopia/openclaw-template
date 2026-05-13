@@ -33,7 +33,9 @@ ARG OPENCLAW_VERSION=2026.5.7
 RUN npm install -g \
       openclaw@${OPENCLAW_VERSION} \
       @larksuite/openclaw-lark \
-      @tencent-weixin/openclaw-weixin
+      @tencent-weixin/openclaw-weixin \
+      @openclaw/discord \
+      @openclaw/whatsapp
 
 WORKDIR /app
 

@@ -960,6 +960,14 @@ async function autoConfigureFromEnv() {
     return false;
   }
 
+  // Configure every channel as the FIRST post-onboard step, before gateway
+  // settings / model / ClawRouters / image-gen. Each of those subsequent
+  // blocks spawns the openclaw CLI which can take a few seconds; if SIGTERM
+  // arrives mid-flight (e.g. a fast Railway redeploy), we'd otherwise leave
+  // the pairing-store dirty and force the user through the approval flow.
+  // Each reconciler is idempotent and no-ops when its env vars are missing.
+  await reconcileAllChannels();
+
   // Configure gateway settings (same as setup wizard)
   console.log("[auto-config] configuring gateway settings...");
 
@@ -988,11 +996,6 @@ async function autoConfigureFromEnv() {
     console.log(`[auto-config] setting model to ${AUTO_CONFIG_DEFAULT_MODEL}`);
     await runCmd(OPENCLAW_NODE, clawArgs(["models", "set", AUTO_CONFIG_DEFAULT_MODEL]));
   }
-
-  // Configure every channel whose env vars are present. Each reconciler is
-  // idempotent and no-ops when its env vars are missing, so we can call them
-  // unconditionally on every container start.
-  await reconcileAllChannels();
 
   // Configure ClawRouters if key is provided
   const clawRoutersKey = process.env.CLAWROUTERS_KEY?.trim();

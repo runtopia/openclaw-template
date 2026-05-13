@@ -28,7 +28,12 @@ RUN apt-get update \
     fonts-liberation \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g openclaw@latest
+# Pin OpenClaw + channel plugins. Bump these to upgrade.
+ARG OPENCLAW_VERSION=2026.5.7
+RUN npm install -g \
+      openclaw@${OPENCLAW_VERSION} \
+      @larksuite/openclaw-lark \
+      @tencent-weixin/openclaw-weixin
 
 WORKDIR /app
 

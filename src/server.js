@@ -2041,18 +2041,19 @@ const server = app.listen(PORT, async () => {
   // Re-deploy reconciliation: even when openclaw.json already exists (re-deploys
   // on a persisted Railway volume), force every configured channel into the
   // right state so users never see a pairing prompt because of a stale openclaw.json.
+  //
+  // Run this BEFORE ensureGatewayRunning() below so the first inbound message
+  // is handled with dmPolicy=open, not whatever stale config was on disk.
+  // Previously this was a setTimeout that raced the gateway startup and let a
+  // single early Telegram update get queued as a pending pairing request.
   if (isConfigured() && hasAnyChannelConfig()) {
     console.log("[wrapper] already configured — running channel reconcile pass");
-    setTimeout(async () => {
-      try {
-        await reconcileAllChannels();
-        // Reconcile changes config; gateway needs a restart to pick them up.
-        await restartGateway();
-        console.log("[wrapper] reconcile complete, gateway restarted");
-      } catch (err) {
-        console.error(`[wrapper] reconcile failed: ${err.message}`);
-      }
-    }, 2000);
+    try {
+      await reconcileAllChannels();
+      console.log("[wrapper] reconcile complete; gateway will boot with fresh config");
+    } catch (err) {
+      console.error(`[wrapper] reconcile failed: ${err.message}`);
+    }
   }
 
   // Auto-configure from environment variables if not already configured

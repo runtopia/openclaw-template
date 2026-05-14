@@ -241,13 +241,26 @@ export function createSetupRouter({
         extra += `[config] gateway.controlUi.allowInsecureAuth exit=${r1.code}\n`;
         const r2 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", gatewayToken]));
         extra += `[config] gateway.auth.token exit=${r2.code}\n`;
-        const r3 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.trustedProxies", '["127.0.0.1"]']));
+        // Include reverse-proxy subnet so WebSocket works through the wrapper.
+        // In Docker (colima / Railway) the wrapper runs on 172.x, which appears
+        // as ::ffff:172.17.x.x behind the proxy.
+        const r3 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.trustedProxies", '["127.0.0.1","::ffff:172.17.0.0/16"]']));
         extra += `[config] gateway.trustedProxies exit=${r3.code}\n`;
 
         const setupAllowedOrigins = process.env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS?.trim();
         if (setupAllowedOrigins) {
           const originsArray = setupAllowedOrigins.split(",").map((o) => o.trim()).filter(Boolean);
           const r4 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", JSON.stringify(originsArray)]));
+          extra += `[config] gateway.controlUi.allowedOrigins exit=${r4.code}\n`;
+        } else {
+          // Default: allow the wrapper proxy (localhost:$PORT) + OneClaw cloud
+          const defaultOrigins = [
+            `http://localhost:${process.env.PORT || 8080}`,
+            `http://127.0.0.1:${process.env.PORT || 8080}`,
+            "https://oneclaw.net",
+            "https://www.oneclaw.net",
+          ];
+          const r4 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", JSON.stringify(defaultOrigins)]));
           extra += `[config] gateway.controlUi.allowedOrigins exit=${r4.code}\n`;
         }
 
@@ -336,6 +349,15 @@ export function createSetupRouter({
         if (payload.webchatEnabled) {
           const dmPolicy = payload.webchatDmPolicy === "pairing" ? "pairing" : "open";
           extra += await configureChannel("webchat", { enabled: true, dmPolicy, allowFrom: ["*"] });
+        }
+
+        // Ensure non-bundled channel plugins are registered in the plugin
+        // entries list so Gateway auto-loads them on restart.
+        // Without this, doctor --fix or config reset can drop the entry,
+        // causing the plugin (e.g. discord) to be skipped at boot.
+        for (const pluginId of ["discord", "whatsapp", "lark", "weixin"]) {
+          const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", `plugins.entries.${pluginId}`, JSON.stringify({ enabled: true })]));
+          if (r.code === 0) extra += `[plugin] ${pluginId} entry registered\n`;
         }
 
         extra += "\n[setup] Starting gateway...\n";

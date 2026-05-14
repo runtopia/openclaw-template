@@ -87,39 +87,9 @@ if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$OPENAI_API_KEY" ] || [ -n "$GOOGLE_GENE
   HAS_AUTO_CONFIG_KEYS=true
 fi
 
-# Background task: wait until user finishes onboard, then run doctor --fix.
-# Only relevant for instances that go through the setup wizard (no auto-config
-# env vars). pre-onboard the config file already exists (we created it during
-# plugin install), so we must wait for the *onboard* signal, not just file
-# existence — otherwise doctor --fix runs on an empty config and corrupts it.
-if [ "$HAS_AUTO_CONFIG_KEYS" = "false" ]; then
-  (
-    echo "[start.sh] Waiting for user onboard (gateway.mode set)..."
-
-    # Wait up to 30 minutes for user to complete the setup wizard.
-    for i in {1..1800}; do
-      if is_onboarded; then
-        echo "[start.sh] Onboard detected, waiting 5s for completion..."
-        sleep 5
-
-        echo "[start.sh] Running openclaw doctor --fix..."
-        $OPENCLAW_CMD doctor --fix
-        echo "[start.sh] doctor --fix completed with exit code: $?"
-
-        configure_browser
-        break
-      fi
-      sleep 1
-    done
-  ) &
-else
-  echo "[start.sh] Auto-config env vars detected, skipping background doctor --fix (server.js handles it)"
-  # Configure browser after a delay to let auto-config create the config file first
-  (
-    sleep 15
-    configure_browser
-  ) &
-fi
+# The setup wizard (POST /setup/api/run) handles doctor --fix internally and
+# restarts the gateway. We skip it here to avoid race conditions.
+# For auto-config mode (AI API keys set via env), server.js also handles it.
 
 # Start the main server (foreground)
 echo "[start.sh] Starting server..."

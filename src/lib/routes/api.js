@@ -15,7 +15,12 @@ export function createApiRouter({
     if (!isConfigured()) return res.status(400).json({ error: "Instance not configured" });
     try {
       const authResult = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.controlUi.allowInsecureAuth", "true"]));
-      const originsResult = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", '["https://oneclaw.net","https://www.oneclaw.net"]']));
+      const originsResult = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", JSON.stringify([
+        `http://localhost:${process.env.PORT || 8080}`,
+        `http://127.0.0.1:${process.env.PORT || 8080}`,
+        "https://oneclaw.net",
+        "https://www.oneclaw.net",
+      ])]));
       return res.json({ ok: true, results: { allowInsecureAuth: authResult.code === 0, allowedOrigins: originsResult.code === 0 } });
     } catch (err) {
       return res.status(500).json({ error: err.message });

@@ -1,13 +1,61 @@
 #!/bin/bash
 # OneClaw startup script
-# Waits for config file and runs doctor --fix in background
+# 1. Pre-install channel plugins into $OPENCLAW_STATE_DIR (idempotent)
+# 2. Waits for config file and runs doctor --fix in background
 # NOTE: Skip doctor --fix when auto-config env vars are present,
 # because server.js auto-config handles doctor --fix itself.
 # Running both concurrently causes a race condition where
 # concurrent writes to openclaw.json corrupt the config.
 
-CONFIG_FILE="$HOME/.openclaw/openclaw.json"
+STATE_DIR="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+CONFIG_FILE="$STATE_DIR/openclaw.json"
 OPENCLAW_CMD="node /usr/local/lib/node_modules/openclaw/dist/entry.js"
+
+# OpenClaw discovers plugins from $OPENCLAW_STATE_DIR/npm + plugin install
+# records in openclaw.json. A plain `npm install -g` of these packages is not
+# picked up. So we run `openclaw plugins install` at boot, which is fast when
+# already installed (it just rewrites the install record).
+PLUGINS_TO_INSTALL=(
+  "@openclaw/discord"
+  "@openclaw/whatsapp"
+  "@larksuite/openclaw-lark"
+  "@tencent-weixin/openclaw-weixin"
+)
+
+install_channel_plugins() {
+  mkdir -p "$STATE_DIR"
+  local npm_root="$STATE_DIR/npm/node_modules"
+  for pkg in "${PLUGINS_TO_INSTALL[@]}"; do
+    if [ -d "$npm_root/$pkg" ]; then
+      echo "[start.sh] plugin already present: $pkg"
+      continue
+    fi
+    echo "[start.sh] installing plugin: $pkg"
+    if ! OPENCLAW_STATE_DIR="$STATE_DIR" $OPENCLAW_CMD plugins install "$pkg" --pin; then
+      echo "[start.sh] plugin install failed (continuing): $pkg"
+    fi
+  done
+}
+
+echo "[start.sh] Pre-installing channel plugins into $STATE_DIR/npm…"
+install_channel_plugins
+
+# Returns 0 only when openclaw.json shows a completed onboard.
+# `gateway.mode` is the right signal because:
+#  - onboard always writes it ("local" via --gateway-bind loopback)
+#  - `openclaw plugins install` (run above) creates a minimal config WITHOUT it
+#  - `doctor --fix` does NOT auto-set it (it bails with "missing gateway.mode")
+# So checking for it cleanly distinguishes "user finished setup" from
+# "wrapper just pre-installed plugins".
+is_onboarded() {
+  [ -f "$CONFIG_FILE" ] || return 1
+  node -e '
+    try {
+      const cfg = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      process.exit(cfg && cfg.gateway && cfg.gateway.mode ? 0 : 1);
+    } catch { process.exit(1); }
+  ' "$CONFIG_FILE" 2>/dev/null
+}
 
 # Configure browser automation: use openclaw's managed browser profile
 # This avoids Chrome Relay dependency and provides a fully controlled headless browser
@@ -23,16 +71,19 @@ if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$OPENAI_API_KEY" ] || [ -n "$GOOGLE_GENE
   HAS_AUTO_CONFIG_KEYS=true
 fi
 
-# Background task: wait for config and run doctor --fix
-# Only for existing instances (no auto-config env vars) or pre-configured instances
+# Background task: wait until user finishes onboard, then run doctor --fix.
+# Only relevant for instances that go through the setup wizard (no auto-config
+# env vars). pre-onboard the config file already exists (we created it during
+# plugin install), so we must wait for the *onboard* signal, not just file
+# existence — otherwise doctor --fix runs on an empty config and corrupts it.
 if [ "$HAS_AUTO_CONFIG_KEYS" = "false" ]; then
   (
-    echo "[start.sh] Waiting for config file to be created..."
+    echo "[start.sh] Waiting for user onboard (gateway.mode set)..."
 
-    # Wait up to 60 seconds for config file
-    for i in {1..60}; do
-      if [ -f "$CONFIG_FILE" ]; then
-        echo "[start.sh] Config file found, waiting 5s for completion..."
+    # Wait up to 30 minutes for user to complete the setup wizard.
+    for i in {1..1800}; do
+      if is_onboarded; then
+        echo "[start.sh] Onboard detected, waiting 5s for completion..."
         sleep 5
 
         echo "[start.sh] Running openclaw doctor --fix..."

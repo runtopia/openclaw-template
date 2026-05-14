@@ -28,18 +28,16 @@ RUN apt-get update \
     fonts-liberation \
   && rm -rf /var/lib/apt/lists/*
 
-# Pin OpenClaw + channel plugins. Bump these to upgrade.
+# Pin OpenClaw core. Channel plugins are installed at runtime via
+# `openclaw plugins install` so they land in $OPENCLAW_STATE_DIR/npm
+# (which lives on the persisted Railway volume). See start.sh.
 ARG OPENCLAW_VERSION=2026.5.7
-RUN npm install -g \
-      openclaw@${OPENCLAW_VERSION} \
-      @larksuite/openclaw-lark \
-      @tencent-weixin/openclaw-weixin \
-      @openclaw/discord \
-      @openclaw/whatsapp
+RUN npm install -g openclaw@${OPENCLAW_VERSION}
 
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
+COPY patches ./patches
 RUN corepack enable && pnpm install --frozen-lockfile --prod
 
 # Cache buster - change this to force rebuild

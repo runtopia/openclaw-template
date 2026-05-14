@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  http-proxy@1.18.1:
+    hash: zs2ejih3jlaw56n2dt74wgx4wi
+    path: patches/http-proxy@1.18.1.patch
+
 importers:
 
   .:
@@ -13,7 +18,7 @@ importers:
         version: 5.2.1
       http-proxy:
         specifier: ^1.18.1
-        version: 1.18.1
+        version: 1.18.1(patch_hash=zs2ejih3jlaw56n2dt74wgx4wi)
       node-pty:
         specifier: ^1.0.0
         version: 1.1.0
@@ -471,7 +476,7 @@ snapshots:
       statuses: 2.0.2
       toidentifier: 1.0.1
 
-  http-proxy@1.18.1:
+  http-proxy@1.18.1(patch_hash=zs2ejih3jlaw56n2dt74wgx4wi):
     dependencies:
       eventemitter3: 4.0.7
       follow-redirects: 1.15.11

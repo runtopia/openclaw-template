@@ -27,11 +27,33 @@
       authChoices: [],
       selectedAuth: '',
       authSecret: '',
+      customBaseUrl: '',
+      customProviderId: '',
+      customVision: false,
       flow: 'quickstart',
       telegramToken: '',
+      telegramDmPolicy: 'open',
       discordToken: '',
+      discordDmPolicy: 'open',
       slackBotToken: '',
       slackAppToken: '',
+      feishuAppId: '',
+      feishuAppSecret: '',
+      feishuDmPolicy: 'open',
+      whatsappEnabled: false,
+      whatsappDmPolicy: 'open',
+      webchatEnabled: false,
+      webchatDmPolicy: 'open',
+      availableChannels: {},
+
+      // 从 baseUrl 派生 provider key 的智能默认值(去掉 www/api 前缀,只取主域)
+      get suggestedProviderId() {
+        try {
+          const u = new URL(this.customBaseUrl);
+          const host = u.hostname.toLowerCase().replace(/^(www|api|v\d+)\./i, '');
+          return (host.split('.')[0] || '').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
+        } catch { return ''; }
+      },
       model: '',
       log: '',
       loading: false,
@@ -66,6 +88,7 @@
           this.configured = j.configured;
           this.openclawVersion = j.openclawVersion || '';
           this.tuiEnabled = j.tuiEnabled || false;
+          this.availableChannels = j.availableChannels || {};
           this.status = j.configured ? 'Configured - open /openclaw' : 'Not configured - run setup below';
           this.authGroups = j.authGroups || [];
           if (this.authGroups.length > 0) {
@@ -103,11 +126,23 @@
           flow: this.flow,
           authChoice: this.selectedAuth,
           authSecret: this.authSecret,
+          customBaseUrl: this.customBaseUrl,
+          customProviderId: this.customProviderId,
+          customVision: this.customVision,
           model: this.model,
           telegramToken: this.telegramToken,
+          telegramDmPolicy: this.telegramDmPolicy,
           discordToken: this.discordToken,
+          discordDmPolicy: this.discordDmPolicy,
           slackBotToken: this.slackBotToken,
-          slackAppToken: this.slackAppToken
+          slackAppToken: this.slackAppToken,
+          feishuAppId: this.feishuAppId,
+          feishuAppSecret: this.feishuAppSecret,
+          feishuDmPolicy: this.feishuDmPolicy,
+          whatsappEnabled: this.whatsappEnabled,
+          whatsappDmPolicy: this.whatsappDmPolicy,
+          webchatEnabled: this.webchatEnabled,
+          webchatDmPolicy: this.webchatDmPolicy,
         };
 
         this.log = 'Running...\n';
@@ -353,6 +388,31 @@
               <input x-model="authSecret" type="password" placeholder="Paste your API key or token" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
             </div>
 
+            <div x-show="selectedAuth === 'custom-openai-compatible' || selectedAuth === 'custom-anthropic-compatible'" x-cloak>
+              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2">Base URL</label>
+              <input x-model="customBaseUrl" type="text" placeholder="https://api.example.com/v1" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
+              <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-2">
+                <span x-show="selectedAuth === 'custom-openai-compatible'">OpenAI-compatible base URL, e.g. <code class="bg-neutral-200 dark:bg-neutral-800 px-1 rounded">https://api.deepseek.com/v1</code></span>
+                <span x-show="selectedAuth === 'custom-anthropic-compatible'">Anthropic-compatible base URL, e.g. <code class="bg-neutral-200 dark:bg-neutral-800 px-1 rounded">https://api.example.com</code></span>
+              </p>
+            </div>
+
+            <div x-show="selectedAuth === 'custom-openai-compatible' || selectedAuth === 'custom-anthropic-compatible'" x-cloak>
+              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2">Provider Name</label>
+              <input x-model="customProviderId" type="text" :placeholder="suggestedProviderId || 'e.g. deepseek, anthropic'" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
+              <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-2">
+                Used as the key in <code class="bg-neutral-200 dark:bg-neutral-800 px-1 rounded">models.providers.&lt;name&gt;</code>. Leave blank to auto-derive from base URL.
+              </p>
+            </div>
+
+            <div x-show="selectedAuth === 'custom-openai-compatible' || selectedAuth === 'custom-anthropic-compatible'" x-cloak>
+              <label class="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" x-model="customVision" class="w-4 h-4 rounded border-neutral-300 dark:border-neutral-600 text-red-600 focus:ring-red-500" />
+                <span class="text-sm text-neutral-700 dark:text-neutral-300">Model supports vision / image input</span>
+              </label>
+              <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-1 ml-7">Adds <code class="bg-neutral-200 dark:bg-neutral-800 px-1 rounded">input: ["text", "image"]</code> to the model definition</p>
+            </div>
+
             <div>
               <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2">Model</label>
               <input x-model="model" type="text" placeholder="e.g. openai/gpt-4.1, anthropic/claude-sonnet-4" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
@@ -376,8 +436,25 @@
           <h2 class="text-lg font-semibold mb-1">Channels</h2>
           <p class="text-neutral-500 text-sm mb-6">Connect messaging platforms (optional — can be added later)</p>
 
+          <div x-show="Object.values(availableChannels).filter(v => !v).length > 0" x-cloak class="mb-5 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+            <p class="text-xs text-amber-700 dark:text-amber-300">
+              <strong>Some channels are hidden because their plugins are not installed.</strong>
+              In Docker production these are auto-installed at boot via
+              <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">openclaw plugins install</code>;
+              for local dev install them with
+              <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">openclaw plugins install &lt;pkg&gt;</code>:
+            </p>
+            <ul class="text-xs text-amber-700 dark:text-amber-300 mt-1.5 ml-4 space-y-0.5">
+              <li x-show="!availableChannels.discord">Discord → <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">@openclaw/discord</code></li>
+              <li x-show="!availableChannels.whatsapp">WhatsApp → <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">@openclaw/whatsapp</code></li>
+              <li x-show="!availableChannels.feishu">Feishu → <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">@larksuite/openclaw-lark</code></li>
+              <li x-show="!availableChannels.wechat">WeChat → <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">@tencent-weixin/openclaw-weixin</code></li>
+            </ul>
+          </div>
+
           <div class="space-y-5">
-            <div class="bg-sky-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-sky-200 dark:border-neutral-800">
+            <!-- Telegram -->
+            <div x-show="availableChannels.telegram" x-cloak class="bg-sky-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-sky-200 dark:border-neutral-800">
               <div class="flex items-center gap-3 mb-3">
                 <div class="w-8 h-8 bg-sky-500/20 rounded-lg flex items-center justify-center">
                   <svg class="w-5 h-5 text-sky-500 dark:text-sky-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
@@ -386,9 +463,17 @@
               </div>
               <input x-model="telegramToken" type="password" placeholder="Bot token from @BotFather" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-sky-500 transition-colors" />
               <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-2">Message <code class="bg-neutral-200 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sky-600 dark:text-sky-400">@BotFather</code> on Telegram and run <code class="bg-neutral-200 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sky-600 dark:text-sky-400">/newbot</code></p>
+              <div x-show="telegramToken" class="mt-3 flex items-center gap-3">
+                <label class="text-xs text-neutral-500 whitespace-nowrap">DM Access</label>
+                <select x-model="telegramDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-500 transition-colors">
+                  <option value="open">Open — anyone can DM</option>
+                  <option value="pairing">Pairing — requires approval</option>
+                </select>
+              </div>
             </div>
 
-            <div class="bg-indigo-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-indigo-200 dark:border-neutral-800">
+            <!-- Discord -->
+            <div x-show="availableChannels.discord" x-cloak class="bg-indigo-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-indigo-200 dark:border-neutral-800">
               <div class="flex items-center gap-3 mb-3">
                 <div class="w-8 h-8 bg-indigo-500/20 rounded-lg flex items-center justify-center">
                   <svg class="w-5 h-5 text-indigo-500 dark:text-indigo-400" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
@@ -397,9 +482,90 @@
               </div>
               <input x-model="discordToken" type="password" placeholder="Bot token from Developer Portal" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors" />
               <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-2">Enable <strong class="text-amber-600 dark:text-amber-400">MESSAGE CONTENT INTENT</strong> in Bot → Privileged Gateway Intents</p>
+              <div x-show="discordToken" class="mt-3 flex items-center gap-3">
+                <label class="text-xs text-neutral-500 whitespace-nowrap">DM Access</label>
+                <select x-model="discordDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 transition-colors">
+                  <option value="open">Open — anyone can DM</option>
+                  <option value="pairing">Pairing — requires approval</option>
+                </select>
+              </div>
             </div>
 
-            <div class="bg-green-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-green-200 dark:border-neutral-800">
+            <!-- Feishu / Lark -->
+            <div x-show="availableChannels.feishu" x-cloak class="bg-blue-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-blue-200 dark:border-neutral-800">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                  <svg class="w-5 h-5 text-blue-600 dark:text-blue-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                </div>
+                <span class="font-medium">Feishu / Lark</span>
+              </div>
+              <div class="space-y-3">
+                <input x-model="feishuAppId" type="text" placeholder="App ID (cli_xxx)" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-blue-500 transition-colors" />
+                <input x-model="feishuAppSecret" type="password" placeholder="App Secret" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-blue-500 transition-colors" />
+              </div>
+              <div x-show="feishuAppId && feishuAppSecret" class="mt-3 flex items-center gap-3">
+                <label class="text-xs text-neutral-500 whitespace-nowrap">DM Access</label>
+                <select x-model="feishuDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors">
+                  <option value="open">Open — anyone can DM</option>
+                  <option value="pairing">Pairing — requires approval</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- WhatsApp (QR) -->
+            <div x-show="availableChannels.whatsapp" x-cloak class="bg-emerald-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-emerald-200 dark:border-neutral-800">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 text-emerald-600 dark:text-emerald-400" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                  </div>
+                  <div>
+                    <span class="font-medium">WhatsApp</span>
+                    <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-0.5">QR code scan — no token required</p>
+                  </div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" x-model="whatsappEnabled" class="sr-only peer" />
+                  <div class="w-11 h-6 bg-neutral-200 dark:bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+              <div x-show="whatsappEnabled" class="mt-3 flex items-center gap-3">
+                <label class="text-xs text-neutral-500 whitespace-nowrap">DM Access</label>
+                <select x-model="whatsappDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors">
+                  <option value="open">Open — anyone can DM</option>
+                  <option value="pairing">Pairing — requires approval</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Webchat -->
+            <div x-show="availableChannels.webchat" x-cloak class="bg-violet-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-violet-200 dark:border-neutral-800">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="w-8 h-8 bg-violet-500/20 rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 text-violet-600 dark:text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                  </div>
+                  <div>
+                    <span class="font-medium">Webchat</span>
+                    <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-0.5">Embeddable web chat widget</p>
+                  </div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" x-model="webchatEnabled" class="sr-only peer" />
+                  <div class="w-11 h-6 bg-neutral-200 dark:bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600"></div>
+                </label>
+              </div>
+              <div x-show="webchatEnabled" class="mt-3 flex items-center gap-3">
+                <label class="text-xs text-neutral-500 whitespace-nowrap">DM Access</label>
+                <select x-model="webchatDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500 transition-colors">
+                  <option value="open">Open — anyone can chat</option>
+                  <option value="pairing">Pairing — requires approval</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Slack -->
+            <div x-show="availableChannels.slack" x-cloak class="bg-green-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-green-200 dark:border-neutral-800">
               <div class="flex items-center gap-3 mb-3">
                 <div class="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
                   <svg class="w-5 h-5 text-green-600 dark:text-green-400" viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 01-2.52 2.523A2.528 2.528 0 010 15.165a2.527 2.527 0 012.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 012.521-2.52 2.527 2.527 0 012.521 2.52v6.313A2.528 2.528 0 018.834 24a2.528 2.528 0 01-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 01-2.521-2.52A2.528 2.528 0 018.834 0a2.528 2.528 0 012.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 012.521 2.521 2.528 2.528 0 01-2.521 2.521H2.522A2.528 2.528 0 010 8.834a2.528 2.528 0 012.522-2.521h6.312zm10.124 2.521a2.528 2.528 0 012.522-2.521A2.528 2.528 0 0124 8.834a2.528 2.528 0 01-2.52 2.521h-2.522V8.834zm-1.271 0a2.528 2.528 0 01-2.521 2.521 2.528 2.528 0 01-2.521-2.521V2.522A2.528 2.528 0 0115.166 0a2.528 2.528 0 012.521 2.522v6.312zm-2.521 10.124a2.528 2.528 0 012.521 2.522A2.528 2.528 0 0115.166 24a2.528 2.528 0 01-2.521-2.522v-2.522h2.521zm0-1.271a2.528 2.528 0 01-2.521-2.521 2.528 2.528 0 012.521-2.521h6.312A2.528 2.528 0 0124 15.165a2.528 2.528 0 01-2.52 2.521h-6.313z"/></svg>
@@ -437,11 +603,14 @@
               </div>
               <div class="flex justify-between">
                 <dt class="text-neutral-500">Channels</dt>
-                <dd class="text-neutral-700 dark:text-neutral-300">
-                  <span x-show="telegramToken" class="inline-flex items-center gap-1 bg-sky-100 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 px-2 py-0.5 rounded text-xs mr-1">Telegram</span>
-                  <span x-show="discordToken" class="inline-flex items-center gap-1 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded text-xs mr-1">Discord</span>
-                  <span x-show="slackBotToken && slackAppToken" class="inline-flex items-center gap-1 bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400 px-2 py-0.5 rounded text-xs">Slack</span>
-                  <span x-show="!telegramToken && !discordToken && !(slackBotToken && slackAppToken)" class="text-neutral-500">None</span>
+                <dd class="text-neutral-700 dark:text-neutral-300 flex flex-wrap gap-1">
+                  <span x-show="telegramToken" class="inline-flex items-center bg-sky-100 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 px-2 py-0.5 rounded text-xs">Telegram (<span x-text="telegramDmPolicy"></span>)</span>
+                  <span x-show="discordToken" class="inline-flex items-center bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded text-xs">Discord (<span x-text="discordDmPolicy"></span>)</span>
+                  <span x-show="feishuAppId && feishuAppSecret" class="inline-flex items-center bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded text-xs">Feishu (<span x-text="feishuDmPolicy"></span>)</span>
+                  <span x-show="whatsappEnabled" class="inline-flex items-center bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded text-xs">WhatsApp (<span x-text="whatsappDmPolicy"></span>)</span>
+                  <span x-show="webchatEnabled" class="inline-flex items-center bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded text-xs">Webchat (<span x-text="webchatDmPolicy"></span>)</span>
+                  <span x-show="slackBotToken && slackAppToken" class="inline-flex items-center bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400 px-2 py-0.5 rounded text-xs">Slack</span>
+                  <span x-show="!telegramToken && !discordToken && !(feishuAppId && feishuAppSecret) && !whatsappEnabled && !webchatEnabled && !(slackBotToken && slackAppToken)" class="text-neutral-500">None</span>
                 </dd>
               </div>
             </dl>

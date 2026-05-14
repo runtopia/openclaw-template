@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   },
   "packageManager": "pnpm@9.15.4",
   "scripts": {
-    "dev": "node src/server.js",
+    "dev": "node --env-file-if-exists=.env src/server.js",
     "start": "node src/server.js",
     "lint": "node -c src/server.js"
   },
@@ -19,6 +19,11 @@
     "ws": "^8.18.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["node-pty"]
+    "onlyBuiltDependencies": [
+      "node-pty"
+    ],
+    "patchedDependencies": {
+      "http-proxy@1.18.1": "patches/http-proxy@1.18.1.patch"
+    }
   }
 }

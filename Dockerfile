@@ -28,11 +28,26 @@ RUN apt-get update \
     fonts-liberation \
   && rm -rf /var/lib/apt/lists/*
 
-# Pin OpenClaw core. Channel plugins are installed at runtime via
-# `openclaw plugins install` so they land in $OPENCLAW_STATE_DIR/npm
-# (which lives on the persisted Railway volume). See start.sh.
+# Pin OpenClaw core.
 ARG OPENCLAW_VERSION=2026.5.7
 RUN npm install -g openclaw@${OPENCLAW_VERSION}
+
+# Pre-install channel plugins at build time using the same mechanism as
+# start.sh, so the container boot skips straight past plugin installation.
+# The plugin npm store is placed under /usr/local/lib/openclaw-plugins/;
+# start.sh is patched below to check there first.
+ARG CACHEBUST_PLUGINS=v2
+RUN mkdir -p /usr/local/lib/openclaw-plugins/npm && \
+  OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins \
+    openclaw plugins install @openclaw/discord --pin && \
+  OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins \
+    openclaw plugins install @openclaw/whatsapp --pin && \
+  OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins \
+    openclaw plugins install @larksuite/openclaw-lark --pin && \
+  OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins \
+    openclaw plugins install @tencent-weixin/openclaw-weixin --pin && \
+  # Make pre-built plugins readable by the non-root 'openclaw' user
+  chmod -R a+rX /usr/local/lib/openclaw-plugins
 
 WORKDIR /app
 

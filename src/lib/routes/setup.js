@@ -316,7 +316,7 @@ export function createSetupRouter({
 
         if (payload.telegramToken?.trim()) {
           const dmPolicy = payload.telegramDmPolicy === "open" ? "open" : "pairing";
-          extra += await configureChannel("telegram", { enabled: true, dmPolicy, botToken: payload.telegramToken.trim(), groupPolicy: "allowlist", streamMode: "partial" });
+          extra += await configureChannel("telegram", { enabled: true, dmPolicy, token: payload.telegramToken.trim(), groupPolicy: "allowlist", streamMode: "partial" });
         }
         if (payload.discordToken?.trim()) {
           const dmPolicy = payload.discordDmPolicy === "open" ? "open" : "pairing";

@@ -11,10 +11,10 @@ STATE_DIR="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 CONFIG_FILE="$STATE_DIR/openclaw.json"
 OPENCLAW_CMD="node /usr/local/lib/node_modules/openclaw/dist/entry.js"
 
-# OpenClaw discovers plugins from $OPENCLAW_STATE_DIR/npm + plugin install
-# records in openclaw.json. A plain `npm install -g` of these packages is not
-# picked up. So we run `openclaw plugins install` at boot, which is fast when
-# already installed (it just rewrites the install record).
+# Plugins are pre-installed at Docker build time into /usr/local/lib/openclaw-plugins/.
+# At boot we just copy them over — no npm link, no config writes, no network.
+# If the pre-built directory is missing (e.g. non-Docker dev), we fall through
+# to the legacy install path.
 PLUGINS_TO_INSTALL=(
   "@openclaw/discord"
   "@openclaw/whatsapp"
@@ -22,9 +22,25 @@ PLUGINS_TO_INSTALL=(
   "@tencent-weixin/openclaw-weixin"
 )
 
+PREBUILT_PLUGIN_DIR="/usr/local/lib/openclaw-plugins"
+
 install_channel_plugins() {
-  mkdir -p "$STATE_DIR"
+  mkdir -p "$STATE_DIR/npm/node_modules"
   local npm_root="$STATE_DIR/npm/node_modules"
+
+  # Fast path: copy from pre-built image layer
+  if [ -d "$PREBUILT_PLUGIN_DIR/npm/node_modules" ]; then
+    echo "[start.sh] copying pre-built plugins from $PREBUILT_PLUGIN_DIR…"
+    cp -r "$PREBUILT_PLUGIN_DIR/npm/." "$STATE_DIR/npm/"
+    # Ensure config JSON references plugins
+    for pkg in "${PLUGINS_TO_INSTALL[@]}"; do
+      echo "[start.sh] plugin ready: $pkg"
+    done
+    return
+  fi
+
+  # Fallback: install at runtime (local dev without Docker)
+  echo "[start.sh] pre-built plugins not found, installing at runtime…"
   for pkg in "${PLUGINS_TO_INSTALL[@]}"; do
     if [ -d "$npm_root/$pkg" ]; then
       echo "[start.sh] plugin already present: $pkg"
@@ -37,7 +53,7 @@ install_channel_plugins() {
   done
 }
 
-echo "[start.sh] Pre-installing channel plugins into $STATE_DIR/npm…"
+echo "[start.sh] Setting up channel plugins…"
 install_channel_plugins
 
 # Returns 0 only when openclaw.json shows a completed onboard.

@@ -197,10 +197,12 @@ async function ensureWebSocketConfig() {
       existingOrigins = [...list];
       console.log(`[startup-fix] using allowedOrigins from env: ${existingOrigins}`);
     } else {
-      // Always ensure localhost is whitelisted so local WebTUI works
+      // Always ensure localhost is whitelisted so local WebTUI works.
+      // Gateway receives the proxy-rewritten Origin as http://127.0.0.1:18789.
       const localUrls = [
         `http://localhost:${process.env.PORT || 8080}`,
         `http://127.0.0.1:${process.env.PORT || 8080}`,
+        `http://127.0.0.1:${internalGatewayPort}`,
       ];
       for (const url of localUrls) {
         if (!existingOrigins.includes(url)) existingOrigins.push(url);

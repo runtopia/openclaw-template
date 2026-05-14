@@ -274,9 +274,12 @@ gatewayProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
 });
-gatewayProxy.on("proxyReqWs", (proxyReq) => {
+gatewayProxy.on("proxyReqWs", (proxyReq, req) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
-  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
+  // Strip the Origin header entirely so the Gateway uses its built-in
+  // default allowlist (which includes 127.0.0.1/localhost) rather than
+  // a wrapper-originated value that may not be in gateway.controlUi.allowedOrigins.
+  proxyReq.removeHeader("origin");
 });
 
 app.use(async (req, res) => {

@@ -202,7 +202,7 @@ async function ensureWebSocketConfig() {
       const localUrls = [
         `http://localhost:${process.env.PORT || 8080}`,
         `http://127.0.0.1:${process.env.PORT || 8080}`,
-        `http://127.0.0.1:${internalGatewayPort}`,
+        `http://127.0.0.1:${INTERNAL_GATEWAY_PORT}`,
       ];
       for (const url of localUrls) {
         if (!existingOrigins.includes(url)) existingOrigins.push(url);
@@ -281,7 +281,7 @@ const tuiRouter = createTuiRouter({
 app.use("/tui", tuiRouter);
 
 // Gateway reverse proxy (catch-all)
-const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, ws: true, xfwd: true });
+const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, ws: true, xfwd: true, changeOrigin: true });
 gatewayProxy.on("error", (err) => console.error("[proxy]", err));
 // Rewrite Origin to the gateway's own host so gateway.controlUi.allowedOrigins
 // never has to know about the wrapper's external URL (localhost, *.up.railway.app,

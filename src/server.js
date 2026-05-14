@@ -182,12 +182,18 @@ async function ensureWebSocketConfig() {
     }
 
     const ALLOWED_ORIGINS_ENV = process.env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS?.trim();
-    let origins = '["https://oneclaw.net","https://www.oneclaw.net"]';
+    let origins = [
+      `http://localhost:${process.env.PORT || 8080}`,
+      `http://127.0.0.1:${process.env.PORT || 8080}`,
+      "https://oneclaw.net",
+      "https://www.oneclaw.net",
+    ];
     if (ALLOWED_ORIGINS_ENV) {
       const list = ALLOWED_ORIGINS_ENV.split(",").map((o) => o.trim()).filter(Boolean);
-      origins = JSON.stringify(list);
+      origins = [...list];
       console.log(`[startup-fix] using allowedOrigins from env: ${origins}`);
     }
+    origins = JSON.stringify(origins);
     console.log("[startup-fix] ensuring WebSocket allowedOrigins config...");
     const result = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", origins]));
     console.log(`[startup-fix] WebSocket allowedOrigins configured (exit=${result.code})`);

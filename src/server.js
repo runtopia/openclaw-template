@@ -181,19 +181,36 @@ async function ensureWebSocketConfig() {
       }
     }
 
+    // Start from existing origins in config (if any) so we don't overwrite
+    // origins set by the setup wizard (e.g. localhost:PORT).
+    let existingOrigins = [];
+    try {
+      const raw = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "gateway.controlUi.allowedOrigins"]));
+      if (raw.code === 0 && raw.output) existingOrigins = JSON.parse(raw.output.trim());
+    } catch {}
+    if (!Array.isArray(existingOrigins)) existingOrigins = [];
+
+    // Merge env override or inject localhost defaults
     const ALLOWED_ORIGINS_ENV = process.env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS?.trim();
-    let origins = [
-      `http://localhost:${process.env.PORT || 8080}`,
-      `http://127.0.0.1:${process.env.PORT || 8080}`,
-      "https://oneclaw.net",
-      "https://www.oneclaw.net",
-    ];
     if (ALLOWED_ORIGINS_ENV) {
       const list = ALLOWED_ORIGINS_ENV.split(",").map((o) => o.trim()).filter(Boolean);
-      origins = [...list];
-      console.log(`[startup-fix] using allowedOrigins from env: ${origins}`);
+      existingOrigins = [...list];
+      console.log(`[startup-fix] using allowedOrigins from env: ${existingOrigins}`);
+    } else {
+      // Always ensure localhost is whitelisted so local WebTUI works
+      const localUrls = [
+        `http://localhost:${process.env.PORT || 8080}`,
+        `http://127.0.0.1:${process.env.PORT || 8080}`,
+      ];
+      for (const url of localUrls) {
+        if (!existingOrigins.includes(url)) existingOrigins.push(url);
+      }
+      // Ensure oneclaw.net origins are also present
+      for (const url of ["https://oneclaw.net", "https://www.oneclaw.net"]) {
+        if (!existingOrigins.includes(url)) existingOrigins.push(url);
+      }
     }
-    origins = JSON.stringify(origins);
+    const origins = JSON.stringify(existingOrigins);
     console.log("[startup-fix] ensuring WebSocket allowedOrigins config...");
     const result = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", origins]));
     console.log(`[startup-fix] WebSocket allowedOrigins configured (exit=${result.code})`);
@@ -274,12 +291,9 @@ gatewayProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
 });
-gatewayProxy.on("proxyReqWs", (proxyReq, req) => {
+gatewayProxy.on("proxyReqWs", (proxyReq) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
-  // Strip the Origin header entirely so the Gateway uses its built-in
-  // default allowlist (which includes 127.0.0.1/localhost) rather than
-  // a wrapper-originated value that may not be in gateway.controlUi.allowedOrigins.
-  proxyReq.removeHeader("origin");
+  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
 });
 
 app.use(async (req, res) => {

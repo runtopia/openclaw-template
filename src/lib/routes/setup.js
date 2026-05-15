@@ -197,24 +197,35 @@ export function createSetupRouter({
   // included in the openclaw core package); those skip plugin install.
   // `pluginId` mirrors the OpenClaw channel id and goes into plugins.entries
   // so the gateway loader enables it on startup.
+  //
+  // Field shapes must match the openclaw zod schema exactly — extra fields
+  // throw "must NOT have additional properties" at gateway startup. Cross-
+  // reference src/lib/channel-manifest.js (which is the canonical shape for
+  // env-driven reconcile) when adding fields.
   function buildChannelPlan(payload, channelsHelp) {
     const plan = [];
     const supported = (name) => channelsHelp.includes(name);
+    const openAllowFrom = (policy) => (policy === "open" ? { allowFrom: ["*"] } : {});
+
     if (payload.telegramToken?.trim() && supported("telegram")) {
+      const dmPolicy = payload.telegramDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "telegram",
         npmSpec: null,
         pluginId: null,
+        // openclaw@2026.5.7+ schema: botToken (not token); no streamMode;
+        // allowFrom required when dmPolicy=open.
         config: {
           enabled: true,
-          dmPolicy: payload.telegramDmPolicy === "open" ? "open" : "pairing",
-          token: payload.telegramToken.trim(),
+          botToken: payload.telegramToken.trim(),
+          dmPolicy,
+          ...openAllowFrom(dmPolicy),
           groupPolicy: "allowlist",
-          streamMode: "partial",
         },
       });
     }
     if (payload.discordToken?.trim() && supported("discord")) {
+      const dmPolicy = payload.discordDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "discord",
         npmSpec: "@openclaw/discord",
@@ -222,8 +233,8 @@ export function createSetupRouter({
         config: {
           enabled: true,
           token: payload.discordToken.trim(),
+          dm: { policy: dmPolicy, ...openAllowFrom(dmPolicy) },
           groupPolicy: "allowlist",
-          dm: { policy: payload.discordDmPolicy === "open" ? "open" : "pairing" },
         },
       });
     }
@@ -240,6 +251,7 @@ export function createSetupRouter({
       });
     }
     if (payload.feishuAppId?.trim() && payload.feishuAppSecret?.trim() && supported("feishu")) {
+      const dmPolicy = payload.feishuDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "feishu",
         npmSpec: "@openclaw/feishu",
@@ -248,32 +260,34 @@ export function createSetupRouter({
           enabled: true,
           appId: payload.feishuAppId.trim(),
           appSecret: payload.feishuAppSecret.trim(),
-          dmPolicy: payload.feishuDmPolicy === "pairing" ? "pairing" : "open",
-          allowFrom: ["*"],
+          dmPolicy,
+          ...openAllowFrom(dmPolicy),
         },
       });
     }
     if (payload.whatsappEnabled && supported("whatsapp")) {
+      const dmPolicy = payload.whatsappDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "whatsapp",
         npmSpec: "@openclaw/whatsapp",
         pluginId: "whatsapp",
         config: {
           enabled: true,
-          dmPolicy: payload.whatsappDmPolicy === "pairing" ? "pairing" : "open",
-          allowFrom: ["*"],
+          dmPolicy,
+          ...openAllowFrom(dmPolicy),
         },
       });
     }
     if (payload.webchatEnabled && supported("webchat")) {
+      const dmPolicy = payload.webchatDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "webchat",
         npmSpec: null,
         pluginId: null,
         config: {
           enabled: true,
-          dmPolicy: payload.webchatDmPolicy === "pairing" ? "pairing" : "open",
-          allowFrom: ["*"],
+          dmPolicy,
+          ...openAllowFrom(dmPolicy),
         },
       });
     }

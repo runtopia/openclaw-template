@@ -32,34 +32,14 @@ RUN apt-get update \
 ARG OPENCLAW_VERSION=2026.5.12
 RUN npm install -g openclaw@${OPENCLAW_VERSION}
 
-# Pre-install channel plugins at build time using the same mechanism as
-# start.sh, so the container boot skips straight past plugin installation.
-# The plugin npm store is placed under /usr/local/lib/openclaw-plugins/;
-# start.sh is patched below to check there first.
-# --pin tells OpenClaw to resolve the spec once and record the exact
-# <name>@<version> in npm/package.json, so subsequent rebuilds get the same
-# tree. We don't pass an explicit version because third-party plugins
-# (@tencent-weixin/openclaw-weixin, @larksuite/openclaw-lark) version on
-# their own schedule and don't track OPENCLAW_VERSION. Each install is
-# followed by a hard check that the plugin package landed on disk — silent
-# install failures here are the worst-case (runtime then tries to install
-# the missing plugin and trips the managed-npm peer-scan against stale state).
-ARG CACHEBUST_PLUGINS=v5
-RUN mkdir -p /usr/local/lib/openclaw-plugins/npm && \
-  for pkg in \
-    @openclaw/codex \
-    @openclaw/discord \
-    @openclaw/whatsapp \
-    @larksuite/openclaw-lark \
-    @tencent-weixin/openclaw-weixin; do \
-    echo "[prebuilt] installing ${pkg}"; \
-    OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins openclaw plugins install "${pkg}" --pin || { echo "FATAL: ${pkg} install command failed"; exit 1; }; \
-    test -f "/usr/local/lib/openclaw-plugins/npm/node_modules/${pkg}/package.json" || { echo "FATAL: ${pkg} not present after install"; ls /usr/local/lib/openclaw-plugins/npm/node_modules/ 2>/dev/null; exit 1; }; \
-  done && \
-  echo "[prebuilt] final npm/package.json:" && \
-  cat /usr/local/lib/openclaw-plugins/npm/package.json && \
-  # Make pre-built plugins readable by the non-root 'openclaw' user
-  chmod -R a+rX /usr/local/lib/openclaw-plugins
+# Channel plugins are NOT prebuilt into the image. OpenClaw's doctor flow
+# (`missing-configured-plugin-install`) lazy-installs whatever channel the
+# user actually configures on first gateway start. This trades a one-time
+# ~30-60s install per channel (only when that channel is first used) for:
+#   - container boot in seconds instead of ~minute cp from prebuilt to volume
+#   - no stale state collisions when openclaw upgrades plugin metadata
+#   - smaller image
+# See arjunkomath/openclaw-railway-template for the original simpler design.
 
 WORKDIR /app
 

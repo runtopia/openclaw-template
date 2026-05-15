@@ -110,38 +110,28 @@ export function createSetupRouter({
 
   let cachedVersion = null;
   let cachedChannelsHelp = null;
-  let cachedAvailableChannels = null;
+  // All channels supported by the wrapper UI are available. OpenClaw's
+  // missing-configured-plugin-install doctor flow will lazy-install the
+  // backing plugin on first gateway start when the user actually enables
+  // that channel, so the wizard doesn't need to gate the option list on a
+  // prebuilt plugin set.
+  const availableChannels = Object.fromEntries(Object.keys(CHANNEL_PLUGIN_IDS).map((id) => [id, true]));
   async function getOpenclawInfo() {
     if (!cachedVersion) {
-      const [v, h, p] = await Promise.all([
+      const [v, h] = await Promise.all([
         runCmd(OPENCLAW_NODE, clawArgs(["--version"])),
         runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"])),
-        runCmd(OPENCLAW_NODE, clawArgs(["plugins", "list", "--json"])),
       ]);
       cachedVersion = v.output.trim();
       cachedChannelsHelp = h.output;
-      // 解析已安装插件,得出可用渠道
-      const installedIds = new Set();
-      try {
-        const parsed = JSON.parse(p.output);
-        for (const plugin of parsed.plugins || []) {
-          if (plugin.id) installedIds.add(plugin.id);
-        }
-      } catch (err) {
-        console.warn(`[setup] failed to parse plugins list: ${err.message}`);
-      }
-      cachedAvailableChannels = {};
-      for (const [channelId, pluginIds] of Object.entries(CHANNEL_PLUGIN_IDS)) {
-        cachedAvailableChannels[channelId] = pluginIds.some((pid) => installedIds.has(pid));
-      }
     }
-    return { version: cachedVersion, channelsHelp: cachedChannelsHelp, availableChannels: cachedAvailableChannels };
+    return { version: cachedVersion, channelsHelp: cachedChannelsHelp, availableChannels };
   }
 
   function buildOnboardArgs(payload) {
     const args = [
       "onboard", "--non-interactive", "--accept-risk", "--json",
-      "--no-install-daemon", "--skip-health", "--skip-skills",
+      "--no-install-daemon", "--skip-health", "--skip-skills", "--skip-channels",
       "--workspace", workspaceDir,
       "--gateway-bind", "loopback",
       "--gateway-port", "18789",

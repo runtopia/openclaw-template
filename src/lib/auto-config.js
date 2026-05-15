@@ -20,7 +20,7 @@ export function hasAutoConfigEnvVars(env = process.env) {
 export function buildOnboardArgs(payload) {
   const args = [
     "onboard", "--non-interactive", "--accept-risk", "--json",
-    "--no-install-daemon", "--skip-health", "--skip-skills",
+    "--no-install-daemon", "--skip-health", "--skip-skills", "--skip-channels",
     "--workspace", payload.workspaceDir,
     "--gateway-bind", "loopback",
     "--gateway-port", String(payload.internalGatewayPort),

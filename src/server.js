@@ -24,6 +24,7 @@ import { startClawRoutersProxy } from "./lib/cr-proxy.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { autoConfigureFromEnv, hasAutoConfigEnvVars } from "./lib/auto-config.js";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./lib/channel-manifest.js";
+import { ensureControlUiConfig } from "./lib/control-ui-config.js";
 import { createSetupRouter } from "./lib/routes/setup.js";
 import { createApiRouter } from "./lib/routes/api.js";
 import { createTuiRouter } from "./lib/routes/tui.js";
@@ -164,62 +165,13 @@ const oneclaw = createOneclawIntegration({
 
 async function ensureWebSocketConfig() {
   if (!isConfigured()) return;
-  try {
-    console.log("[startup-fix] ensuring allowInsecureAuth=true...");
-    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.controlUi.allowInsecureAuth", "true"]));
-
-    // Patch openclaw.json directly for dangerouslyDisableDeviceAuth
-    const configPath = configFilePath();
-    if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      if (config.gateway) {
-        if (!config.gateway.controlUi) config.gateway.controlUi = {};
-        config.gateway.controlUi.dangerouslyDisableDeviceAuth = true;
-        config.gateway.controlUi.allowInsecureAuth = true;
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-        console.log("[startup-fix] patched openclaw.json: dangerouslyDisableDeviceAuth=true");
-      }
-    }
-
-    // Start from existing origins in config (if any) so we don't overwrite
-    // origins set by the setup wizard (e.g. localhost:PORT).
-    let existingOrigins = [];
-    try {
-      const raw = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "gateway.controlUi.allowedOrigins"]));
-      if (raw.code === 0 && raw.output) existingOrigins = JSON.parse(raw.output.trim());
-    } catch {}
-    if (!Array.isArray(existingOrigins)) existingOrigins = [];
-
-    // Merge env override or inject localhost defaults
-    const ALLOWED_ORIGINS_ENV = process.env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS?.trim();
-    if (ALLOWED_ORIGINS_ENV) {
-      const list = ALLOWED_ORIGINS_ENV.split(",").map((o) => o.trim()).filter(Boolean);
-      existingOrigins = [...list];
-      console.log(`[startup-fix] using allowedOrigins from env: ${existingOrigins}`);
-    } else {
-      // Always ensure localhost is whitelisted so local WebTUI works.
-      // Gateway receives the proxy-rewritten Origin as http://127.0.0.1:18789.
-      const localUrls = [
-        `http://localhost:${process.env.PORT || 8080}`,
-        `http://127.0.0.1:${process.env.PORT || 8080}`,
-        `http://127.0.0.1:${INTERNAL_GATEWAY_PORT}`,
-      ];
-      for (const url of localUrls) {
-        if (!existingOrigins.includes(url)) existingOrigins.push(url);
-      }
-      // Ensure oneclaw.net origins are also present
-      for (const url of ["https://oneclaw.net", "https://www.oneclaw.net"]) {
-        if (!existingOrigins.includes(url)) existingOrigins.push(url);
-      }
-    }
-    const origins = JSON.stringify(existingOrigins);
-    console.log("[startup-fix] ensuring WebSocket allowedOrigins config...");
-    const result = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", origins]));
-    console.log(`[startup-fix] WebSocket allowedOrigins configured (exit=${result.code})`);
-    if (result.output) console.log(result.output);
-  } catch (err) {
-    console.warn(`[startup-fix] failed to set config: ${err.message}`);
-  }
+  ensureControlUiConfig({
+    configPath: configFilePath(),
+    port: process.env.PORT || PORT,
+    internalGatewayHost: INTERNAL_GATEWAY_HOST,
+    internalGatewayPort: INTERNAL_GATEWAY_PORT,
+    allowedOriginsEnv: process.env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS,
+  });
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -244,6 +196,10 @@ const setupRouter = createSetupRouter({
   stateDir: STATE_DIR,
   workspaceDir: WORKSPACE_DIR,
   gatewayToken: OPENCLAW_GATEWAY_TOKEN,
+  configFilePath,
+  port: PORT,
+  internalGatewayHost: INTERNAL_GATEWAY_HOST,
+  internalGatewayPort: INTERNAL_GATEWAY_PORT,
   ENABLE_WEB_TUI,
   TUI_IDLE_TIMEOUT_MS,
   TUI_MAX_SESSION_MS,
@@ -301,12 +257,6 @@ gatewayProxy.on("proxyReqWs", (proxyReq) => {
 app.use(async (req, res) => {
   if (!isConfigured() && !req.path.startsWith("/setup")) {
     return res.redirect("/setup");
-  }
-  // OpenClaw Control UI references `favicon.svg` with a relative path. On
-  // sub-routes like /openclaw/chat the browser resolves it to
-  // /openclaw/favicon.svg, which gateway does not serve. Rewrite to root.
-  if (req.path === "/openclaw/favicon.svg") {
-    req.url = "/favicon.svg";
   }
   if (isConfigured()) {
     if (gateway.isGatewayStarting() && !gateway.isGatewayReady()) {

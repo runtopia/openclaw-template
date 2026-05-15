@@ -36,11 +36,28 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     return false;
   }
 
+  function ensureConfigToken() {
+    const configPath = `${stateDir}/openclaw.json`;
+    if (!fs.existsSync(configPath)) return;
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      if (!config.gateway) return;
+      if (!config.gateway.auth) config.gateway.auth = {};
+      if (config.gateway.auth.token === gatewayToken) return;
+      config.gateway.auth.token = gatewayToken;
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      console.log("[gateway] patched config auth.token to match wrapper token");
+    } catch (err) {
+      console.warn(`[gateway] could not patch config auth.token: ${err.message}`);
+    }
+  }
+
   async function startGateway() {
     if (gatewayProc) return;
     if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
     fs.mkdirSync(stateDir, { recursive: true });
     fs.mkdirSync(workspaceDir, { recursive: true });
+    ensureConfigToken();
 
     const args = [
       "gateway", "run", "--bind", "loopback",

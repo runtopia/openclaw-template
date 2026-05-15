@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ensureControlUiConfig } from "../control-ui-config.js";
+import { patchConfig, setIn, mergeIn } from "../openclaw-config.js";
 
 const VALID_FLOWS = ["quickstart", "advanced", "manual"];
 const VALID_AUTH_CHOICES = [
@@ -191,6 +192,94 @@ export function createSetupRouter({
     }
   }
 
+  // Build the per-channel config + plugin install plan based on what the user
+  // submitted. `npmSpec=null` marks builtin channels (telegram/slack are
+  // included in the openclaw core package); those skip plugin install.
+  // `pluginId` mirrors the OpenClaw channel id and goes into plugins.entries
+  // so the gateway loader enables it on startup.
+  function buildChannelPlan(payload, channelsHelp) {
+    const plan = [];
+    const supported = (name) => channelsHelp.includes(name);
+    if (payload.telegramToken?.trim() && supported("telegram")) {
+      plan.push({
+        name: "telegram",
+        npmSpec: null,
+        pluginId: null,
+        config: {
+          enabled: true,
+          dmPolicy: payload.telegramDmPolicy === "open" ? "open" : "pairing",
+          token: payload.telegramToken.trim(),
+          groupPolicy: "allowlist",
+          streamMode: "partial",
+        },
+      });
+    }
+    if (payload.discordToken?.trim() && supported("discord")) {
+      plan.push({
+        name: "discord",
+        npmSpec: "@openclaw/discord",
+        pluginId: "discord",
+        config: {
+          enabled: true,
+          token: payload.discordToken.trim(),
+          groupPolicy: "allowlist",
+          dm: { policy: payload.discordDmPolicy === "open" ? "open" : "pairing" },
+        },
+      });
+    }
+    if ((payload.slackBotToken?.trim() || payload.slackAppToken?.trim()) && supported("slack")) {
+      plan.push({
+        name: "slack",
+        npmSpec: null,
+        pluginId: null,
+        config: {
+          enabled: true,
+          botToken: payload.slackBotToken?.trim(),
+          appToken: payload.slackAppToken?.trim(),
+        },
+      });
+    }
+    if (payload.feishuAppId?.trim() && payload.feishuAppSecret?.trim() && supported("feishu")) {
+      plan.push({
+        name: "feishu",
+        npmSpec: "@openclaw/feishu",
+        pluginId: "feishu",
+        config: {
+          enabled: true,
+          appId: payload.feishuAppId.trim(),
+          appSecret: payload.feishuAppSecret.trim(),
+          dmPolicy: payload.feishuDmPolicy === "pairing" ? "pairing" : "open",
+          allowFrom: ["*"],
+        },
+      });
+    }
+    if (payload.whatsappEnabled && supported("whatsapp")) {
+      plan.push({
+        name: "whatsapp",
+        npmSpec: "@openclaw/whatsapp",
+        pluginId: "whatsapp",
+        config: {
+          enabled: true,
+          dmPolicy: payload.whatsappDmPolicy === "pairing" ? "pairing" : "open",
+          allowFrom: ["*"],
+        },
+      });
+    }
+    if (payload.webchatEnabled && supported("webchat")) {
+      plan.push({
+        name: "webchat",
+        npmSpec: null,
+        pluginId: null,
+        config: {
+          enabled: true,
+          dmPolicy: payload.webchatDmPolicy === "pairing" ? "pairing" : "open",
+          allowFrom: ["*"],
+        },
+      });
+    }
+    return plan;
+  }
+
   router.get("/", requireSetupAuth, (_req, res) => res.sendFile(path.join(process.cwd(), "src", "public", "setup.html")));
   router.get("/styles.css", (_req, res) => { res.type("text/css"); res.sendFile(path.join(process.cwd(), "src", "public", "styles.css")); });
 
@@ -257,116 +346,95 @@ export function createSetupRouter({
       const ok = onboard.code === 0 && isConfigured();
 
       if (ok) {
-        extra += "\n[setup] Configuring gateway settings...\n";
-        const r2 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", gatewayToken]));
-        extra += `[config] gateway.auth.token exit=${r2.code}\n`;
-        // Include reverse-proxy subnet so WebSocket works through the wrapper.
-        // In Docker (colima / Railway) the wrapper runs on 172.x, which appears
-        // as ::ffff:172.17.x.x behind the proxy.
-        const r3 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.trustedProxies", '["127.0.0.1","::ffff:172.17.0.0/16"]']));
-        extra += `[config] gateway.trustedProxies exit=${r3.code}\n`;
+        // Single-write strategy: collect every config change into one
+        // patchConfig() call. Each `openclaw config set` shells out to a
+        // fresh node process (~3-5s cold start), so 10+ calls back-to-back
+        // used to add 30-60s of pure overhead here. One in-process JSON
+        // mutation drops that to a few ms — and triggers fewer gateway
+        // hot-reload events as a bonus.
+        extra += "\n[setup] Writing config...\n";
+        const isCustom = payload.authChoice === "custom-openai-compatible" || payload.authChoice === "custom-anthropic-compatible";
 
-        // controlUi.basePath, allowInsecureAuth, allowedOrigins (incl. the wrapper's
-        // rewritten Origin http://INTERNAL_GATEWAY_HOST:INTERNAL_GATEWAY_PORT) are
-        // owned by ensureControlUiConfig — single source of truth.
-        const patched = ensureControlUiConfig({
+        // Pre-compute custom provider shape (used inside patchConfig).
+        let customProviderKey = null;
+        let customPrimaryModelId = null;
+        if (isCustom && payload.customBaseUrl?.trim()) {
+          const baseUrl = payload.customBaseUrl.trim();
+          customProviderKey = deriveCustomProviderKey(payload.customProviderId, baseUrl) || "custom-provider";
+          const rawModel = payload.model?.trim() || "default";
+          const bareModelId = rawModel.includes("/") ? rawModel.split("/").slice(1).join("/") : rawModel;
+          customPrimaryModelId = `${customProviderKey}/${bareModelId}`;
+        }
+
+        // Build channel config + install plan. npmSpec=null means the channel
+        // is OpenClaw-builtin (telegram) and doesn't need a plugin install.
+        const { channelsHelp } = await getOpenclawInfo();
+        const channelPlan = buildChannelPlan(payload, channelsHelp);
+
+        patchConfig(configFilePath(), (cfg) => {
+          setIn(cfg, "gateway.auth.token", gatewayToken);
+          // Reverse-proxy subnet so WebSocket works through the wrapper.
+          // In Docker (colima / Railway) the wrapper runs on 172.x, which
+          // appears as ::ffff:172.17.x.x behind the proxy.
+          setIn(cfg, "gateway.trustedProxies", ["127.0.0.1", "::ffff:172.17.0.0/16"]);
+
+          if (isCustom && customProviderKey) {
+            const baseUrl = payload.customBaseUrl.trim();
+            const rawModel = payload.model?.trim() || "default";
+            const bareModelId = rawModel.includes("/") ? rawModel.split("/").slice(1).join("/") : rawModel;
+            const apiFormat = payload.authChoice === "custom-anthropic-compatible" ? "anthropic-messages" : "openai-completions";
+            const customProvider = {
+              baseUrl,
+              apiKey: (payload.authSecret || "").trim(),
+              api: apiFormat,
+              // contextWindow / maxTokens / vision aren't set by `openclaw onboard --custom-*`,
+              // so we overwrite the provider entry here with sensible defaults.
+              models: [{
+                id: bareModelId,
+                name: `${bareModelId} (${customProviderKey})`,
+                contextWindow: 200000,
+                maxTokens: 8192,
+                input: payload.customVision ? ["text", "image"] : ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                reasoning: false,
+              }],
+            };
+            setIn(cfg, `models.providers.${customProviderKey}`, customProvider);
+            setIn(cfg, "agents.defaults.model.primary", customPrimaryModelId);
+            mergeIn(cfg, "agents.defaults.models", { [customPrimaryModelId]: { alias: bareModelId } });
+          } else if (payload.model?.trim()) {
+            setIn(cfg, "agents.defaults.model.primary", payload.model.trim());
+          }
+
+          for (const ch of channelPlan) {
+            setIn(cfg, `channels.${ch.name}`, ch.config);
+            if (ch.pluginId) setIn(cfg, `plugins.entries.${ch.pluginId}`, { enabled: true });
+          }
+        });
+        extra += `[config] patched gateway + provider + ${channelPlan.length} channel(s) in one write\n`;
+
+        // controlUi is patched separately because the same helper runs at
+        // server startup and from auto-config — keeping it self-contained
+        // is simpler than threading the patcher through.
+        const controlUiPatched = ensureControlUiConfig({
           configPath: configFilePath(),
           port,
           internalGatewayHost,
           internalGatewayPort,
           allowedOriginsEnv: process.env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS,
         });
-        extra += `[config] controlUi patched=${patched}\n`;
+        extra += `[config] controlUi patched=${controlUiPatched}\n`;
 
-        if (payload.model?.trim()) {
-          const r5 = await runCmd(OPENCLAW_NODE, clawArgs(["models", "set", payload.model.trim()]));
-          extra += `[models set] exit=${r5.code}\n${r5.output || ""}`;
-        }
-
-        // Custom Provider: onboard 已通过 --custom-* 写入 baseUrl/apiKey/model,
-        // 这里再覆写一遍是为了带上 contextWindow / maxTokens / cost / vision input,
-        // OpenClaw onboard 默认不会塞这些字段。
-        const isCustom = payload.authChoice === "custom-openai-compatible" || payload.authChoice === "custom-anthropic-compatible";
-        if (isCustom && payload.customBaseUrl?.trim()) {
-          const apiFormat = payload.authChoice === "custom-anthropic-compatible" ? "anthropic-messages" : "openai-completions";
-          const baseUrl = payload.customBaseUrl.trim();
-          const providerKey = deriveCustomProviderKey(payload.customProviderId, baseUrl) || "custom-provider";
-          // 提取不含 provider/ 前缀的 model ID,作为 models 数组的 id
-          const rawModel = payload.model?.trim() || "default";
-          const bareModelId = rawModel.includes("/") ? rawModel.split("/").slice(1).join("/") : rawModel;
-          const input = payload.customVision ? ["text", "image"] : ["text"];
-          const customProvider = {
-            baseUrl,
-            apiKey: (payload.authSecret || "").trim(),
-            api: apiFormat,
-            models: [{
-              id: bareModelId,
-              name: `${bareModelId} (${providerKey})`,
-              contextWindow: 200000,
-              maxTokens: 8192,
-              input,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              reasoning: false,
-            }],
-          };
-          const rCustom = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", `models.providers.${providerKey}`, JSON.stringify(customProvider)]));
-          extra += `[config] custom provider key=${providerKey} (${apiFormat}, vision=${!!payload.customVision}) exit=${rCustom.code}\n`;
-
-          const primaryModelId = `${providerKey}/${bareModelId}`;
-          const rModel = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "agents.defaults.model.primary", primaryModelId]));
-          extra += `[config] custom model primary=${primaryModelId} exit=${rModel.code}\n`;
-
-          // 在 agents.defaults.models 里加 alias 映射,跟 openclaw 自身格式对齐
-          const aliasMap = { [primaryModelId]: { alias: bareModelId } };
-          const rAlias = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "--merge", "agents.defaults.models", JSON.stringify(aliasMap)]));
-          extra += `[config] custom model alias exit=${rAlias.code}\n`;
-        }
-
-        const channelsHelp = (await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]))).output || "";
-        async function configureChannel(name, cfgObj) {
-          if (!channelsHelp.includes(name)) return `\n[${name}] skipped (not in channels add --help)\n`;
-          const set = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", `channels.${name}`, JSON.stringify(cfgObj)]));
-          const get = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", `channels.${name}`]));
-          return `\n[${name}] config exit=${set.code}\n${set.output || "(no output)"}` +
-                 `\n[${name}] verify exit=${get.code}\n${get.output || "(no output)"}`;
-        }
-
-        if (payload.telegramToken?.trim()) {
-          const dmPolicy = payload.telegramDmPolicy === "open" ? "open" : "pairing";
-          extra += await configureChannel("telegram", { enabled: true, dmPolicy, token: payload.telegramToken.trim(), groupPolicy: "allowlist", streamMode: "partial" });
-        }
-        if (payload.discordToken?.trim()) {
-          const dmPolicy = payload.discordDmPolicy === "open" ? "open" : "pairing";
-          extra += await configureChannel("discord", { enabled: true, token: payload.discordToken.trim(), groupPolicy: "allowlist", dm: { policy: dmPolicy } });
-        }
-        if (payload.slackBotToken?.trim() || payload.slackAppToken?.trim()) {
-          extra += await configureChannel("slack", { enabled: true, botToken: payload.slackBotToken?.trim(), appToken: payload.slackAppToken?.trim() });
-        }
-        if (payload.feishuAppId?.trim() && payload.feishuAppSecret?.trim()) {
-          const dmPolicy = payload.feishuDmPolicy === "pairing" ? "pairing" : "open";
-          extra += await configureChannel("feishu", { enabled: true, appId: payload.feishuAppId.trim(), appSecret: payload.feishuAppSecret.trim(), dmPolicy, allowFrom: ["*"] });
-        }
-        if (payload.whatsappEnabled) {
-          const dmPolicy = payload.whatsappDmPolicy === "pairing" ? "pairing" : "open";
-          extra += await configureChannel("whatsapp", { enabled: true, dmPolicy, allowFrom: ["*"] });
-        }
-        if (payload.webchatEnabled) {
-          const dmPolicy = payload.webchatDmPolicy === "pairing" ? "pairing" : "open";
-          extra += await configureChannel("webchat", { enabled: true, dmPolicy, allowFrom: ["*"] });
-        }
-
-        // Ensure non-bundled channel plugins are registered in the plugin
-        // entries list so Gateway auto-loads them on restart.
-        // Only register plugins for channels the user actually configured —
-        // unconditionally registering lark/weixin/etc. causes "plugin not found"
-        // warnings every boot when the plugin isn't installed.
-        const pluginsToEnable = [];
-        if (payload.discordToken?.trim()) pluginsToEnable.push("discord");
-        if (payload.whatsappEnabled) pluginsToEnable.push("whatsapp");
-        if (payload.feishuAppId?.trim()) pluginsToEnable.push("lark");
-        for (const pluginId of pluginsToEnable) {
-          const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", `plugins.entries.${pluginId}`, JSON.stringify({ enabled: true })]));
-          if (r.code === 0) extra += `[plugin] ${pluginId} entry registered\n`;
+        for (const ch of channelPlan) {
+          if (!ch.npmSpec) continue;
+          extra += `\n[plugin] installing ${ch.name} (${ch.npmSpec}) — this may take 30-60s...\n`;
+          const r = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "install", ch.npmSpec, "--pin"]));
+          if (r.code === 0) {
+            extra += `[plugin] ${ch.name} installed\n`;
+          } else {
+            const tail = (r.output || "").split("\n").slice(-5).join("\n");
+            extra += `[plugin] ${ch.name} install FAILED exit=${r.code}\n${tail}\n`;
+          }
         }
 
         extra += "\n[setup] Starting gateway...\n";

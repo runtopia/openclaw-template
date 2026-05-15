@@ -436,20 +436,10 @@
           <h2 class="text-lg font-semibold mb-1">Channels</h2>
           <p class="text-neutral-500 text-sm mb-6">Connect messaging platforms (optional — can be added later)</p>
 
-          <div x-show="Object.values(availableChannels).filter(v => !v).length > 0" x-cloak class="mb-5 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-            <p class="text-xs text-amber-700 dark:text-amber-300">
-              <strong>Some channels are hidden because their plugins are not installed.</strong>
-              In Docker production these are auto-installed at boot via
-              <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">openclaw plugins install</code>;
-              for local dev install them with
-              <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">openclaw plugins install &lt;pkg&gt;</code>:
+          <div class="mb-5 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+            <p class="text-xs text-blue-700 dark:text-blue-300">
+              <strong>提示：</strong>除 Telegram / Slack 外，其他渠道（Discord / Feishu / WhatsApp / WeChat）首次启用时会触发后台安装对应 plugin，每个约 <strong>30-60s</strong>。整体 setup 耗时取决于选了几个，等耐心一点。
             </p>
-            <ul class="text-xs text-amber-700 dark:text-amber-300 mt-1.5 ml-4 space-y-0.5">
-              <li x-show="!availableChannels.discord">Discord → <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">@openclaw/discord</code></li>
-              <li x-show="!availableChannels.whatsapp">WhatsApp → <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">@openclaw/whatsapp</code></li>
-              <li x-show="!availableChannels.feishu">Feishu → <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">@larksuite/openclaw-lark</code></li>
-              <li x-show="!availableChannels.wechat">WeChat → <code class="bg-amber-200/50 dark:bg-amber-800/50 px-1 rounded">@tencent-weixin/openclaw-weixin</code></li>
-            </ul>
           </div>
 
           <div class="space-y-5">

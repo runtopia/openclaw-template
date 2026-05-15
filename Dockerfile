@@ -36,11 +36,14 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 # start.sh, so the container boot skips straight past plugin installation.
 # The plugin npm store is placed under /usr/local/lib/openclaw-plugins/;
 # start.sh is patched below to check there first.
-# --pin records the resolved <name>@<version>, locking the plugin to the build-
-# time openclaw core. Each install is followed by a hard check that the plugin
-# package landed on disk — silent install failures here are the worst-case
-# (runtime then tries to install the missing plugin and trips the managed-npm
-# peer-scan against stale state).
+# --pin tells OpenClaw to resolve the spec once and record the exact
+# <name>@<version> in npm/package.json, so subsequent rebuilds get the same
+# tree. We don't pass an explicit version because third-party plugins
+# (@tencent-weixin/openclaw-weixin, @larksuite/openclaw-lark) version on
+# their own schedule and don't track OPENCLAW_VERSION. Each install is
+# followed by a hard check that the plugin package landed on disk — silent
+# install failures here are the worst-case (runtime then tries to install
+# the missing plugin and trips the managed-npm peer-scan against stale state).
 ARG CACHEBUST_PLUGINS=v5
 RUN mkdir -p /usr/local/lib/openclaw-plugins/npm && \
   for pkg in \
@@ -49,8 +52,8 @@ RUN mkdir -p /usr/local/lib/openclaw-plugins/npm && \
     @openclaw/whatsapp \
     @larksuite/openclaw-lark \
     @tencent-weixin/openclaw-weixin; do \
-    echo "[prebuilt] installing ${pkg}@${OPENCLAW_VERSION}"; \
-    OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins openclaw plugins install "${pkg}@${OPENCLAW_VERSION}" --pin || { echo "FATAL: ${pkg} install command failed"; exit 1; }; \
+    echo "[prebuilt] installing ${pkg}"; \
+    OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins openclaw plugins install "${pkg}" --pin || { echo "FATAL: ${pkg} install command failed"; exit 1; }; \
     test -f "/usr/local/lib/openclaw-plugins/npm/node_modules/${pkg}/package.json" || { echo "FATAL: ${pkg} not present after install"; ls /usr/local/lib/openclaw-plugins/npm/node_modules/ 2>/dev/null; exit 1; }; \
   done && \
   echo "[prebuilt] final npm/package.json:" && \

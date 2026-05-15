@@ -29,23 +29,32 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Pin OpenClaw core.
-ARG OPENCLAW_VERSION=2026.5.7
+ARG OPENCLAW_VERSION=2026.5.12
 RUN npm install -g openclaw@${OPENCLAW_VERSION}
 
 # Pre-install channel plugins at build time using the same mechanism as
 # start.sh, so the container boot skips straight past plugin installation.
 # The plugin npm store is placed under /usr/local/lib/openclaw-plugins/;
 # start.sh is patched below to check there first.
-ARG CACHEBUST_PLUGINS=v2
+# --pin records the resolved <name>@<version>, locking the plugin to the build-
+# time openclaw core. Each install is followed by a hard check that the plugin
+# package landed on disk — silent install failures here are the worst-case
+# (runtime then tries to install the missing plugin and trips the managed-npm
+# peer-scan against stale state).
+ARG CACHEBUST_PLUGINS=v5
 RUN mkdir -p /usr/local/lib/openclaw-plugins/npm && \
-  OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins \
-    openclaw plugins install @openclaw/discord --pin && \
-  OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins \
-    openclaw plugins install @openclaw/whatsapp --pin && \
-  OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins \
-    openclaw plugins install @larksuite/openclaw-lark --pin && \
-  OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins \
-    openclaw plugins install @tencent-weixin/openclaw-weixin --pin && \
+  for pkg in \
+    @openclaw/codex \
+    @openclaw/discord \
+    @openclaw/whatsapp \
+    @larksuite/openclaw-lark \
+    @tencent-weixin/openclaw-weixin; do \
+    echo "[prebuilt] installing ${pkg}@${OPENCLAW_VERSION}"; \
+    OPENCLAW_STATE_DIR=/usr/local/lib/openclaw-plugins openclaw plugins install "${pkg}@${OPENCLAW_VERSION}" --pin || { echo "FATAL: ${pkg} install command failed"; exit 1; }; \
+    test -f "/usr/local/lib/openclaw-plugins/npm/node_modules/${pkg}/package.json" || { echo "FATAL: ${pkg} not present after install"; ls /usr/local/lib/openclaw-plugins/npm/node_modules/ 2>/dev/null; exit 1; }; \
+  done && \
+  echo "[prebuilt] final npm/package.json:" && \
+  cat /usr/local/lib/openclaw-plugins/npm/package.json && \
   # Make pre-built plugins readable by the non-root 'openclaw' user
   chmod -R a+rX /usr/local/lib/openclaw-plugins
 

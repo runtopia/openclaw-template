@@ -16,6 +16,7 @@ OPENCLAW_CMD="node /usr/local/lib/node_modules/openclaw/dist/entry.js"
 # If the pre-built directory is missing (e.g. non-Docker dev), we fall through
 # to the legacy install path.
 PLUGINS_TO_INSTALL=(
+  "@openclaw/codex"
   "@openclaw/discord"
   "@openclaw/whatsapp"
   "@larksuite/openclaw-lark"
@@ -28,13 +29,30 @@ install_channel_plugins() {
   mkdir -p "$STATE_DIR/npm/node_modules"
   local npm_root="$STATE_DIR/npm/node_modules"
 
-  # Fast path: copy from pre-built image layer
+  # Fast path: copy from pre-built image layer. We tried symlinks but openclaw's
+  # plugin discovery doesn't follow them — it resolves real paths and filters out
+  # anything outside STATE_DIR/npm/node_modules. cp is the only reliable approach.
+  #
+  # Wipe STATE_DIR/npm/node_modules entirely before cp:
+  #   - Railway volume can carry stale state from older deployments (e.g.
+  #     @anthropic-ai/sdk left over from when codex was installed at runtime,
+  #     possibly as an absolute symlink into /usr/local/...).
+  #   - OpenClaw's managed-npm peer scan (npm-managed-root) does fs.realpath
+  #     on every node_modules entry and throws if it resolves outside the npm
+  #     root boundary — stale absolute symlinks blow up plugin install.
+  # Also wipe package.json / package-lock.json so they're replaced by prebuilt
+  # versions (not merged with old).
   if [ -d "$PREBUILT_PLUGIN_DIR/npm/node_modules" ]; then
     echo "[start.sh] copying pre-built plugins from $PREBUILT_PLUGIN_DIR…"
+    rm -rf "$npm_root" "$STATE_DIR/npm/package.json" "$STATE_DIR/npm/package-lock.json"
+    mkdir -p "$npm_root"
     cp -r "$PREBUILT_PLUGIN_DIR/npm/." "$STATE_DIR/npm/"
-    # Ensure config JSON references plugins
     for pkg in "${PLUGINS_TO_INSTALL[@]}"; do
-      echo "[start.sh] plugin ready: $pkg"
+      if [ -f "$STATE_DIR/npm/node_modules/$pkg/package.json" ]; then
+        echo "[start.sh] plugin ready: $pkg"
+      else
+        echo "[start.sh] WARN: $pkg missing in prebuilt (expected at $STATE_DIR/npm/node_modules/$pkg)"
+      fi
     done
     return
   fi

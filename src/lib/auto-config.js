@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./channel-manifest.js";
+import { ensureControlUiConfig } from "./control-ui-config.js";
 
 export function hasAutoConfigEnvVars(env = process.env) {
   const keys = [
@@ -19,7 +20,7 @@ export function hasAutoConfigEnvVars(env = process.env) {
 export function buildOnboardArgs(payload) {
   const args = [
     "onboard", "--non-interactive", "--accept-risk", "--json",
-    "--no-install-daemon", "--skip-health",
+    "--no-install-daemon", "--skip-health", "--skip-skills",
     "--workspace", payload.workspaceDir,
     "--gateway-bind", "loopback",
     "--gateway-port", String(payload.internalGatewayPort),
@@ -28,28 +29,42 @@ export function buildOnboardArgs(payload) {
     "--flow", payload.flow || "quickstart",
   ];
 
-  if (payload.authChoice) {
-    args.push("--auth-choice", payload.authChoice);
+  if (!payload.authChoice) return args;
+
+  if (payload.authChoice === "custom-api-key") {
+    // 走 OpenClaw 原生 custom-api-key 路径，避免 openai-api-key 兜底导致
+    // onboard 把 default model 设成 openai/gpt-5.5 -> 强制安装 @openclaw/codex。
+    args.push("--auth-choice", "custom-api-key");
+    if (payload.customBaseUrl) args.push("--custom-base-url", payload.customBaseUrl);
     const secret = (payload.authSecret || "").trim();
-    const map = {
-      "openai-api-key": "--openai-api-key",
-      apiKey: "--anthropic-api-key",
-      "openrouter-api-key": "--openrouter-api-key",
-      "ai-gateway-api-key": "--ai-gateway-api-key",
-      "moonshot-api-key": "--moonshot-api-key",
-      "kimi-code-api-key": "--kimi-code-api-key",
-      "gemini-api-key": "--gemini-api-key",
-      "zai-api-key": "--zai-api-key",
-      "minimax-api": "--minimax-api-key",
-      "minimax-api-lightning": "--minimax-api-key",
-      "synthetic-api-key": "--synthetic-api-key",
-      "opencode-zen": "--opencode-zen-api-key",
-    };
-    const flag = map[payload.authChoice];
-    if (flag && secret) args.push(flag, secret);
-    if (payload.authChoice === "token" && secret) {
-      args.push("--token-provider", "anthropic", "--token", secret);
-    }
+    if (secret) args.push("--custom-api-key", secret);
+    args.push("--custom-compatibility", payload.customCompatibility || "openai");
+    if (payload.customModelId) args.push("--custom-model-id", payload.customModelId);
+    if (payload.customProviderId) args.push("--custom-provider-id", payload.customProviderId);
+    args.push(payload.customVision ? "--custom-image-input" : "--custom-text-input");
+    return args;
+  }
+
+  args.push("--auth-choice", payload.authChoice);
+  const secret = (payload.authSecret || "").trim();
+  const map = {
+    "openai-api-key": "--openai-api-key",
+    apiKey: "--anthropic-api-key",
+    "openrouter-api-key": "--openrouter-api-key",
+    "ai-gateway-api-key": "--ai-gateway-api-key",
+    "moonshot-api-key": "--moonshot-api-key",
+    "kimi-code-api-key": "--kimi-code-api-key",
+    "gemini-api-key": "--gemini-api-key",
+    "zai-api-key": "--zai-api-key",
+    "minimax-api": "--minimax-api-key",
+    "minimax-api-lightning": "--minimax-api-key",
+    "synthetic-api-key": "--synthetic-api-key",
+    "opencode-zen": "--opencode-zen-api-key",
+  };
+  const flag = map[payload.authChoice];
+  if (flag && secret) args.push(flag, secret);
+  if (payload.authChoice === "token" && secret) {
+    args.push("--token-provider", "anthropic", "--token", secret);
   }
   return args;
 }
@@ -65,22 +80,37 @@ export function resolveAuth(env) {
     return { authChoice: "openai-api-key", authSecret: env.DEEPSEEK_API_KEY.trim() };
   if (env.OPENROUTER_API_KEY?.trim())
     return { authChoice: "openrouter-api-key", authSecret: env.OPENROUTER_API_KEY.trim() };
-  if (env.CLAWROUTERS_KEY?.trim())
-    return { authChoice: "openai-api-key", authSecret: env.CLAWROUTERS_KEY.trim() };
+  if (env.CLAWROUTERS_KEY?.trim()) {
+    const baseUrl = env.ONECLAW_END_USER
+      ? (env.CR_PROXY_BASE_URL || "http://127.0.0.1:18791/api/v1")
+      : "https://www.clawrouters.com/api/v1";
+    return {
+      authChoice: "custom-api-key",
+      authSecret: env.CLAWROUTERS_KEY.trim(),
+      customBaseUrl: baseUrl,
+      customModelId: "auto",
+      customProviderId: "clawrouters",
+      customCompatibility: "openai",
+      customVision: true,
+    };
+  }
   return {};
 }
 
 async function configureGatewaySettings(ctx) {
-  const { runCmd, OPENCLAW_NODE, clawArgs, gatewayToken } = ctx;
+  const { runCmd, OPENCLAW_NODE, clawArgs, gatewayToken, stateDir, internalGatewayPort } = ctx;
   console.log("[auto-config] configuring gateway settings...");
-  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.controlUi.allowInsecureAuth", "true"]));
   await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", gatewayToken]));
   await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.trustedProxies", '["127.0.0.1"]']));
-  const originsResult = await runCmd(OPENCLAW_NODE, clawArgs([
-    "config", "set", "--json", "gateway.controlUi.allowedOrigins",
-    '["https://oneclaw.net","https://www.oneclaw.net"]',
-  ]));
-  console.log(`[auto-config] allowedOrigins set exit=${originsResult.code}`);
+  // controlUi config (basePath, allowInsecureAuth, allowedOrigins including the
+  // wrapper's rewritten Origin) is owned by ensureControlUiConfig.
+  ensureControlUiConfig({
+    configPath: path.join(stateDir, "openclaw.json"),
+    port: ctx.env?.PORT || process.env.PORT || 8080,
+    internalGatewayHost: ctx.env?.INTERNAL_GATEWAY_HOST || "127.0.0.1",
+    internalGatewayPort,
+    allowedOriginsEnv: ctx.env?.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS,
+  });
 }
 
 async function configureClawRoutersProvider(ctx) {
@@ -147,9 +177,10 @@ export async function autoConfigureFromEnv(ctx) {
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.mkdirSync(path.join(stateDir, "credentials"), { recursive: true });
 
-  const { authChoice, authSecret } = resolveAuth(env);
+  const auth = resolveAuth(env);
   const onboardArgs = buildOnboardArgs({
-    flow: "quickstart", authChoice, authSecret,
+    flow: "quickstart",
+    ...auth,
     model: (env.DEFAULT_MODEL || "").trim() || "",
     workspaceDir,
     internalGatewayPort: ctx.internalGatewayPort,

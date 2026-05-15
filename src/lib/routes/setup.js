@@ -5,6 +5,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { ensureControlUiConfig } from "../control-ui-config.js";
+
 const VALID_FLOWS = ["quickstart", "advanced", "manual"];
 const VALID_AUTH_CHOICES = [
   "codex-cli", "openai-codex", "openai-api-key",
@@ -37,6 +39,7 @@ function validatePayload(payload) {
 export function createSetupRouter({
   SETUP_PASSWORD, OPENCLAW_NODE, clawArgs, runCmd, isConfigured,
   ensureGatewayRunning, restartGateway, stateDir, workspaceDir, gatewayToken,
+  configFilePath, port, internalGatewayHost, internalGatewayPort,
   ENABLE_WEB_TUI,
 }) {
   const router = express.Router();
@@ -138,7 +141,7 @@ export function createSetupRouter({
   function buildOnboardArgs(payload) {
     const args = [
       "onboard", "--non-interactive", "--accept-risk", "--json",
-      "--no-install-daemon", "--skip-health",
+      "--no-install-daemon", "--skip-health", "--skip-skills",
       "--workspace", workspaceDir,
       "--gateway-bind", "loopback",
       "--gateway-port", "18789",
@@ -146,28 +149,56 @@ export function createSetupRouter({
       "--gateway-token", gatewayToken,
       "--flow", payload.flow || "quickstart",
     ];
-    if (payload.authChoice) {
-      // custom provider：onboard 阶段统一用 openai-api-key 走，post-onboard 再覆写 provider 配置
-      const effectiveAuthChoice = (payload.authChoice === "custom-openai-compatible" || payload.authChoice === "custom-anthropic-compatible")
-        ? "openai-api-key"
-        : payload.authChoice;
-      args.push("--auth-choice", effectiveAuthChoice);
+    if (!payload.authChoice) return args;
+    const isCustom = payload.authChoice === "custom-openai-compatible" || payload.authChoice === "custom-anthropic-compatible";
+    if (isCustom) {
+      // custom provider 走 OpenClaw 原生 --auth-choice custom-api-key 路径。
+      // 走 openai-api-key 兜底的旧做法会让 OpenClaw 把默认 model 设成 openai/gpt-5.5,
+      // 在 onboard 内部触发 ensureCodexRuntimePluginForModelSelection -> 强制安装
+      // @openclaw/codex，进而踩 managed-npm peer scan 失败（~30s 浪费 + 装不上）。
+      args.push("--auth-choice", "custom-api-key");
+      const baseUrl = (payload.customBaseUrl || "").trim();
+      if (baseUrl) args.push("--custom-base-url", baseUrl);
       const secret = (payload.authSecret || "").trim();
-      const map = {
-        "openai-api-key": "--openai-api-key", apiKey: "--anthropic-api-key",
-        "openrouter-api-key": "--openrouter-api-key", "ai-gateway-api-key": "--ai-gateway-api-key",
-        "moonshot-api-key": "--moonshot-api-key", "kimi-code-api-key": "--kimi-code-api-key",
-        "gemini-api-key": "--gemini-api-key", "zai-api-key": "--zai-api-key",
-        "minimax-api": "--minimax-api-key", "minimax-api-lightning": "--minimax-api-key",
-        "synthetic-api-key": "--synthetic-api-key", "opencode-zen": "--opencode-zen-api-key",
-        "custom-openai-compatible": "--openai-api-key",
-        "custom-anthropic-compatible": "--openai-api-key",
-      };
-      const flag = map[payload.authChoice];
-      if (flag && secret) args.push(flag, secret);
-      if (payload.authChoice === "token" && secret) args.push("--token-provider", "anthropic", "--token", secret);
+      if (secret) args.push("--custom-api-key", secret);
+      args.push("--custom-compatibility", payload.authChoice === "custom-anthropic-compatible" ? "anthropic" : "openai");
+      const rawModel = (payload.model || "").trim() || "default";
+      const bareModelId = rawModel.includes("/") ? rawModel.split("/").slice(1).join("/") : rawModel;
+      args.push("--custom-model-id", bareModelId);
+      const providerKey = deriveCustomProviderKey(payload.customProviderId, baseUrl);
+      if (providerKey) args.push("--custom-provider-id", providerKey);
+      if (payload.customVision) args.push("--custom-image-input");
+      else args.push("--custom-text-input");
+      return args;
     }
+    args.push("--auth-choice", payload.authChoice);
+    const secret = (payload.authSecret || "").trim();
+    const map = {
+      "openai-api-key": "--openai-api-key", apiKey: "--anthropic-api-key",
+      "openrouter-api-key": "--openrouter-api-key", "ai-gateway-api-key": "--ai-gateway-api-key",
+      "moonshot-api-key": "--moonshot-api-key", "kimi-code-api-key": "--kimi-code-api-key",
+      "gemini-api-key": "--gemini-api-key", "zai-api-key": "--zai-api-key",
+      "minimax-api": "--minimax-api-key", "minimax-api-lightning": "--minimax-api-key",
+      "synthetic-api-key": "--synthetic-api-key", "opencode-zen": "--opencode-zen-api-key",
+    };
+    const flag = map[payload.authChoice];
+    if (flag && secret) args.push(flag, secret);
+    if (payload.authChoice === "token" && secret) args.push("--token-provider", "anthropic", "--token", secret);
     return args;
+  }
+
+  function deriveCustomProviderKey(rawId, baseUrl) {
+    const explicit = (rawId || "").trim();
+    if (explicit) return explicit;
+    if (!baseUrl) return "";
+    try {
+      const u = new URL(baseUrl);
+      const host = u.hostname.toLowerCase().replace(/^(www|api|v\d+)\./i, "");
+      const root = host.split(".")[0];
+      return (root || "").replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+    } catch {
+      return "";
+    }
   }
 
   router.get("/", requireSetupAuth, (_req, res) => res.sendFile(path.join(process.cwd(), "src", "public", "setup.html")));
@@ -237,8 +268,6 @@ export function createSetupRouter({
 
       if (ok) {
         extra += "\n[setup] Configuring gateway settings...\n";
-        const r1 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.controlUi.allowInsecureAuth", "true"]));
-        extra += `[config] gateway.controlUi.allowInsecureAuth exit=${r1.code}\n`;
         const r2 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", gatewayToken]));
         extra += `[config] gateway.auth.token exit=${r2.code}\n`;
         // Include reverse-proxy subnet so WebSocket works through the wrapper.
@@ -247,46 +276,31 @@ export function createSetupRouter({
         const r3 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.trustedProxies", '["127.0.0.1","::ffff:172.17.0.0/16"]']));
         extra += `[config] gateway.trustedProxies exit=${r3.code}\n`;
 
-        const setupAllowedOrigins = process.env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS?.trim();
-        if (setupAllowedOrigins) {
-          const originsArray = setupAllowedOrigins.split(",").map((o) => o.trim()).filter(Boolean);
-          const r4 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", JSON.stringify(originsArray)]));
-          extra += `[config] gateway.controlUi.allowedOrigins exit=${r4.code}\n`;
-        } else {
-          // Default: allow the wrapper proxy (localhost:$PORT) + OneClaw cloud
-          const defaultOrigins = [
-            `http://localhost:${process.env.PORT || 8080}`,
-            `http://127.0.0.1:${process.env.PORT || 8080}`,
-            "https://oneclaw.net",
-            "https://www.oneclaw.net",
-          ];
-          const r4 = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.controlUi.allowedOrigins", JSON.stringify(defaultOrigins)]));
-          extra += `[config] gateway.controlUi.allowedOrigins exit=${r4.code}\n`;
-        }
+        // controlUi.basePath, allowInsecureAuth, allowedOrigins (incl. the wrapper's
+        // rewritten Origin http://INTERNAL_GATEWAY_HOST:INTERNAL_GATEWAY_PORT) are
+        // owned by ensureControlUiConfig — single source of truth.
+        const patched = ensureControlUiConfig({
+          configPath: configFilePath(),
+          port,
+          internalGatewayHost,
+          internalGatewayPort,
+          allowedOriginsEnv: process.env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS,
+        });
+        extra += `[config] controlUi patched=${patched}\n`;
 
         if (payload.model?.trim()) {
           const r5 = await runCmd(OPENCLAW_NODE, clawArgs(["models", "set", payload.model.trim()]));
           extra += `[models set] exit=${r5.code}\n${r5.output || ""}`;
         }
 
-        // 自定义 Provider：onboard 用 openai-api-key 走通流程，这里覆写成用户指定的 baseUrl + models 列表
+        // Custom Provider: onboard 已通过 --custom-* 写入 baseUrl/apiKey/model,
+        // 这里再覆写一遍是为了带上 contextWindow / maxTokens / cost / vision input,
+        // OpenClaw onboard 默认不会塞这些字段。
         const isCustom = payload.authChoice === "custom-openai-compatible" || payload.authChoice === "custom-anthropic-compatible";
         if (isCustom && payload.customBaseUrl?.trim()) {
-          const apiFormat = payload.authChoice === "custom-anthropic-compatible"
-            ? "anthropic-messages"
-            : (payload.customApiFormat || "openai-completions");
+          const apiFormat = payload.authChoice === "custom-anthropic-compatible" ? "anthropic-messages" : "openai-completions";
           const baseUrl = payload.customBaseUrl.trim();
-          // Provider key: 优先用用户填的，否则从 hostname 智能派生(去掉 www/api/v\d+ 前缀，只取主域)
-          let providerKey = payload.customProviderId?.trim() || "";
-          if (!providerKey) {
-            try {
-              const u = new URL(baseUrl);
-              const host = u.hostname.toLowerCase().replace(/^(www|api|v\d+)\./i, "");
-              const root = host.split(".")[0];
-              providerKey = (root || "").replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-            } catch {}
-          }
-          if (!providerKey) providerKey = "custom-provider";
+          const providerKey = deriveCustomProviderKey(payload.customProviderId, baseUrl) || "custom-provider";
           // 提取不含 provider/ 前缀的 model ID,作为 models 数组的 id
           const rawModel = payload.model?.trim() || "default";
           const bareModelId = rawModel.includes("/") ? rawModel.split("/").slice(1).join("/") : rawModel;
@@ -298,7 +312,7 @@ export function createSetupRouter({
             models: [{
               id: bareModelId,
               name: `${bareModelId} (${providerKey})`,
-              contextWindow: 128000,
+              contextWindow: 200000,
               maxTokens: 8192,
               input,
               cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -353,9 +367,14 @@ export function createSetupRouter({
 
         // Ensure non-bundled channel plugins are registered in the plugin
         // entries list so Gateway auto-loads them on restart.
-        // Without this, doctor --fix or config reset can drop the entry,
-        // causing the plugin (e.g. discord) to be skipped at boot.
-        for (const pluginId of ["discord", "whatsapp", "lark", "weixin"]) {
+        // Only register plugins for channels the user actually configured —
+        // unconditionally registering lark/weixin/etc. causes "plugin not found"
+        // warnings every boot when the plugin isn't installed.
+        const pluginsToEnable = [];
+        if (payload.discordToken?.trim()) pluginsToEnable.push("discord");
+        if (payload.whatsappEnabled) pluginsToEnable.push("whatsapp");
+        if (payload.feishuAppId?.trim()) pluginsToEnable.push("lark");
+        for (const pluginId of pluginsToEnable) {
           const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", `plugins.entries.${pluginId}`, JSON.stringify({ enabled: true })]));
           if (r.code === 0) extra += `[plugin] ${pluginId} entry registered\n`;
         }

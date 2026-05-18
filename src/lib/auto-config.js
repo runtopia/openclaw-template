@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./channel-manifest.js";
 import { ensureControlUiConfig } from "./control-ui-config.js";
-import { patchConfig, setIn } from "./openclaw-config.js";
+import { patchConfig, setIn, mergeIn } from "./openclaw-config.js";
 
 export function hasAutoConfigEnvVars(env = process.env) {
   const keys = [
@@ -132,7 +132,8 @@ function applyAutoConfig(ctx) {
       ];
       setIn(cfg, "models.providers.clawrouters", { baseUrl: crBaseUrl, apiKey: clawRoutersKey, api: "openai-completions", models: visionModels });
       setIn(cfg, "agents.defaults.model.primary", "clawrouters/auto");
-      setIn(cfg, "models.providers.openai", { baseUrl: crBaseUrl, apiKey: clawRoutersKey });
+      // Merge into existing openai provider config (preserves models array from onboard)
+      mergeIn(cfg, "models.providers.openai", { baseUrl: crBaseUrl, apiKey: clawRoutersKey });
       setIn(cfg, "agents.defaults.imageGenerationModel", { primary: "openai/gpt-image-1" });
       for (const skillKey of ["openai-image-gen", "nano-banana-pro"]) {
         setIn(cfg, `skills.entries.${skillKey}`, { enabled: false });

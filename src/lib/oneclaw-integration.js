@@ -182,9 +182,22 @@ export function createOneclawIntegration({
   async function sendHeartbeat() {
     try {
       const status = isGatewayReady() ? "healthy" : isGatewayStarting() ? "starting" : "unhealthy";
+      // Report platform/channel state so the OneClaw dashboard's
+      // "Connected Platforms" section flips from "waiting" → "connected"
+      // once a channel is reachable. We treat a channel as online when its
+      // env credentials are present AND the gateway is ready (i.e. the
+      // plugin has booted). This matches what the inbound message logs show.
+      const gatewayReady = isGatewayReady();
+      const platforms = gatewayReady ? {
+        telegram: !!process.env.TELEGRAM_BOT_TOKEN?.trim(),
+        discord: !!process.env.DISCORD_BOT_TOKEN?.trim(),
+        feishu: !!(process.env.FEISHU_APP_ID?.trim() && process.env.FEISHU_APP_SECRET?.trim()),
+        whatsapp: process.env.WHATSAPP_ENABLED === "1",
+        wechat: process.env.WECHAT_ENABLED === "1",
+      } : {};
       const res = await apiFetch("/agent/heartbeat", {
         method: "POST",
-        body: JSON.stringify({ instanceId, status, timestamp: new Date().toISOString(), uptime: process.uptime(), gatewayReady: isGatewayReady() }),
+        body: JSON.stringify({ instanceId, status, timestamp: new Date().toISOString(), uptime: process.uptime(), gatewayReady, platforms }),
       });
       if (res.ok) {
         console.log(`[heartbeat] sent: ${status}`);

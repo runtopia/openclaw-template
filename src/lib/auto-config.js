@@ -203,7 +203,16 @@ export async function autoConfigureFromEnv(ctx) {
 
   applyAutoConfig(ctx);
 
-  console.log("[auto-config] BUILD_ID=v20260518-openai-models-fix — single-write config patch");
+  // Safety net: run `openclaw doctor --fix` so any residual config validation
+  // problems (e.g. missing provider models[] arrays, stale plugin entries)
+  // are auto-repaired before gateway boots. Without this, a single config
+  // schema drift could brick gateway startup.
+  console.log("[auto-config] running doctor --fix to validate config...");
+  const doctor = await ctx.runCmd(ctx.OPENCLAW_NODE, ctx.clawArgs(["doctor", "--fix", "--yes"]));
+  console.log(`[auto-config] doctor exit=${doctor.code}`);
+  if (doctor.output) console.log(doctor.output);
+
+  console.log("[auto-config] BUILD_ID=v20260518-doctor-fix — config patch + doctor safety net");
   console.log("[auto-config] configuration complete!");
   return true;
 }

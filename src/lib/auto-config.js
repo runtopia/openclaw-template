@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./channel-manifest.js";
 import { ensureControlUiConfig } from "./control-ui-config.js";
-import { patchConfig, setIn, mergeIn } from "./openclaw-config.js";
+import { patchConfig, setIn } from "./openclaw-config.js";
 
 export function hasAutoConfigEnvVars(env = process.env) {
   const keys = [
@@ -132,8 +132,16 @@ function applyAutoConfig(ctx) {
       ];
       setIn(cfg, "models.providers.clawrouters", { baseUrl: crBaseUrl, apiKey: clawRoutersKey, api: "openai-completions", models: visionModels });
       setIn(cfg, "agents.defaults.model.primary", "clawrouters/auto");
-      // Merge into existing openai provider config (preserves models array from onboard)
-      mergeIn(cfg, "models.providers.openai", { baseUrl: crBaseUrl, apiKey: clawRoutersKey });
+      // Route openai provider through ClawRouters too — must include models[]
+      // array to pass gateway config validation. gpt-image-1 is referenced by
+      // imageGenerationModel below.
+      setIn(cfg, "models.providers.openai", {
+        baseUrl: crBaseUrl,
+        apiKey: clawRoutersKey,
+        models: [
+          { id: "gpt-image-1", name: "GPT Image 1", input: ["text"], output: ["image"] },
+        ],
+      });
       setIn(cfg, "agents.defaults.imageGenerationModel", { primary: "openai/gpt-image-1" });
       for (const skillKey of ["openai-image-gen", "nano-banana-pro"]) {
         setIn(cfg, `skills.entries.${skillKey}`, { enabled: false });
@@ -195,7 +203,7 @@ export async function autoConfigureFromEnv(ctx) {
 
   applyAutoConfig(ctx);
 
-  console.log("[auto-config] BUILD_ID=v20260515 — single-write config patch");
+  console.log("[auto-config] BUILD_ID=v20260518-openai-models-fix — single-write config patch");
   console.log("[auto-config] configuration complete!");
   return true;
 }

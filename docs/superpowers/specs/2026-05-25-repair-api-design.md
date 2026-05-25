@@ -11,7 +11,7 @@
 - 修复聊天只要容器存活就可用（不依赖 gateway）
 - AI 使用容器启动时读入内存的 key（免疫用户后续的配置改动）
 - 所有端点复用现有 `SETUP_PASSWORD` 认证
-- 纯 API，本项目不新增任何 UI 页面
+- 在 `/setup` 页面「配置完成」区域新增「修复助手」面板，无需独立页面
 
 ## 架构
 
@@ -109,6 +109,35 @@ data: {"type":"error","message":"..."}
 | `restart_gateway` | 操作 | 终止并重启 gateway 进程 |
 | `patch_config` | 操作 | 通过 dot-path 写入 `openclaw.json`，输入：`{ path: "gateway.auth.token", value: "..." }` |
 
+## 修复助手 UI（setup.html 配置完成区）
+
+在现有「配置完成」管理区下方新增「修复助手」面板，使用与现有组件一致的 Tailwind + Alpine.js 风格。
+
+**布局：**
+```
+[ Run Doctor ] [ Restart Gateway ] [ View Logs ]   ← 快捷操作按钮行
+
+┌─ 修复助手 ────────────────────────────────────┐
+│  [AI 消息流，支持 markdown]                    │
+│  🔧 read_logs → ▶ 展开结果                    │
+│  [用户消息]                                    │
+│  [AI 流式回复...]                              │
+├────────────────────────────────────────────────┤
+│  [输入框]                           [发送 ▶]   │
+└────────────────────────────────────────────────┘
+```
+
+**交互细节：**
+- 发送消息 → 调 `POST /setup/api/repair/chat` → 读 SSE 流
+- `type:text` delta → 追加到当前 AI 消息气泡
+- `type:tool_call` → 插入工具调用行（折叠，点击展开）
+- `type:tool_result` → 填入对应工具调用行的结果
+- `type:done` → 完成，输入框恢复可用
+- `type:error` → 显示错误提示
+- 快捷按钮直接调对应 REST 端点，结果以系统消息形式插入聊天流
+
+**i18n：** 补充中英文词条（`repairTitle`、`repairPlaceholder`、`repairSend` 等），与现有 I18N 结构一致。
+
 ## 改动文件汇总
 
 | 文件 | 类型 | 说明 |
@@ -116,6 +145,8 @@ data: {"type":"error","message":"..."}
 | `src/lib/routes/repair.js` | **新增** | 全部修复端点 + 聊天处理逻辑 |
 | `src/lib/gateway.js` | 改动 | stdout/stderr 改为 pipe，写入 ring buffer，暴露 `getRecentLogs()` |
 | `src/server.js` | 改动 | 启动时读取 `repairAiKey`，传入 `createRepairRouter` |
+| `src/public/setup.html` | 改动 | 配置完成区新增修复助手面板 + i18n 词条 |
+| `src/public/setup-app.js` | 改动 | 聊天状态管理、SSE 读取、工具调用展示逻辑 |
 
 ## 安全说明
 

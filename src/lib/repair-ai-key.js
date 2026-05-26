@@ -12,7 +12,7 @@ export function readDefaultProviderKey(configPath) {
     return {
       apiKey: provider.apiKey,
       baseUrl: (provider.baseUrl || "https://api.openai.com/v1").replace(/\/$/, ""),
-      model: primary,
+      model: primary.includes("/") ? primary.split("/").slice(1).join("/") : primary,
       providerName,
     };
   } catch {

@@ -480,9 +480,13 @@
             return true;
           })
           .map(m => ({ role: m.role, content: m.content }));
+        const aiMsgIdx = this.repairMessages.length;
         this.repairMessages.push({ role: 'assistant', content: '', _type: 'assistant', _toolCalls: [] });
-        // Use reactive proxy reference so Alpine detects property mutations
-        const aiRef = () => this.repairMessages[this.repairMessages.length - 1];
+        // splice replaces the item with a new object, guaranteeing Alpine detects the change
+        const updateAiMsg = (updater) => {
+          const m = this.repairMessages[aiMsgIdx];
+          this.repairMessages.splice(aiMsgIdx, 1, updater(m));
+        };
         try {
           const res = await fetch('/setup/api/repair/chat', {
             method: 'POST',
@@ -492,7 +496,7 @@
           });
           if (!res.ok) {
             const errText = await res.text();
-            aiRef().content = `❌ ${res.status}: ${errText}`;
+            updateAiMsg(m => ({ ...m, content: `❌ ${res.status}: ${errText}` }));
             return;
           }
           const reader = res.body.getReader();
@@ -509,20 +513,19 @@
               try {
                 const ev = JSON.parse(part.slice(6));
                 if (ev.type === 'text') {
-                  aiRef().content += ev.delta;
+                  updateAiMsg(m => ({ ...m, content: m.content + ev.delta }));
                 } else if (ev.type === 'tool_call') {
-                  aiRef()._toolCalls.push({ ...ev, _output: null, _expanded: false });
+                  updateAiMsg(m => ({ ...m, _toolCalls: [...m._toolCalls, { ...ev, _output: null, _expanded: false }] }));
                 } else if (ev.type === 'tool_result') {
-                  const tc = aiRef()._toolCalls.find(t => t.id === ev.id);
-                  if (tc) tc._output = ev.output;
+                  updateAiMsg(m => ({ ...m, _toolCalls: m._toolCalls.map(tc => tc.id === ev.id ? { ...tc, _output: ev.output } : tc) }));
                 } else if (ev.type === 'error') {
-                  aiRef().content += '\n\n❌ ' + ev.message;
+                  updateAiMsg(m => ({ ...m, content: m.content + '\n\n❌ ' + ev.message }));
                 }
               } catch {}
             }
           }
         } catch (err) {
-          aiRef().content += '\n\n❌ ' + String(err);
+          updateAiMsg(m => ({ ...m, content: m.content + '\n\n❌ ' + String(err) }));
         } finally {
           this.repairSending = false;
         }

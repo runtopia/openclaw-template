@@ -139,12 +139,17 @@ export function createRepairRouter({
 
   // GET /status
   router.get("/status", requireRepairAuth, (req, res) => {
+    const key = getRepairAiKey();
     res.json({
       ok: true,
       gatewayReady: gatewayManager.isGatewayReady(),
       gatewayStarting: gatewayManager.isGatewayStarting(),
       uptime: process.uptime(),
-      repairChatAvailable: getRepairAiKey() !== null,
+      repairChatAvailable: key !== null,
+      repairProvider: key ? key.providerName : null,
+      repairKeyPrefix: key ? key.apiKey.slice(0, 6) + "…" : null,
+      repairModel: key ? key.model : null,
+      repairApi: key ? key.api : null,
     });
   });
 

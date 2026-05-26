@@ -22,12 +22,18 @@ export function readDefaultProviderKey(configPath) {
     // 优先从 models.providers.<name> 读（custom provider / ClawRouters 路径）
     const provider = cfg?.models?.providers?.[providerName];
     if (provider?.apiKey) {
+      let baseUrl = (provider.baseUrl || "https://api.openai.com/v1").replace(/\/$/, "");
+      const api = provider.api || "openai-completions";
+      // Anthropic-messages providers need baseUrl to end with /v1 so that appending /messages gives the correct path
+      if (api === "anthropic-messages" && !baseUrl.endsWith("/v1")) {
+        baseUrl += "/v1";
+      }
       return {
         apiKey: provider.apiKey,
-        baseUrl: (provider.baseUrl || "https://api.openai.com/v1").replace(/\/$/, ""),
+        baseUrl,
         model: bareModel,
         providerName,
-        api: provider.api || "openai-completions",
+        api,
       };
     }
 

@@ -5,6 +5,14 @@ import fs from "node:fs";
 
 export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured }) {
   const GATEWAY_TARGET = `http://${internalGatewayHost}:${internalGatewayPort}`;
+
+  const LOG_BUFFER_MAX = 500;
+  const logBuffer = [];
+  function appendLog(line) {
+    logBuffer.push(line);
+    if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+  }
+
   let gatewayProc = null;
   let gatewayStarting = null;
 
@@ -65,9 +73,17 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
       "--auth", "token", "--token", gatewayToken,
     ];
     gatewayProc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, OPENCLAW_STATE_DIR: stateDir, OPENCLAW_WORKSPACE_DIR: workspaceDir },
     });
+    function handleOutput(chunk) {
+      const lines = chunk.toString().split("\n");
+      for (const line of lines) {
+        if (line) { appendLog(line); process.stdout.write(line + "\n"); }
+      }
+    }
+    gatewayProc.stdout.on("data", handleOutput);
+    gatewayProc.stderr.on("data", handleOutput);
     const safeArgs = args.map((arg, i) => args[i - 1] === "--token" ? "[REDACTED]" : arg);
     console.log(`[gateway] starting: ${OPENCLAW_NODE} ${clawArgs(safeArgs).join(" ")}`);
 
@@ -111,5 +127,6 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     isGatewayStarting: () => gatewayStarting !== null,
     isGatewayReady: () => gatewayProc !== null && gatewayStarting === null,
     getGatewayProc: () => gatewayProc,
+    getRecentLogs: (n = 100) => logBuffer.slice(-Math.min(n, LOG_BUFFER_MAX)),
   };
 }

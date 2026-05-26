@@ -312,7 +312,8 @@ export function createRepairRouter({
         }
 
         if (!aiRes.ok) {
-          emit({ type: "error", message: `AI API error ${aiRes.status}` });
+          const errBody = await aiRes.text().catch(() => "");
+          emit({ type: "error", message: `AI API error ${aiRes.status}: ${errBody}` });
           break;
         }
 

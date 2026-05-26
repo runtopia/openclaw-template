@@ -38,13 +38,38 @@ function validatePayload(payload) {
 }
 
 export function createRequireSetupAuth(SETUP_PASSWORD) {
+  const rateLimiter = {
+    attempts: new Map(), windowMs: 60_000, maxAttempts: 50,
+    isRateLimited(ip) {
+      const now = Date.now();
+      const data = this.attempts.get(ip);
+      if (!data || now - data.windowStart > this.windowMs) {
+        this.attempts.set(ip, { windowStart: now, count: 1 });
+        return false;
+      }
+      data.count++;
+      return data.count > this.maxAttempts;
+    },
+  };
+
   return function requireSetupAuth(req, res, next) {
-    if (!SETUP_PASSWORD) return next();
+    if (!SETUP_PASSWORD) {
+      res.status(500).send("SETUP_PASSWORD not configured");
+      return;
+    }
+    const ip = req.ip || req.socket?.remoteAddress || "unknown";
+    if (rateLimiter.isRateLimited(ip)) {
+      return res.status(429).send("Too Many Requests");
+    }
     const auth = req.headers.authorization || "";
     const b64 = auth.startsWith("Basic ") ? auth.slice(6) : "";
     const decoded = Buffer.from(b64, "base64").toString("utf8");
     const password = decoded.includes(":") ? decoded.split(":").slice(1).join(":") : decoded;
-    if (password === SETUP_PASSWORD) return next();
+    try {
+      const a = Buffer.from(password);
+      const b = Buffer.from(SETUP_PASSWORD);
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+    } catch {}
     res.setHeader("WWW-Authenticate", 'Basic realm="OpenClaw Setup"');
     res.status(401).send("Unauthorized");
   };

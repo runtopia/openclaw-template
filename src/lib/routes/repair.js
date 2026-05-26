@@ -78,6 +78,24 @@ const REPAIR_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "run_openclaw",
+      description: "执行 openclaw CLI 子命令（如 version、channels list、security audit、logs show）",
+      parameters: {
+        type: "object",
+        properties: {
+          args: {
+            type: "array",
+            items: { type: "string" },
+            description: "子命令和参数，如 ['version']、['channels', 'list']、['security', 'audit']",
+          },
+        },
+        required: ["args"],
+      },
+    },
+  },
 ];
 
 async function executeTool(name, args, ctx) {
@@ -109,6 +127,15 @@ async function executeTool(name, args, ctx) {
     case "patch_config": {
       patchConfig(configFilePath(), (cfg) => setIn(cfg, args.path, args.value));
       return `patched ${args.path}`;
+    }
+    case "run_openclaw": {
+      const ALLOWED_SUBCMDS = ["version", "channels", "status", "security", "logs", "config", "doctor", "models", "skills"];
+      const subcmd = args.args?.[0];
+      if (!subcmd || !ALLOWED_SUBCMDS.includes(subcmd)) {
+        return `not allowed: ${subcmd}. allowed: ${ALLOWED_SUBCMDS.join(", ")}`;
+      }
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(args.args));
+      return `exit=${r.code}\n${r.output}`;
     }
     default:
       return `unknown tool: ${name}`;

@@ -335,7 +335,8 @@ export function createRepairRouter({
       if (round >= MAX_ROUNDS) emit({ type: "error", message: "reached max tool call rounds (10)" });
       emit({ type: "done" });
     } catch (err) {
-      emit({ type: "error", message: String(err) });
+      const cause = err.cause?.message || err.cause?.code || String(err.cause || "");
+      emit({ type: "error", message: `${err.message}${cause ? ": " + cause : ""}` });
     } finally {
       res.end();
     }

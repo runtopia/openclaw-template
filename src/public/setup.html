@@ -471,7 +471,14 @@
         this.repairInput = '';
         this.repairSending = true;
         const history = this.repairMessages
-          .filter(m => m._type === 'user' || m._type === 'assistant')
+          .filter(m => {
+            if (m._type !== 'user' && m._type !== 'assistant') return false;
+            const c = (m.content || '').trim();
+            if (!c) return false;
+            // 排除错误消息（不是真实 AI 回复，不应进入 history）
+            if (m._type === 'assistant' && c.startsWith('❌')) return false;
+            return true;
+          })
           .map(m => ({ role: m.role, content: m.content }));
         const aiMsg = { role: 'assistant', content: '', _type: 'assistant', _toolCalls: [] };
         this.repairMessages.push(aiMsg);

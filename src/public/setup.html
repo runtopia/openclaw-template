@@ -482,6 +482,12 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messages: history }),
           });
+          if (!res.ok) {
+            const errText = await res.text();
+            aiMsg.content = `❌ ${res.status}: ${errText}`;
+            this.repairMessages = [...this.repairMessages];
+            return;
+          }
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buf = '';

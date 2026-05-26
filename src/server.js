@@ -226,6 +226,7 @@ app.use("/setup", setupRouter);
 const requireSetupAuth = createRequireSetupAuth(SETUP_PASSWORD);
 const repairRouter = createRepairRouter({
   requireSetupAuth,
+  instanceSecret: ONECLAW_INSTANCE_SECRET,
   runCmd,
   clawArgs,
   OPENCLAW_NODE,

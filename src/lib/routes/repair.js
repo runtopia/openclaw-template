@@ -117,6 +117,7 @@ async function executeTool(name, args, ctx) {
 
 export function createRepairRouter({
   requireSetupAuth,
+  instanceSecret,
   runCmd,
   clawArgs,
   OPENCLAW_NODE,
@@ -127,8 +128,17 @@ export function createRepairRouter({
 }) {
   const router = express.Router();
 
+  // 双重认证：SETUP_PASSWORD (Basic Auth) 或 ONECLAW_INSTANCE_SECRET (Bearer)
+  function requireRepairAuth(req, res, next) {
+    if (instanceSecret) {
+      const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/, "");
+      if (bearer === instanceSecret) return next();
+    }
+    return requireSetupAuth(req, res, next);
+  }
+
   // GET /status
-  router.get("/status", requireSetupAuth, (req, res) => {
+  router.get("/status", requireRepairAuth, (req, res) => {
     res.json({
       ok: true,
       gatewayReady: gatewayManager.isGatewayReady(),
@@ -139,14 +149,14 @@ export function createRepairRouter({
   });
 
   // GET /logs?n=100
-  router.get("/logs", requireSetupAuth, (req, res) => {
+  router.get("/logs", requireRepairAuth, (req, res) => {
     const n = Math.min(parseInt(req.query.n || "100", 10) || 100, 500);
     const lines = gatewayManager.getRecentLogs(n);
     res.json({ ok: true, lines });
   });
 
   // POST /doctor
-  router.post("/doctor", requireSetupAuth, async (_req, res) => {
+  router.post("/doctor", requireRepairAuth, async (_req, res) => {
     try {
       const result = await runCmd(OPENCLAW_NODE, clawArgs(["doctor", "--fix", "--yes"]));
       res.json({ ok: result.code === 0, output: result.output });
@@ -156,7 +166,7 @@ export function createRepairRouter({
   });
 
   // POST /restart
-  router.post("/restart", requireSetupAuth, async (_req, res) => {
+  router.post("/restart", requireRepairAuth, async (_req, res) => {
     try {
       await restartGateway();
       res.json({ ok: true });
@@ -166,7 +176,7 @@ export function createRepairRouter({
   });
 
   // PATCH /config
-  router.patch("/config", requireSetupAuth, (req, res) => {
+  router.patch("/config", requireRepairAuth, (req, res) => {
     const { patches } = req.body || {};
     if (!patches || typeof patches !== "object" || Array.isArray(patches)) {
       return res.status(400).json({ ok: false, error: "patches must be an object" });
@@ -184,7 +194,7 @@ export function createRepairRouter({
   });
 
   // GET /config (redacted)
-  router.get("/config", requireSetupAuth, (req, res) => {
+  router.get("/config", requireRepairAuth, (req, res) => {
     try {
       const cfgPath = configFilePath();
       if (!fs.existsSync(cfgPath)) return res.json({ ok: true, config: null });
@@ -196,7 +206,7 @@ export function createRepairRouter({
   });
 
   // POST /chat — SSE streaming with tool use
-  router.post("/chat", requireSetupAuth, async (req, res) => {
+  router.post("/chat", requireRepairAuth, async (req, res) => {
     if (!repairAiKey) {
       return res.status(503).json({ ok: false, reason: "no_key" });
     }

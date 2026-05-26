@@ -29,7 +29,7 @@ import { createSetupRouter } from "./lib/routes/setup.js";
 import { createApiRouter } from "./lib/routes/api.js";
 import { createTuiRouter } from "./lib/routes/tui.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
-import { readDefaultProviderKey } from "./lib/repair-ai-key.js";
+import { readDefaultProviderKey, readEnvProviderKey } from "./lib/repair-ai-key.js";
 import { createRequireSetupAuth } from "./lib/routes/setup.js";
 
 // ──────────────────────────────────────────────────────────────
@@ -181,15 +181,22 @@ async function ensureWebSocketConfig() {
 // Express app
 // ──────────────────────────────────────────────────────────────
 
-// 启动时读取 repair 聊天所需的 AI key；setup 成功后可通过 refreshRepairAiKey() 刷新
-let repairAiKey = readDefaultProviderKey(configFilePath());
+// 修复助手用的 AI key 解析顺序：先环境变量（CLAWROUTERS_KEY 走本地 cr-proxy，
+// 自动注入 user 字段），再回退到 openclaw.json。env 优先让镜像部署在 auto-config
+// 写文件之前就能用修复助手。
+function resolveRepairAiKey() {
+  return readEnvProviderKey(process.env, CR_PROXY_BASE_URL)
+      || readDefaultProviderKey(configFilePath());
+}
+
+let repairAiKey = resolveRepairAiKey();
 if (repairAiKey) {
-  console.log(`[repair] AI key loaded for provider: ${repairAiKey.providerName}`);
+  console.log(`[repair] AI key loaded for provider: ${repairAiKey.providerName} (baseUrl=${repairAiKey.baseUrl})`);
 } else {
-  console.log("[repair] no AI key found in config — chat endpoint will return 503");
+  console.log("[repair] no AI key found in env or config — chat endpoint will return 503");
 }
 function refreshRepairAiKey() {
-  repairAiKey = readDefaultProviderKey(configFilePath());
+  repairAiKey = resolveRepairAiKey();
   console.log(`[repair] key refreshed: ${repairAiKey ? repairAiKey.providerName : "null"}`);
 }
 
@@ -385,6 +392,7 @@ const server = app.listen(PORT, async () => {
         const success = await autoConfigureFromEnv(ctx);
         console.log(`[wrapper] auto-config ${success ? "succeeded" : "failed"}`);
         if (isConfigured()) {
+          refreshRepairAiKey();
           if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
           await ensureWebSocketConfig();
           gateway.ensureGatewayRunning()

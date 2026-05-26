@@ -9,6 +9,45 @@ const PROVIDER_ENV_MAP = {
   openrouter: { envKey: "OPENROUTER_API_KEY",           baseUrl: "https://openrouter.ai/api/v1",                                        api: "openai-completions" },
 };
 
+// 直接从环境变量解析 repair 用的 key——这样修复助手在 auto-config 写入
+// openclaw.json 之前就可以使用，且 ClawRouters 路径走本地 cr-proxy 自动注入 user。
+export function readEnvProviderKey(env = process.env, crProxyBaseUrl = null) {
+  const clawRoutersKey = env.CLAWROUTERS_KEY?.trim();
+  if (clawRoutersKey) {
+    const baseUrl = env.ONECLAW_END_USER?.trim()
+      ? (crProxyBaseUrl || "http://127.0.0.1:18791/api/v1")
+      : "https://www.clawrouters.com/api/v1";
+    const defaultModel = env.DEFAULT_MODEL?.trim() || "";
+    const model = defaultModel.includes("/")
+      ? defaultModel.split("/").slice(1).join("/")
+      : (defaultModel || "auto");
+    return {
+      apiKey: clawRoutersKey,
+      baseUrl,
+      model,
+      providerName: "clawrouters",
+      api: "openai-completions",
+    };
+  }
+  for (const [providerName, mapping] of Object.entries(PROVIDER_ENV_MAP)) {
+    const apiKey = env[mapping.envKey]?.trim();
+    if (apiKey) {
+      const defaultModel = env.DEFAULT_MODEL?.trim() || "";
+      const model = defaultModel.includes("/")
+        ? defaultModel.split("/").slice(1).join("/")
+        : defaultModel;
+      return {
+        apiKey,
+        baseUrl: mapping.baseUrl,
+        model,
+        providerName,
+        api: mapping.api,
+      };
+    }
+  }
+  return null;
+}
+
 export function readDefaultProviderKey(configPath) {
   try {
     if (!fs.existsSync(configPath)) return null;

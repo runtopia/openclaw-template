@@ -482,7 +482,6 @@
           .map(m => ({ role: m.role, content: m.content }));
         const aiMsgIdx = this.repairMessages.length;
         this.repairMessages.push({ role: 'assistant', content: '', _type: 'assistant', _toolCalls: [] });
-        console.log('[repair] aiMsg pushed at idx', aiMsgIdx, 'len', this.repairMessages.length);
         // Replace the entire array (assignment guarantees reactivity in Alpine)
         const updateAiMsg = (updater) => {
           const arr = this.repairMessages.slice();
@@ -514,7 +513,6 @@
               if (!part.startsWith('data: ')) continue;
               try {
                 const ev = JSON.parse(part.slice(6));
-                console.log('[repair] SSE event', ev.type, ev);
                 if (ev.type === 'text') {
                   updateAiMsg(m => ({ ...m, content: m.content + ev.delta }));
                 } else if (ev.type === 'tool_call') {
@@ -524,14 +522,13 @@
                 } else if (ev.type === 'error') {
                   updateAiMsg(m => ({ ...m, content: m.content + '\n\n❌ ' + ev.message }));
                 }
-                console.log('[repair] after update, content len:', this.repairMessages[aiMsgIdx]?.content?.length, 'tools:', this.repairMessages[aiMsgIdx]?._toolCalls?.length);
               } catch (e) {
-                console.error('[repair] parse error', e, part);
+                // ignore parse errors
+              }
               }
             }
           }
         } catch (err) {
-          console.error('[repair] fetch error', err);
           updateAiMsg(m => ({ ...m, content: m.content + '\n\n❌ ' + String(err) }));
         } finally {
           this.repairSending = false;
@@ -671,9 +668,6 @@
             <pre class="px-4 pb-3 font-mono text-xs text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap max-h-48 overflow-y-auto" x-text="repairLogs"></pre>
           </div>
 
-          <div class="px-4 py-1 text-[10px] font-mono text-neutral-400 dark:text-neutral-600 border-b border-neutral-100 dark:border-neutral-800/50">
-            DEBUG: msgs=<span x-text="repairMessages.length"></span> · last=<span x-text="(repairMessages[repairMessages.length-1]?.content||'').length"></span>ch · tools=<span x-text="repairMessages[repairMessages.length-1]?._toolCalls?.length||0"></span> · sending=<span x-text="repairSending"></span>
-          </div>
           <div class="p-4 space-y-3 max-h-96 overflow-y-auto min-h-[80px]" x-ref="msgList">
             <template x-for="(msg, idx) in repairMessages" :key="idx">
               <div>

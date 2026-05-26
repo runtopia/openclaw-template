@@ -181,12 +181,16 @@ async function ensureWebSocketConfig() {
 // Express app
 // ──────────────────────────────────────────────────────────────
 
-// 启动时一次性读取 repair 聊天所需的 AI key（之后不再重读）
-const repairAiKey = readDefaultProviderKey(configFilePath());
+// 启动时读取 repair 聊天所需的 AI key；setup 成功后可通过 refreshRepairAiKey() 刷新
+let repairAiKey = readDefaultProviderKey(configFilePath());
 if (repairAiKey) {
   console.log(`[repair] AI key loaded for provider: ${repairAiKey.providerName}`);
 } else {
   console.log("[repair] no AI key found in config — chat endpoint will return 503");
+}
+function refreshRepairAiKey() {
+  repairAiKey = readDefaultProviderKey(configFilePath());
+  console.log(`[repair] key refreshed: ${repairAiKey ? repairAiKey.providerName : "null"}`);
 }
 
 const app = express();
@@ -214,6 +218,7 @@ const setupRouter = createSetupRouter({
   ENABLE_WEB_TUI,
   TUI_IDLE_TIMEOUT_MS,
   TUI_MAX_SESSION_MS,
+  onSetupComplete: refreshRepairAiKey,
 });
 app.use("/setup", setupRouter);
 
@@ -227,7 +232,7 @@ const repairRouter = createRepairRouter({
   restartGateway: gateway.restartGateway,
   configFilePath,
   gatewayManager: gateway,
-  repairAiKey,
+  getRepairAiKey: () => repairAiKey,
 });
 app.use("/setup/api/repair", repairRouter);
 

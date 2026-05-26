@@ -80,6 +80,7 @@ export function createSetupRouter({
   ensureGatewayRunning, restartGateway, stateDir, workspaceDir, gatewayToken,
   configFilePath, port, internalGatewayHost, internalGatewayPort,
   ENABLE_WEB_TUI,
+  onSetupComplete,
 }) {
   const router = express.Router();
 
@@ -492,6 +493,7 @@ export function createSetupRouter({
         extra += "\n[setup] Starting gateway...\n";
         await restartGateway();
         extra += "[setup] Gateway started.\n";
+        if (typeof onSetupComplete === "function") onSetupComplete();
       }
 
       return res.status(ok ? 200 : 500).json({ ok, output: `${onboard.output}${extra}` });

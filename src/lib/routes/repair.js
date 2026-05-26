@@ -124,7 +124,7 @@ export function createRepairRouter({
   restartGateway,
   configFilePath,
   gatewayManager,
-  repairAiKey,
+  getRepairAiKey,
 }) {
   const router = express.Router();
 
@@ -144,7 +144,7 @@ export function createRepairRouter({
       gatewayReady: gatewayManager.isGatewayReady(),
       gatewayStarting: gatewayManager.isGatewayStarting(),
       uptime: process.uptime(),
-      repairChatAvailable: repairAiKey !== null,
+      repairChatAvailable: getRepairAiKey() !== null,
     });
   });
 
@@ -207,6 +207,7 @@ export function createRepairRouter({
 
   // POST /chat — SSE streaming with tool use
   router.post("/chat", requireRepairAuth, async (req, res) => {
+    const repairAiKey = getRepairAiKey();
     if (!repairAiKey) {
       return res.status(503).json({ ok: false, reason: "no_key" });
     }

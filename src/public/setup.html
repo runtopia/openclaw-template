@@ -96,6 +96,17 @@
       pairingFailed: 'Pairing failed: ',
       doctorCompleted: 'Doctor completed successfully',
       doctorFoundIssues: 'Doctor found issues',
+      repairTitle: 'Repair Assistant',
+      repairDesc: 'AI-powered assistant to diagnose and fix OpenClaw issues. Works even when the gateway is down.',
+      repairPlaceholder: 'Describe the issue, e.g. "gateway won\'t start, help me fix it"',
+      repairSend: 'Send',
+      repairSending: 'Thinking...',
+      repairRestart: 'Restart Gateway',
+      repairViewLogs: 'View Logs',
+      repairNoKey: 'No AI key available — chat is offline. Repair tools still work.',
+      repairToolCall: '🔧',
+      repairExpand: 'Show result',
+      repairCollapse: 'Hide result',
     },
     zh: {
       title: '个人 AI 助手',
@@ -177,6 +188,17 @@
       pairingFailed: '配对失败：',
       doctorCompleted: '诊断完成',
       doctorFoundIssues: '诊断发现问题',
+      repairTitle: '修复助手',
+      repairDesc: 'AI 驱动的修复助手，可诊断并修复 OpenClaw 问题。即使 gateway 宕机也可使用。',
+      repairPlaceholder: '描述问题，例如"gateway 启动失败，帮我排查"',
+      repairSend: '发送',
+      repairSending: '思考中...',
+      repairRestart: '重启 Gateway',
+      repairViewLogs: '查看日志',
+      repairNoKey: '没有可用的 AI Key，聊天功能离线。修复工具仍然可用。',
+      repairToolCall: '🔧',
+      repairExpand: '展开结果',
+      repairCollapse: '收起结果',
     }
   };
 
@@ -227,6 +249,12 @@
       showPairingModal: false,
       isReady: false,
       tuiEnabled: false,
+      repairMessages: [],
+      repairInput: '',
+      repairSending: false,
+      repairChatAvailable: false,
+      repairLogs: '',
+      repairShowLogs: false,
 
       get currentGroup() {
         return this.authGroups.find(g => g.value === this.selectedGroup);
@@ -274,6 +302,10 @@
           if (j.channelsAddHelp && j.channelsAddHelp.indexOf('telegram') === -1) {
             this.log += '\nNote: this openclaw build does not list telegram in `channels add --help`. Telegram auto-add will be skipped.\n';
           }
+          try {
+            const rj = await this.httpJson('/setup/api/repair/status');
+            this.repairChatAvailable = rj.repairChatAvailable || false;
+          } catch {}
           this.isReady = true;
         } catch (e) {
           this.statusKey = 'status_loading';
@@ -430,7 +462,83 @@
         } finally {
           this.loading = false;
         }
-      }
+      },
+
+      async sendRepairMessage() {
+        if (!this.repairInput.trim() || this.repairSending) return;
+        const userMsg = { role: 'user', content: this.repairInput.trim() };
+        this.repairMessages.push({ ...userMsg, _type: 'user' });
+        this.repairInput = '';
+        this.repairSending = true;
+        const history = this.repairMessages
+          .filter(m => m._type === 'user' || m._type === 'assistant')
+          .map(m => ({ role: m.role, content: m.content }));
+        const aiMsg = { role: 'assistant', content: '', _type: 'assistant', _toolCalls: [] };
+        this.repairMessages.push(aiMsg);
+        try {
+          const res = await fetch('/setup/api/repair/chat', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: history }),
+          });
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop();
+            for (const part of parts) {
+              if (!part.startsWith('data: ')) continue;
+              try {
+                const ev = JSON.parse(part.slice(6));
+                if (ev.type === 'text') {
+                  aiMsg.content += ev.delta;
+                } else if (ev.type === 'tool_call') {
+                  aiMsg._toolCalls.push({ ...ev, _output: null, _expanded: false });
+                } else if (ev.type === 'tool_result') {
+                  const tc = aiMsg._toolCalls.find(t => t.id === ev.id);
+                  if (tc) tc._output = ev.output;
+                } else if (ev.type === 'error') {
+                  aiMsg.content += '\n\n❌ ' + ev.message;
+                }
+                this.repairMessages = [...this.repairMessages];
+              } catch {}
+            }
+          }
+        } catch (err) {
+          aiMsg.content += '\n\n❌ ' + String(err);
+          this.repairMessages = [...this.repairMessages];
+        } finally {
+          this.repairSending = false;
+        }
+      },
+
+      async runRepairRestart() {
+        try {
+          this.repairMessages.push({ _type: 'system', content: '正在重启 gateway...' });
+          this.repairMessages = [...this.repairMessages];
+          await this.httpJson('/setup/api/repair/restart', { method: 'POST' });
+          this.repairMessages.push({ _type: 'system', content: '✅ Gateway 重启指令已发送' });
+        } catch (e) {
+          this.repairMessages.push({ _type: 'system', content: '❌ 重启失败: ' + String(e) });
+        }
+        this.repairMessages = [...this.repairMessages];
+      },
+
+      async runRepairViewLogs() {
+        try {
+          const r = await this.httpJson('/setup/api/repair/logs?n=50');
+          this.repairLogs = r.lines.join('\n') || '(暂无日志)';
+          this.repairShowLogs = true;
+        } catch (e) {
+          this.repairLogs = '❌ ' + String(e);
+          this.repairShowLogs = true;
+        }
+      },
     }));
   });
   </script>
@@ -518,6 +626,79 @@
         </div>
 
         <div x-show="log" class="bg-neutral-100 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 font-mono text-xs text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap max-h-64 overflow-y-auto" x-text="log"></div>
+
+        <!-- 修复助手面板 -->
+        <div class="mt-6 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-sm dark:shadow-none overflow-hidden">
+          <div class="p-4 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+            <div>
+              <h3 class="font-semibold" x-text="t('repairTitle')"></h3>
+              <p class="text-xs text-neutral-500 mt-0.5" x-text="t('repairDesc')"></p>
+            </div>
+            <div class="flex gap-2">
+              <button @click="runRepairRestart()" :disabled="repairSending" class="text-xs px-3 py-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 disabled:opacity-50 transition-colors" x-text="t('repairRestart')"></button>
+              <button @click="runRepairViewLogs()" class="text-xs px-3 py-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 transition-colors" x-text="t('repairViewLogs')"></button>
+            </div>
+          </div>
+
+          <div x-show="!repairChatAvailable" class="px-4 py-3 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20" x-text="t('repairNoKey')"></div>
+
+          <div x-show="repairShowLogs" x-cloak class="border-b border-neutral-200 dark:border-neutral-800">
+            <div class="flex items-center justify-between px-4 py-2">
+              <span class="text-xs font-medium text-neutral-500">Gateway Logs</span>
+              <button @click="repairShowLogs = false" class="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200">✕</button>
+            </div>
+            <pre class="px-4 pb-3 font-mono text-xs text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap max-h-48 overflow-y-auto" x-text="repairLogs"></pre>
+          </div>
+
+          <div class="p-4 space-y-3 max-h-96 overflow-y-auto min-h-[80px]">
+            <template x-for="(msg, idx) in repairMessages" :key="idx">
+              <div>
+                <div x-show="msg._type === 'user'" class="flex justify-end">
+                  <div class="bg-red-600 text-white text-sm px-4 py-2 rounded-2xl rounded-tr-sm max-w-[80%]" x-text="msg.content"></div>
+                </div>
+                <div x-show="msg._type === 'assistant'" class="flex flex-col gap-1">
+                  <template x-for="(tc, ti) in (msg._toolCalls || [])" :key="ti">
+                    <div class="bg-neutral-100 dark:bg-neutral-800 rounded-lg px-3 py-2 text-xs font-mono">
+                      <div class="flex items-center gap-2">
+                        <span x-text="t('repairToolCall')"></span>
+                        <span class="font-medium text-neutral-700 dark:text-neutral-300" x-text="tc.name"></span>
+                        <button x-show="tc._output" @click="tc._expanded = !tc._expanded" class="ml-auto text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 text-xs" x-text="tc._expanded ? t('repairCollapse') : t('repairExpand')"></button>
+                      </div>
+                      <pre x-show="tc._expanded && tc._output" class="mt-2 text-neutral-500 dark:text-neutral-400 whitespace-pre-wrap max-h-32 overflow-y-auto" x-text="tc._output"></pre>
+                    </div>
+                  </template>
+                  <div x-show="msg.content" class="bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-700 text-sm px-4 py-2 rounded-2xl rounded-tl-sm max-w-[90%] text-neutral-800 dark:text-neutral-200 whitespace-pre-wrap" x-text="msg.content"></div>
+                </div>
+                <div x-show="msg._type === 'system'" class="text-center">
+                  <span class="text-xs text-neutral-400 dark:text-neutral-600" x-text="msg.content"></span>
+                </div>
+              </div>
+            </template>
+            <div x-show="repairSending" class="flex gap-1 items-center px-1">
+              <div class="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style="animation-delay:0ms"></div>
+              <div class="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style="animation-delay:150ms"></div>
+              <div class="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style="animation-delay:300ms"></div>
+            </div>
+          </div>
+
+          <div class="border-t border-neutral-200 dark:border-neutral-800 p-3 flex gap-2">
+            <input
+              x-model="repairInput"
+              @keydown.enter.prevent="sendRepairMessage()"
+              :placeholder="t('repairPlaceholder')"
+              :disabled="repairSending || !repairChatAvailable"
+              class="flex-1 bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors disabled:opacity-50"
+            />
+            <button
+              @click="sendRepairMessage()"
+              :disabled="repairSending || !repairInput.trim() || !repairChatAvailable"
+              class="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              <span x-show="!repairSending" x-text="t('repairSend')"></span>
+              <span x-show="repairSending" x-text="t('repairSending')"></span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 

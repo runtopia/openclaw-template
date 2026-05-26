@@ -107,9 +107,20 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
 
   async function restartGateway() {
     if (gatewayProc) {
-      try { gatewayProc.kill("SIGTERM"); } catch (err) { console.warn(`[gateway] kill error: ${err.message}`); }
-      await sleep(750);
-      gatewayProc = null;
+      const proc = gatewayProc;
+      gatewayProc = null; // 先清引用，防止 exit handler 重复触发
+      await new Promise((resolve) => {
+        // SIGKILL 兜底：5s 后若仍未退出则强杀
+        const forceKill = setTimeout(() => {
+          try { proc.kill("SIGKILL"); } catch {}
+          resolve();
+        }, 5000);
+        proc.once("exit", () => {
+          clearTimeout(forceKill);
+          resolve();
+        });
+        try { proc.kill("SIGTERM"); } catch { clearTimeout(forceKill); resolve(); }
+      });
     }
     return ensureGatewayRunning();
   }

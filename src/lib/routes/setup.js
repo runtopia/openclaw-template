@@ -66,9 +66,9 @@ export function createRequireSetupAuth(SETUP_PASSWORD) {
     const decoded = Buffer.from(b64, "base64").toString("utf8");
     const password = decoded.includes(":") ? decoded.split(":").slice(1).join(":") : decoded;
     try {
-      const a = Buffer.from(password);
-      const b = Buffer.from(SETUP_PASSWORD);
-      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+      const passwordHash = crypto.createHash("sha256").update(password).digest();
+      const expectedHash = crypto.createHash("sha256").update(SETUP_PASSWORD).digest();
+      if (crypto.timingSafeEqual(passwordHash, expectedHash)) return next();
     } catch {}
     res.setHeader("WWW-Authenticate", 'Basic realm="OpenClaw Setup"');
     res.status(401).send("Unauthorized");

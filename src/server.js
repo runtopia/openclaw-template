@@ -28,6 +28,9 @@ import { ensureControlUiConfig } from "./lib/control-ui-config.js";
 import { createSetupRouter } from "./lib/routes/setup.js";
 import { createApiRouter } from "./lib/routes/api.js";
 import { createTuiRouter } from "./lib/routes/tui.js";
+import { createRepairRouter } from "./lib/routes/repair.js";
+import { readDefaultProviderKey } from "./lib/repair-ai-key.js";
+import { createRequireSetupAuth } from "./lib/routes/setup.js";
 
 // ──────────────────────────────────────────────────────────────
 // Constants
@@ -178,6 +181,14 @@ async function ensureWebSocketConfig() {
 // Express app
 // ──────────────────────────────────────────────────────────────
 
+// 启动时一次性读取 repair 聊天所需的 AI key（之后不再重读）
+const repairAiKey = readDefaultProviderKey(configFilePath());
+if (repairAiKey) {
+  console.log(`[repair] AI key loaded for provider: ${repairAiKey.providerName}`);
+} else {
+  console.log("[repair] no AI key found in config — chat endpoint will return 503");
+}
+
 const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
@@ -205,6 +216,20 @@ const setupRouter = createSetupRouter({
   TUI_MAX_SESSION_MS,
 });
 app.use("/setup", setupRouter);
+
+// Repair API (挂载在 /setup/api/repair/*)
+const requireSetupAuth = createRequireSetupAuth(SETUP_PASSWORD);
+const repairRouter = createRepairRouter({
+  requireSetupAuth,
+  runCmd,
+  clawArgs,
+  OPENCLAW_NODE,
+  restartGateway: gateway.restartGateway,
+  configFilePath,
+  gatewayManager: gateway,
+  repairAiKey,
+});
+app.use("/setup/api/repair", repairRouter);
 
 // API routes (/api/*)
 const apiRouter = createApiRouter({

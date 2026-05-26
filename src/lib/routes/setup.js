@@ -37,6 +37,19 @@ function validatePayload(payload) {
   return null;
 }
 
+export function createRequireSetupAuth(SETUP_PASSWORD) {
+  return function requireSetupAuth(req, res, next) {
+    if (!SETUP_PASSWORD) return next();
+    const auth = req.headers.authorization || "";
+    const b64 = auth.startsWith("Basic ") ? auth.slice(6) : "";
+    const decoded = Buffer.from(b64, "base64").toString("utf8");
+    const password = decoded.includes(":") ? decoded.split(":").slice(1).join(":") : decoded;
+    if (password === SETUP_PASSWORD) return next();
+    res.setHeader("WWW-Authenticate", 'Basic realm="OpenClaw Setup"');
+    res.status(401).send("Unauthorized");
+  };
+}
+
 export function createSetupRouter({
   SETUP_PASSWORD, OPENCLAW_NODE, clawArgs, runCmd, isConfigured,
   ensureGatewayRunning, restartGateway, stateDir, workspaceDir, gatewayToken,

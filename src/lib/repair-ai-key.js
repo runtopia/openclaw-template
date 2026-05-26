@@ -2,11 +2,11 @@ import fs from "node:fs";
 
 // 标准 provider 的 env key 和 baseUrl 映射
 const PROVIDER_ENV_MAP = {
-  anthropic:  { envKey: "ANTHROPIC_API_KEY",            baseUrl: "https://api.anthropic.com/v1" },
-  openai:     { envKey: "OPENAI_API_KEY",               baseUrl: "https://api.openai.com/v1" },
-  gemini:     { envKey: "GOOGLE_GENERATIVE_AI_API_KEY", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
-  deepseek:   { envKey: "DEEPSEEK_API_KEY",             baseUrl: "https://api.deepseek.com/v1" },
-  openrouter: { envKey: "OPENROUTER_API_KEY",           baseUrl: "https://openrouter.ai/api/v1" },
+  anthropic:  { envKey: "ANTHROPIC_API_KEY",            baseUrl: "https://api.anthropic.com/v1",                                        api: "anthropic-messages" },
+  openai:     { envKey: "OPENAI_API_KEY",               baseUrl: "https://api.openai.com/v1",                                           api: "openai-completions" },
+  gemini:     { envKey: "GOOGLE_GENERATIVE_AI_API_KEY", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",              api: "openai-completions" },
+  deepseek:   { envKey: "DEEPSEEK_API_KEY",             baseUrl: "https://api.deepseek.com/v1",                                         api: "openai-completions" },
+  openrouter: { envKey: "OPENROUTER_API_KEY",           baseUrl: "https://openrouter.ai/api/v1",                                        api: "openai-completions" },
 };
 
 export function readDefaultProviderKey(configPath) {
@@ -27,6 +27,7 @@ export function readDefaultProviderKey(configPath) {
         baseUrl: (provider.baseUrl || "https://api.openai.com/v1").replace(/\/$/, ""),
         model: bareModel,
         providerName,
+        api: provider.api || "openai-completions",
       };
     }
 
@@ -40,6 +41,7 @@ export function readDefaultProviderKey(configPath) {
           baseUrl: mapping.baseUrl,
           model: bareModel,
           providerName,
+          api: mapping.api,
         };
       }
     }

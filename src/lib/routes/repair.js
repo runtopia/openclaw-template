@@ -220,15 +220,23 @@ export function createRepairRouter({
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    function emit(obj) {
-      res.write(`data: ${JSON.stringify(obj)}\n\n`);
-    }
+    function emit(obj) { res.write(`data: ${JSON.stringify(obj)}\n\n`); }
 
     const toolCtx = { gatewayManager, runCmd, OPENCLAW_NODE, clawArgs, configFilePath, restartGateway };
-    const history = [
-      { role: "system", content: "你是 OpenClaw 修复助手。诊断并修复 gateway 配置和运行问题。使用工具获取信息再采取行动，解释你的每一步操作。" },
-      ...messages,
-    ];
+    const systemPrompt = "你是 OpenClaw 修复助手。诊断并修复 gateway 配置和运行问题。使用工具获取信息再采取行动，解释你的每一步操作。";
+    const isAnthropic = repairAiKey.api === "anthropic-messages";
+
+    // Anthropic 格式的工具定义
+    const REPAIR_TOOLS_ANTHROPIC = REPAIR_TOOLS.map(t => ({
+      name: t.function.name,
+      description: t.function.description,
+      input_schema: t.function.parameters,
+    }));
+
+    // history 格式：OpenAI 包含 system，Anthropic 把 system 单独传
+    const history = isAnthropic
+      ? [...messages]
+      : [{ role: "system", content: systemPrompt }, ...messages];
 
     const MAX_ROUNDS = 10;
     let round = 0;
@@ -236,19 +244,40 @@ export function createRepairRouter({
     try {
       while (round < MAX_ROUNDS) {
         round++;
-        const aiRes = await fetch(`${repairAiKey.baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${repairAiKey.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: repairAiKey.model || "auto",
-            messages: history,
-            tools: REPAIR_TOOLS,
-            tool_choice: "auto",
-          }),
-        });
+
+        let aiRes;
+        if (isAnthropic) {
+          aiRes = await fetch(`${repairAiKey.baseUrl}/messages`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": repairAiKey.apiKey,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: repairAiKey.model,
+              max_tokens: 4096,
+              system: systemPrompt,
+              messages: history,
+              tools: REPAIR_TOOLS_ANTHROPIC,
+              tool_choice: { type: "auto" },
+            }),
+          });
+        } else {
+          aiRes = await fetch(`${repairAiKey.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${repairAiKey.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: repairAiKey.model || "auto",
+              messages: history,
+              tools: REPAIR_TOOLS,
+              tool_choice: "auto",
+            }),
+          });
+        }
 
         if (!aiRes.ok) {
           emit({ type: "error", message: `AI API error ${aiRes.status}` });
@@ -256,27 +285,49 @@ export function createRepairRouter({
         }
 
         const data = await aiRes.json();
-        const choice = data.choices?.[0];
-        if (!choice) { emit({ type: "error", message: "empty response from AI" }); break; }
 
-        const msg = choice.message;
-        history.push(msg);
+        if (isAnthropic) {
+          // Anthropic 响应格式
+          const textBlock = data.content?.find(b => b.type === "text");
+          if (textBlock?.text) emit({ type: "text", delta: textBlock.text });
 
-        if (msg.content) emit({ type: "text", delta: msg.content });
-
-        if (choice.finish_reason === "tool_calls" && msg.tool_calls?.length) {
-          const toolResults = [];
-          for (const tc of msg.tool_calls) {
-            const toolName = tc.function.name;
-            let args = {};
-            try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
-            emit({ type: "tool_call", id: tc.id, name: toolName, input: args });
-            const output = await executeTool(toolName, args, toolCtx);
-            emit({ type: "tool_result", id: tc.id, name: toolName, output });
-            toolResults.push({ role: "tool", tool_call_id: tc.id, content: output });
+          if (data.stop_reason === "tool_use") {
+            const toolBlocks = data.content.filter(b => b.type === "tool_use");
+            // 把 assistant 消息加入 history
+            history.push({ role: "assistant", content: data.content });
+            const toolResults = [];
+            for (const tb of toolBlocks) {
+              emit({ type: "tool_call", id: tb.id, name: tb.name, input: tb.input });
+              const output = await executeTool(tb.name, tb.input, toolCtx);
+              emit({ type: "tool_result", id: tb.id, name: tb.name, output });
+              toolResults.push({ type: "tool_result", tool_use_id: tb.id, content: output });
+            }
+            history.push({ role: "user", content: toolResults });
+            continue;
           }
-          history.push(...toolResults);
-          continue;
+          history.push({ role: "assistant", content: data.content });
+        } else {
+          // OpenAI 响应格式
+          const choice = data.choices?.[0];
+          if (!choice) { emit({ type: "error", message: "empty response from AI" }); break; }
+          const msg = choice.message;
+          history.push(msg);
+          if (msg.content) emit({ type: "text", delta: msg.content });
+
+          if (choice.finish_reason === "tool_calls" && msg.tool_calls?.length) {
+            const toolResults = [];
+            for (const tc of msg.tool_calls) {
+              const toolName = tc.function.name;
+              let args = {};
+              try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
+              emit({ type: "tool_call", id: tc.id, name: toolName, input: args });
+              const output = await executeTool(toolName, args, toolCtx);
+              emit({ type: "tool_result", id: tc.id, name: toolName, output });
+              toolResults.push({ role: "tool", tool_call_id: tc.id, content: output });
+            }
+            history.push(...toolResults);
+            continue;
+          }
         }
         break;
       }

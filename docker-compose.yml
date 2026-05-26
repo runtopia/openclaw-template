@@ -1,0 +1,38 @@
+services:
+  openclaw:
+    build: .
+    # image: ghcr.io/openclaw/openclaw-railway-template:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - openclaw_data:/data
+    environment:
+      PORT: 8080
+      SETUP_PASSWORD: test
+      ENABLE_WEB_TUI: "true"
+      OPENCLAW_STATE_DIR: /data/yuanwx/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /data/yuanwx/workspace
+      # 固定 token，重启后不变；生产环境替换为随机值: openssl rand -hex 32
+      OPENCLAW_GATEWAY_TOKEN: dev-token-change-me
+
+      # 选填：设置任意一个即可跳过 /setup 向导直接完成 onboarding
+      # ANTHROPIC_API_KEY: sk-ant-xxx
+      # OPENAI_API_KEY: sk-xxx
+      # GOOGLE_GENERATIVE_AI_API_KEY: xxx
+      # DEEPSEEK_API_KEY: xxx
+      # OPENROUTER_API_KEY: xxx
+      # CLAWROUTERS_KEY: xxx
+
+      # 选填：从非 localhost 域名访问 Control UI 时需要添加你的 origin
+      # GATEWAY_CONTROL_UI_ALLOWED_ORIGINS: https://your-domain.com
+
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/setup/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  openclaw_data:

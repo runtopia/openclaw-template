@@ -333,7 +333,10 @@ export function createSetupRouter({
     return plan;
   }
 
-  router.get("/", requireSetupAuth, (_req, res) => res.sendFile(path.join(process.cwd(), "src", "public", "setup.html")));
+  router.get("/", requireSetupAuth, (_req, res) => {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.sendFile(path.join(process.cwd(), "src", "public", "setup.html"));
+  });
   router.get("/styles.css", (_req, res) => { res.type("text/css"); res.sendFile(path.join(process.cwd(), "src", "public", "styles.css")); });
 
   router.get("/api/status", requireSetupAuth, async (_req, res) => {

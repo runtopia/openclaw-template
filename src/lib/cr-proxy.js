@@ -3,7 +3,7 @@
 import express from "express";
 import httpProxy from "http-proxy";
 
-const CR_UPSTREAM = "https://www.clawrouters.com";
+const CR_UPSTREAM = (process.env.CLAWROUTERS_BASE_URL || "https://www.clawrouters.com").replace(/\/+$/, "");
 
 const CR_INJECT_PATHS = [
   "/api/v1/chat/completions",

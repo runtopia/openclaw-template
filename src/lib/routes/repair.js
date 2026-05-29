@@ -122,8 +122,8 @@ async function executeTool(name, args, ctx) {
       return `exit=${r.code}\n${r.output}`;
     }
     case "restart_gateway":
-      await restartGateway();
-      return "gateway restart initiated";
+      await restartGateway({ waitReady: false });
+      return "已触发 gateway 重启，正在后台启动（不等待就绪）。请随后调用 get_status 查看是否就绪、read_logs 查看启动日志后再下结论，不要假设它已经起来。";
     case "patch_config": {
       patchConfig(configFilePath(), (cfg) => setIn(cfg, args.path, args.value));
       return `patched ${args.path}`;
@@ -200,8 +200,8 @@ export function createRepairRouter({
   // POST /restart
   router.post("/restart", requireRepairAuth, async (_req, res) => {
     try {
-      await restartGateway();
-      res.json({ ok: true });
+      await restartGateway({ waitReady: false });
+      res.json({ ok: true, pending: true });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
     }
@@ -251,8 +251,16 @@ export function createRepairRouter({
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // 禁用反代缓冲，确保 SSE 实时下发
 
     function emit(obj) { res.write(`data: ${JSON.stringify(obj)}\n\n`); }
+
+    // keepalive 心跳：run_doctor 等工具可能耗时数十秒，期间无 SSE 数据下发，
+    // 心跳注释行（以 ":" 开头，客户端解析时忽略）防止反代/浏览器空闲超时切断连接。
+    const heartbeat = setInterval(() => {
+      try { res.write(": ping\n\n"); } catch {}
+    }, 15000);
+    req.on("close", () => clearInterval(heartbeat));
 
     const toolCtx = { gatewayManager, runCmd, OPENCLAW_NODE, clawArgs, configFilePath, restartGateway };
     const systemPrompt = "你是 OpenClaw 修复助手。诊断并修复 gateway 配置和运行问题。使用工具获取信息再采取行动，解释你的每一步操作。";
@@ -371,6 +379,7 @@ export function createRepairRouter({
       const cause = err.cause?.message || err.cause?.code || String(err.cause || "");
       emit({ type: "error", message: `${err.message}${cause ? ": " + cause : ""}` });
     } finally {
+      clearInterval(heartbeat);
       res.end();
     }
   });

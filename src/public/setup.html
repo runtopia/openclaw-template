@@ -539,7 +539,21 @@
           this.repairMessages.push({ _type: 'system', content: '正在重启 gateway...' });
           this.repairMessages = [...this.repairMessages];
           await this.httpJson('/setup/api/repair/restart', { method: 'POST' });
-          this.repairMessages.push({ _type: 'system', content: '✅ Gateway 重启指令已发送' });
+          this.repairMessages.push({ _type: 'system', content: '✅ 重启指令已发送，正在等待 gateway 就绪...' });
+          this.repairMessages = [...this.repairMessages];
+          // 后端重启已改为非阻塞，这里轮询 status 确认 gateway 是否真正起来（最多 ~60s）
+          let ready = false;
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+              const st = await this.httpJson('/setup/api/repair/status');
+              if (st.gatewayReady) { ready = true; break; }
+            } catch {}
+          }
+          this.repairMessages.push({
+            _type: 'system',
+            content: ready ? '✅ Gateway 已就绪' : '⚠️ Gateway 60s 内仍未就绪，请用「查看日志」或让修复助手继续诊断',
+          });
         } catch (e) {
           this.repairMessages.push({ _type: 'system', content: '❌ 重启失败: ' + String(e) });
         }

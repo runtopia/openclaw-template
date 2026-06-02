@@ -98,21 +98,13 @@ export const CHANNEL_MANIFEST = [
     },
     needsPairingClear: false,
   },
-  {
-    // WeChat uses the third-party plugin @tencent-weixin/openclaw-weixin,
-    // whose channel id is "openclaw-weixin" (no official wechat plugin). QR
-    // login is done at runtime via `openclaw channels login --channel
-    // openclaw-weixin`; here we just enable the channel + plugin.
-    id: "openclaw-weixin",
-    kind: "qr",
-    envCheck(env) {
-      return truthy(env.WECHAT_ENABLED) || truthy(env.WEIXIN_ENABLED);
-    },
-    reconcileShape() {
-      return { enabled: true, dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL };
-    },
-    needsPairingClear: false,
-  },
+  // WeChat (openclaw-weixin) is intentionally NOT in this manifest.
+  // Its channel id "openclaw-weixin" is only known to OpenClaw after the
+  // @tencent-weixin/openclaw-weixin plugin loads. The CLI-based `config set
+  // channels.openclaw-weixin` command fails with "unknown channel id" because
+  // CLI commands don't load plugins from plugins.load.paths. WeChat has no
+  // env credentials to reconcile anyway (QR login happens at runtime).
+  // Plugin activation is handled by applyAutoConfig when WECHAT_ENABLED=1.
 ];
 
 export function getActiveChannels(env = process.env) {

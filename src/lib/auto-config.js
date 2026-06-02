@@ -7,6 +7,11 @@ import { ensureControlUiConfig } from "./control-ui-config.js";
 import { patchConfig, setIn } from "./openclaw-config.js";
 import { resolvePreinstalledPluginPaths } from "./preinstalled-plugins.js";
 
+function truthy(v) {
+  const s = (v || "").trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+
 export function hasAutoConfigEnvVars(env = process.env) {
   const keys = [
     env.ANTHROPIC_API_KEY,
@@ -140,6 +145,14 @@ function applyAutoConfig(ctx) {
       for (const skillKey of ["openai-image-gen", "nano-banana-pro"]) {
         setIn(cfg, `skills.entries.${skillKey}`, { enabled: false });
       }
+    }
+
+    // WeChat: just enable the plugin. The channel id "openclaw-weixin" is only
+    // registered after the plugin loads, so we can't write channels config via
+    // CLI (it would fail with "unknown channel id"). Plugin activation is enough;
+    // the user scans the QR via `openclaw channels login` at runtime.
+    if (truthy(env.WECHAT_ENABLED) || truthy(env.WEIXIN_ENABLED)) {
+      setIn(cfg, "plugins.entries.openclaw-weixin", { enabled: true });
     }
 
     if (Object.keys(envKeys).length > 0) {

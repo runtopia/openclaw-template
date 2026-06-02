@@ -51,6 +51,10 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 #     - wechat has no official package; @tencent-weixin/openclaw-weixin is the
 #       third-party plugin (channel id "openclaw-weixin", versioned separately).
 #   Plus clawrouters (chat/image/video providers; GitHub-only, not on npm).
+#
+# CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
+# pinning a new version or when the layer is stale from a prior @latest build).
+ARG CACHEBUST_PLUGINS=v2
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && cd ${OPENCLAW_PLUGINS_DIR} \

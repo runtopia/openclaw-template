@@ -2,7 +2,7 @@
 //
 // Responsibilities:
 //   1. Resolve global constants (gateway token, ports, dirs)
-//   2. Start sub-systems: ClawRouters proxy, OneClaw integration
+//   2. Start sub-systems: OneClaw integration
 //   3. Wire Express app: setup wizard, API routes, TUI, gateway reverse proxy
 //   4. Startup orchestration:
 //      a. If already configured: reconcile channels → ensure gateway running
@@ -20,7 +20,6 @@ import express from "express";
 import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./lib/gateway.js";
-import { startClawRoutersProxy } from "./lib/cr-proxy.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { autoConfigureFromEnv, hasAutoConfigEnvVars } from "./lib/auto-config.js";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./lib/channel-manifest.js";
@@ -56,9 +55,6 @@ const ONECLAW_API_URL = process.env.ONECLAW_API_URL?.trim() || "https://www.onec
 const ONECLAW_INSTANCE_ID = process.env.ONECLAW_INSTANCE_ID?.trim();
 const ONECLAW_INSTANCE_SECRET = process.env.ONECLAW_INSTANCE_SECRET?.trim();
 const ONECLAW_TEMPLATE_ID = process.env.ONECLAW_TEMPLATE_ID?.trim() || null;
-const ONECLAW_END_USER = process.env.ONECLAW_END_USER?.trim() || "";
-
-const CR_PROXY_PORT = Number.parseInt(process.env.CR_PROXY_PORT ?? "18791", 10);
 
 // ──────────────────────────────────────────────────────────────
 // Gateway token — stable across restarts (persisted to disk)
@@ -134,10 +130,6 @@ function runCmd(cmd, args, opts = {}) {
 // Sub-systems
 // ──────────────────────────────────────────────────────────────
 
-// ClawRouters loopback proxy (no-op when ONECLAW_END_USER is empty)
-const crProxy = startClawRoutersProxy({ port: CR_PROXY_PORT, endUser: ONECLAW_END_USER });
-const CR_PROXY_BASE_URL = crProxy?.baseUrl || null;
-
 // Gateway manager
 const gateway = createGatewayManager({
   OPENCLAW_NODE,
@@ -181,11 +173,10 @@ async function ensureWebSocketConfig() {
 // Express app
 // ──────────────────────────────────────────────────────────────
 
-// 修复助手用的 AI key 解析顺序：先环境变量（CLAWROUTERS_KEY 走本地 cr-proxy，
-// 自动注入 user 字段），再回退到 openclaw.json。env 优先让镜像部署在 auto-config
-// 写文件之前就能用修复助手。
+// 修复助手用的 AI key 解析顺序：先环境变量，再回退到 openclaw.json。
+// env 优先让镜像部署在 auto-config 写文件之前就能用修复助手。
 function resolveRepairAiKey() {
-  return readEnvProviderKey(process.env, CR_PROXY_BASE_URL)
+  return readEnvProviderKey(process.env)
       || readDefaultProviderKey(configFilePath());
 }
 
@@ -387,7 +378,6 @@ const server = app.listen(PORT, async () => {
           OPENCLAW_NODE,
           clawArgs,
           runCmd,
-          crProxyBaseUrl: CR_PROXY_BASE_URL,
         };
         const success = await autoConfigureFromEnv(ctx);
         console.log(`[wrapper] auto-config ${success ? "succeeded" : "failed"}`);

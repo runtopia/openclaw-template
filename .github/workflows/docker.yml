@@ -3,10 +3,15 @@ name: docker
 on:
   push:
     branches: [main]
+    tags: ['v*']
     paths-ignore:
       - '**.md'
       - 'LICENSE'
   workflow_dispatch:
+    inputs:
+      image_version:
+        description: 'Image version override (e.g. 1.2.3). Defaults to git ref.'
+        required: false
 
 env:
   REGISTRY: ghcr.io
@@ -35,9 +40,21 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            # git tag v1.2.3  →  image tags: 1.2.3  (pin-friendly)
+            type=semver,pattern={{version}}
+            # main branch     →  image tag: latest
             type=raw,value=latest,enable={{is_default_branch}}
+            # every push      →  image tag: sha-abc1234  (exact build pin)
             type=sha,format=short
-            type=ref,event=branch
+
+      - name: Resolve IMAGE_VERSION
+        id: ver
+        run: |
+          if [ -n "${{ inputs.image_version }}" ]; then
+            echo "value=${{ inputs.image_version }}" >> $GITHUB_OUTPUT
+          else
+            echo "value=${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -49,5 +66,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.ver.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

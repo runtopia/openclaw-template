@@ -10,20 +10,17 @@ const PROVIDER_ENV_MAP = {
 };
 
 // 直接从环境变量解析 repair 用的 key——这样修复助手在 auto-config 写入
-// openclaw.json 之前就可以使用，且 ClawRouters 路径走本地 cr-proxy 自动注入 user。
-export function readEnvProviderKey(env = process.env, crProxyBaseUrl = null) {
-  const clawRoutersKey = env.CLAWROUTERS_KEY?.trim();
+// openclaw.json 之前就可以使用。
+export function readEnvProviderKey(env = process.env) {
+  const clawRoutersKey = (env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim();
   if (clawRoutersKey) {
-    const baseUrl = env.ONECLAW_END_USER?.trim()
-      ? (crProxyBaseUrl || "http://127.0.0.1:18791/api/v1")
-      : "https://www.clawrouters.com/api/v1";
     const defaultModel = env.DEFAULT_MODEL?.trim() || "";
     const model = defaultModel.includes("/")
       ? defaultModel.split("/").slice(1).join("/")
       : (defaultModel || "auto");
     return {
       apiKey: clawRoutersKey,
-      baseUrl,
+      baseUrl: "https://www.clawrouters.com/api/v1",
       model,
       providerName: "clawrouters",
       api: "openai-completions",

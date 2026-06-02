@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { ensureControlUiConfig } from "../control-ui-config.js";
 import { patchConfig, setIn, mergeIn } from "../openclaw-config.js";
+import { resolvePreinstalledPluginPaths } from "../preinstalled-plugins.js";
 
 const VALID_FLOWS = ["quickstart", "advanced", "manual"];
 const VALID_AUTH_CHOICES = [
@@ -31,7 +32,7 @@ function validatePayload(payload) {
     if (payload[field] !== undefined && typeof payload[field] !== "string") return `Invalid ${field}: must be a string`;
   }
   const DM_POLICIES = ["open", "pairing"];
-  for (const field of ["telegramDmPolicy", "discordDmPolicy", "feishuDmPolicy", "whatsappDmPolicy", "webchatDmPolicy"]) {
+  for (const field of ["telegramDmPolicy", "discordDmPolicy", "feishuDmPolicy", "whatsappDmPolicy", "wechatDmPolicy"]) {
     if (payload[field] !== undefined && !DM_POLICIES.includes(payload[field])) return `Invalid ${field}: must be open or pairing`;
   }
   return null;
@@ -130,22 +131,21 @@ export function createSetupRouter({
     return crypto.timingSafeEqual(passwordHash, expectedHash);
   }
 
-  // 渠道 ID → openclaw 插件 ID 列表(任一可用即认为渠道可用)
-  // stock 内置: telegram, slack 在 openclaw 主包里
-  // 非内置: 需要 Dockerfile 单独 npm install -g
-  //   discord    ← @openclaw/discord
-  //   whatsapp   ← @openclaw/whatsapp
-  //   feishu     ← @larksuite/openclaw-lark           (插件 id 可能为 lark / feishu)
-  //   wechat     ← @tencent-weixin/openclaw-weixin    (插件 id 可能为 weixin / wechat)
-  //   webchat    ← @openclaw/webchat 或内置
+  // 渠道 ID → openclaw 插件 ID。所有渠道(telegram 除外)都在镜像构建时预装到
+  // /opt/openclaw-plugins,通过 plugins.load.paths 发现(见 preinstalled-plugins.js)。
+  //   telegram          内置于 openclaw 主包(dist/extensions/telegram)
+  //   slack             ← @openclaw/slack
+  //   discord           ← @openclaw/discord
+  //   feishu            ← @openclaw/feishu
+  //   whatsapp          ← @openclaw/whatsapp
+  //   wechat(微信)      ← @tencent-weixin/openclaw-weixin(channel/plugin id 为 openclaw-weixin)
   const CHANNEL_PLUGIN_IDS = {
     telegram: ["telegram"],
     slack: ["slack"],
     discord: ["discord"],
     whatsapp: ["whatsapp"],
-    feishu: ["feishu", "lark", "openclaw-lark"],
-    wechat: ["wechat", "weixin", "openclaw-weixin"],
-    webchat: ["webchat"],
+    feishu: ["feishu"],
+    wechat: ["openclaw-weixin"],
   };
 
   let cachedVersion = null;
@@ -243,7 +243,12 @@ export function createSetupRouter({
   // env-driven reconcile) when adding fields.
   function buildChannelPlan(payload, channelsHelp) {
     const plan = [];
-    const supported = (name) => channelsHelp.includes(name);
+    // Every channel the UI exposes is pre-installed into /opt (see
+    // preinstalled-plugins.js) and discovered via plugins.load.paths, so it's
+    // always available. We must NOT gate on `channels add --help` here: that
+    // help text doesn't list a plugin-backed channel until the plugin is
+    // enabled in config, which hasn't happened yet during first-time setup.
+    const supported = (name) => availableChannels[name] === true;
     const openAllowFrom = (policy) => (policy === "open" ? { allowFrom: ["*"] } : {});
 
     if (payload.telegramToken?.trim() && supported("telegram")) {
@@ -280,8 +285,8 @@ export function createSetupRouter({
     if ((payload.slackBotToken?.trim() || payload.slackAppToken?.trim()) && supported("slack")) {
       plan.push({
         name: "slack",
-        npmSpec: null,
-        pluginId: null,
+        npmSpec: "@openclaw/slack",
+        pluginId: "slack",
         config: {
           enabled: true,
           botToken: payload.slackBotToken?.trim(),
@@ -317,12 +322,15 @@ export function createSetupRouter({
         },
       });
     }
-    if (payload.webchatEnabled && supported("webchat")) {
-      const dmPolicy = payload.webchatDmPolicy === "pairing" ? "pairing" : "open";
+    if (payload.wechatEnabled && supported("wechat")) {
+      const dmPolicy = payload.wechatDmPolicy === "pairing" ? "pairing" : "open";
+      // WeChat = third-party @tencent-weixin/openclaw-weixin; its channel id
+      // and plugin id are both "openclaw-weixin". QR login happens at runtime
+      // via `openclaw channels login --channel openclaw-weixin`.
       plan.push({
-        name: "webchat",
-        npmSpec: null,
-        pluginId: null,
+        name: "openclaw-weixin",
+        npmSpec: "@tencent-weixin/openclaw-weixin",
+        pluginId: "openclaw-weixin",
         config: {
           enabled: true,
           dmPolicy,
@@ -434,6 +442,12 @@ export function createSetupRouter({
           // appears as ::ffff:172.17.x.x behind the proxy.
           setIn(cfg, "gateway.trustedProxies", ["127.0.0.1", "::ffff:172.17.0.0/16"]);
 
+          // Discover the image-baked plugins (clawrouters/discord/feishu) from
+          // their fixed /opt path so enabling a channel needs no runtime npm
+          // install. See preinstalled-plugins.js.
+          const loadPaths = resolvePreinstalledPluginPaths();
+          if (loadPaths.length > 0) setIn(cfg, "plugins.load.paths", loadPaths);
+
           if (isCustom && customProviderKey) {
             const baseUrl = payload.customBaseUrl.trim();
             const rawModel = payload.model?.trim() || "default";
@@ -481,8 +495,13 @@ export function createSetupRouter({
         });
         extra += `[config] controlUi patched=${controlUiPatched}\n`;
 
+        // Channel plugins (discord/feishu) are baked into the image and found
+        // via plugins.load.paths set above — no runtime install needed. This
+        // loop only runs as a fallback on non-Docker dev boxes where the /opt
+        // prebuilts are absent (so first-time setup still works locally).
+        const preinstalled = resolvePreinstalledPluginPaths().length > 0;
         for (const ch of channelPlan) {
-          if (!ch.npmSpec) continue;
+          if (!ch.npmSpec || preinstalled) continue;
           extra += `\n[plugin] installing ${ch.name} (${ch.npmSpec}) — this may take 30-60s...\n`;
           const r = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "install", ch.npmSpec, "--pin"]));
           if (r.code === 0) {

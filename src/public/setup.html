@@ -56,7 +56,7 @@
       flowManual: 'Manual',
       step2Title: 'Channels',
       step2Desc: 'Connect messaging platforms (optional — can be added later)',
-      channelHint: '提示：除 Telegram / Slack 外，其他渠道首次启用时会触发后台安装对应 plugin，每个约 30-60s。整体 setup 耗时取决于选了几个，等耐心一点。',
+      channelHint: 'Channel plugins are pre-installed in the image — enabling a channel takes effect immediately, no install wait.',
       telegramPlaceholder: 'Bot token from @BotFather',
       telegramHint: 'Message @BotFather on Telegram and run /newbot',
       dmOpen: 'Open — anyone can DM',
@@ -66,7 +66,8 @@
       feishuAppId: 'App ID (cli_xxx)',
       feishuAppSecret: 'App Secret',
       whatsappDesc: 'QR code scan — no token required',
-      webchatDesc: 'Embeddable web chat widget',
+      wechatName: 'WeChat',
+      wechatDesc: 'QR scan login — scan via Repair console after setup',
       dmAccess: 'DM Access',
       step3Title: 'Run Setup',
       step3Desc: 'Review your configuration and start OpenClaw',
@@ -148,7 +149,7 @@
       flowManual: '手动',
       step2Title: '渠道',
       step2Desc: '连接消息平台（可选 — 可稍后添加）',
-      channelHint: '提示：除 Telegram / Slack 外，其他渠道首次启用时会触发后台安装对应 plugin，每个约 30-60s。整体 setup 耗时取决于选了几个，等耐心一点。',
+      channelHint: '提示：所有渠道插件已预装进镜像，启用渠道即时生效，无需等待安装。',
       telegramPlaceholder: '从 @BotFather 获取的 Bot 令牌',
       telegramHint: '在 Telegram 上给 @BotFather 发送消息并运行 /newbot',
       dmOpen: '开放 — 任何人可私信',
@@ -158,7 +159,8 @@
       feishuAppId: '应用 ID (cli_xxx)',
       feishuAppSecret: '应用密钥',
       whatsappDesc: '二维码扫描 — 无需令牌',
-      webchatDesc: '可嵌入的网页聊天组件',
+      wechatName: '微信',
+      wechatDesc: '扫码登录 — 配置后在修复助手控制台扫码',
       dmAccess: '私信权限',
       step3Title: '运行设置',
       step3Desc: '查看配置并启动 OpenClaw',
@@ -230,8 +232,8 @@
       feishuDmPolicy: 'open',
       whatsappEnabled: false,
       whatsappDmPolicy: 'open',
-      webchatEnabled: false,
-      webchatDmPolicy: 'open',
+      wechatEnabled: false,
+      wechatDmPolicy: 'open',
       availableChannels: {},
 
       get suggestedProviderId() {
@@ -350,8 +352,8 @@
           feishuDmPolicy: this.feishuDmPolicy,
           whatsappEnabled: this.whatsappEnabled,
           whatsappDmPolicy: this.whatsappDmPolicy,
-          webchatEnabled: this.webchatEnabled,
-          webchatDmPolicy: this.webchatDmPolicy,
+          wechatEnabled: this.wechatEnabled,
+          wechatDmPolicy: this.wechatDmPolicy,
         };
 
         this.log = this.t('runSetupRunning') + '\n';
@@ -913,26 +915,26 @@
               </div>
             </div>
 
-            <!-- Webchat -->
-            <div x-show="availableChannels.webchat" x-cloak class="bg-violet-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-violet-200 dark:border-neutral-800">
+            <!-- WeChat 微信 (QR) -->
+            <div x-show="availableChannels.wechat" x-cloak class="bg-green-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-green-200 dark:border-neutral-800">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
-                  <div class="w-8 h-8 bg-violet-500/20 rounded-lg flex items-center justify-center">
-                    <svg class="w-5 h-5 text-violet-600 dark:text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                  <div class="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 text-green-600 dark:text-green-400" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.81-.05-.171-.585-.265-1.204-.265-1.838 0-3.831 3.561-6.937 7.95-6.937.27 0 .536.012.798.034C18.6 4.808 14.045 2.188 8.691 2.188zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-3.872 0-7.012 2.681-7.012 5.99 0 3.31 3.14 5.992 7.012 5.992.78 0 1.531-.114 2.232-.318a.658.658 0 0 1 .55.076l1.534.898a.272.272 0 0 0 .138.047c.134 0 .242-.111.242-.247 0-.06-.024-.12-.04-.178l-.315-1.193a.49.49 0 0 1 .177-.554C23.011 20.135 24 18.614 24 16.848c0-3.309-3.14-5.99-7.012-5.99zm-2.387 3.354c.534 0 .967.44.967.982a.976.976 0 0 1-.967.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982zm4.844 0c.534 0 .967.44.967.982a.976.976 0 0 1-.967.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z"/></svg>
                   </div>
                   <div>
-                    <span class="font-medium">Webchat</span>
-                    <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-0.5" x-text="t('webchatDesc')"></p>
+                    <span class="font-medium" x-text="t('wechatName')"></span>
+                    <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-0.5" x-text="t('wechatDesc')"></p>
                   </div>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" x-model="webchatEnabled" class="sr-only peer" />
-                  <div class="w-11 h-6 bg-neutral-200 dark:bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600"></div>
+                  <input type="checkbox" x-model="wechatEnabled" class="sr-only peer" />
+                  <div class="w-11 h-6 bg-neutral-200 dark:bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
                 </label>
               </div>
-              <div x-show="webchatEnabled" class="mt-3 flex items-center gap-3">
+              <div x-show="wechatEnabled" class="mt-3 flex items-center gap-3">
                 <label class="text-xs text-neutral-500 whitespace-nowrap" x-text="t('dmAccess')"></label>
-                <select x-model="webchatDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500 transition-colors">
+                <select x-model="wechatDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-500 transition-colors">
                   <option value="open" x-text="t('dmOpen')"></option>
                   <option value="pairing" x-text="t('dmPairing')"></option>
                 </select>
@@ -983,9 +985,9 @@
                   <span x-show="discordToken" class="inline-flex items-center bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded text-xs">Discord</span>
                   <span x-show="feishuAppId && feishuAppSecret" class="inline-flex items-center bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded text-xs">Feishu</span>
                   <span x-show="whatsappEnabled" class="inline-flex items-center bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded text-xs">WhatsApp</span>
-                  <span x-show="webchatEnabled" class="inline-flex items-center bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded text-xs">Webchat</span>
+                  <span x-show="wechatEnabled" class="inline-flex items-center bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 px-2 py-0.5 rounded text-xs">WeChat</span>
                   <span x-show="slackBotToken && slackAppToken" class="inline-flex items-center bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400 px-2 py-0.5 rounded text-xs">Slack</span>
-                  <span x-show="!telegramToken && !discordToken && !(feishuAppId && feishuAppSecret) && !whatsappEnabled && !webchatEnabled && !(slackBotToken && slackAppToken)" class="text-neutral-500" x-text="t('configNone')"></span>
+                  <span x-show="!telegramToken && !discordToken && !(feishuAppId && feishuAppSecret) && !whatsappEnabled && !wechatEnabled && !(slackBotToken && slackAppToken)" class="text-neutral-500" x-text="t('configNone')"></span>
                 </dd>
               </div>
             </dl>

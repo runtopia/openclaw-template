@@ -56,6 +56,21 @@ export const CHANNEL_MANIFEST = [
     needsPairingClear: true,
   },
   {
+    id: "slack",
+    kind: "token",
+    envCheck(env) {
+      return !!(env.SLACK_BOT_TOKEN?.trim() && env.SLACK_APP_TOKEN?.trim());
+    },
+    reconcileShape(env) {
+      return {
+        enabled: true,
+        botToken: env.SLACK_BOT_TOKEN.trim(),
+        appToken: env.SLACK_APP_TOKEN.trim(),
+      };
+    },
+    needsPairingClear: false,
+  },
+  {
     id: "feishu",
     kind: "token",
     envCheck(env) {
@@ -84,10 +99,14 @@ export const CHANNEL_MANIFEST = [
     needsPairingClear: false,
   },
   {
-    id: "wechat",
+    // WeChat uses the third-party plugin @tencent-weixin/openclaw-weixin,
+    // whose channel id is "openclaw-weixin" (no official wechat plugin). QR
+    // login is done at runtime via `openclaw channels login --channel
+    // openclaw-weixin`; here we just enable the channel + plugin.
+    id: "openclaw-weixin",
     kind: "qr",
     envCheck(env) {
-      return truthy(env.WECHAT_ENABLED);
+      return truthy(env.WECHAT_ENABLED) || truthy(env.WEIXIN_ENABLED);
     },
     reconcileShape() {
       return { enabled: true, dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL };

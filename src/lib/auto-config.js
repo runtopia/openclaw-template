@@ -5,6 +5,7 @@ import path from "node:path";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./channel-manifest.js";
 import { ensureControlUiConfig } from "./control-ui-config.js";
 import { patchConfig, setIn } from "./openclaw-config.js";
+import { resolvePreinstalledPluginPaths } from "./preinstalled-plugins.js";
 
 export function hasAutoConfigEnvVars(env = process.env) {
   const keys = [
@@ -14,6 +15,7 @@ export function hasAutoConfigEnvVars(env = process.env) {
     env.DEEPSEEK_API_KEY,
     env.OPENROUTER_API_KEY,
     env.CLAWROUTERS_KEY,
+    env.CLAWROUTERS_API_KEY,
   ];
   return keys.some((k) => !!k?.trim());
 }
@@ -81,14 +83,11 @@ export function resolveAuth(env) {
     return { authChoice: "openai-api-key", authSecret: env.DEEPSEEK_API_KEY.trim() };
   if (env.OPENROUTER_API_KEY?.trim())
     return { authChoice: "openrouter-api-key", authSecret: env.OPENROUTER_API_KEY.trim() };
-  if (env.CLAWROUTERS_KEY?.trim()) {
-    const baseUrl = env.ONECLAW_END_USER
-      ? (env.CR_PROXY_BASE_URL || "http://127.0.0.1:18791/api/v1")
-      : "https://www.clawrouters.com/api/v1";
+  if ((env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim()) {
     return {
       authChoice: "custom-api-key",
-      authSecret: env.CLAWROUTERS_KEY.trim(),
-      customBaseUrl: baseUrl,
+      authSecret: (env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY).trim(),
+      customBaseUrl: "https://www.clawrouters.com/api/v1",
       customModelId: "auto",
       customProviderId: "clawrouters",
       customCompatibility: "openai",
@@ -99,15 +98,8 @@ export function resolveAuth(env) {
 }
 
 function applyAutoConfig(ctx) {
-  // Single-write strategy: every config change collected into one
-  // patchConfig() call to avoid 10+ openclaw config-set subprocesses
-  // (each ~3-5s cold start). controlUi stays in ensureControlUiConfig
-  // because that helper is also called at server startup.
   const { env, stateDir, gatewayToken, internalGatewayPort } = ctx;
-  const clawRoutersKey = env.CLAWROUTERS_KEY?.trim();
-  const crBaseUrl = env.ONECLAW_END_USER
-    ? (ctx.crProxyBaseUrl || "http://127.0.0.1:18791/api/v1")
-    : "https://www.clawrouters.com/api/v1";
+  const clawRoutersKey = (env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim();
   const envKeys = {};
   if (env.ANTHROPIC_API_KEY?.trim()) envKeys.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY.trim();
   if (env.OPENAI_API_KEY?.trim()) envKeys.OPENAI_API_KEY = env.OPENAI_API_KEY.trim();
@@ -118,31 +110,33 @@ function applyAutoConfig(ctx) {
     setIn(cfg, "gateway.auth.token", gatewayToken);
     setIn(cfg, "gateway.trustedProxies", ["127.0.0.1"]);
 
+    // Point OpenClaw at the image-baked plugins (clawrouters/discord/feishu)
+    // so they're discovered without a runtime npm install. See
+    // preinstalled-plugins.js for why this lives outside the volume.
+    const loadPaths = resolvePreinstalledPluginPaths(env);
+    if (loadPaths.length > 0) setIn(cfg, "plugins.load.paths", loadPaths);
+
     if (env.DEFAULT_MODEL?.trim()) {
       setIn(cfg, "agents.defaults.model.primary", env.DEFAULT_MODEL.trim());
     }
 
     if (clawRoutersKey) {
-      const visionModels = [
-        { id: "auto",              name: "ClawRouters Auto",    input: ["text", "image"], contextWindow: 200000,  maxTokens: 8192  },
-        { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6",   input: ["text", "image"], contextWindow: 200000,  maxTokens: 8192  },
-        { id: "claude-haiku-4.5",  name: "Claude Haiku 4.5",    input: ["text", "image"], contextWindow: 200000,  maxTokens: 8192  },
-        { id: "gpt-5.4",           name: "GPT-5.4",             input: ["text", "image"], contextWindow: 1050000, maxTokens: 16384 },
-        { id: "gemini-3-pro",      name: "Gemini 3 Pro",        input: ["text", "image"], contextWindow: 1000000, maxTokens: 8192  },
-      ];
-      setIn(cfg, "models.providers.clawrouters", { baseUrl: crBaseUrl, apiKey: clawRoutersKey, api: "openai-completions", models: visionModels });
-      setIn(cfg, "agents.defaults.model.primary", "clawrouters/auto");
-      // Route openai provider through ClawRouters too — must include models[]
-      // array to pass gateway config validation. gpt-image-1 is referenced by
-      // imageGenerationModel below.
-      setIn(cfg, "models.providers.openai", {
-        baseUrl: crBaseUrl,
-        apiKey: clawRoutersKey,
+      // Use SecretRef so the raw key is never written to openclaw.json.
+      // CLAWROUTERS_KEY is normalized to CLAWROUTERS_API_KEY in start.sh.
+      setIn(cfg, "models.providers.clawrouters", {
+        baseUrl: "https://www.clawrouters.com/api/v1",
+        apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+        api: "openai-completions",
         models: [
-          { id: "gpt-image-1", name: "GPT Image 1", input: ["text"], output: ["image"] },
+          { id: "auto", name: "auto", input: ["text", "image"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
         ],
       });
-      setIn(cfg, "agents.defaults.imageGenerationModel", { primary: "openai/gpt-image-1" });
+      setIn(cfg, "agents.defaults.model.primary", "clawrouters/auto");
+      setIn(cfg, "agents.defaults.imageGenerationModel", { primary: "clawrouters-image/auto" });
+      setIn(cfg, "agents.defaults.videoGenerationModel", { primary: "clawrouters-video/auto", timeoutMs: 600000 });
+      setIn(cfg, "agents.defaults.mediaGenerationAutoProviderFallback", false);
+      setIn(cfg, "plugins.entries.clawrouters", { enabled: true });
       for (const skillKey of ["openai-image-gen", "nano-banana-pro"]) {
         setIn(cfg, `skills.entries.${skillKey}`, { enabled: false });
       }

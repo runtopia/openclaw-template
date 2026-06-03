@@ -23,7 +23,6 @@ import httpProxy from "http-proxy";
 import { createGatewayManager } from "./lib/gateway.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
-import { createRequireSetupAuth } from "./lib/routes/setup.js";
 import { readEnvProviderKey, readDefaultProviderKey } from "./lib/repair-ai-key.js";
 import { generateConfigDirect } from "./lib/direct-config.js";
 import { patchConfig, setIn } from "./lib/openclaw-config.js";
@@ -128,11 +127,13 @@ function ensureConfig() {
       setIn(cfg, "gateway.auth.token", GATEWAY_TOKEN);
       setIn(cfg, "gateway.port", GATEWAY_PORT);
       setIn(cfg, "gateway.bind", "loopback");
-      setIn(cfg, "gateway.trustedProxies", ["127.0.0.1", "::1"]);
+      setIn(cfg, "gateway.trustedProxies", ["127.0.0.1", "::1", "::ffff:127.0.0.1", "172.16.0.0/12", "192.168.0.0/16", "10.0.0.0/8"]);
       setIn(cfg, "gateway.controlUi.allowInsecureAuth", true);
       setIn(cfg, "gateway.controlUi.dangerouslyDisableDeviceAuth", true);
       setIn(cfg, "gateway.controlUi.basePath", "/openclaw");
       setIn(cfg, "gateway.controlUi.allowedOrigins", [
+        `http://127.0.0.1:${GATEWAY_PORT}`,   // proxy 改写后的固定 origin（核心）
+        `http://localhost:${GATEWAY_PORT}`,
         `http://localhost:${PORT}`,
         `http://127.0.0.1:${PORT}`,
         "https://oneclaw.net",
@@ -213,15 +214,65 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
 
-// ── Basic Auth 中间件 ─────────────────────────────────────────────────────────
-// 所有非健康检查的公开端点都需要 SETUP_PASSWORD。
-// 部署到 Railway 后，任何人知道域名就能访问 openclaw WebUI，
-// 加 Basic Auth 防止未授权访问。
-const requireSetupAuth = createRequireSetupAuth(SETUP_PASSWORD);
+// ── 认证：cookie 会话 + Bearer(ONECLAW_INSTANCE_SECRET) ─────────────────────────
+//
+// 为什么不用 Basic Auth：浏览器对 401+WWW-Authenticate 会弹原生登录框，而
+// Control UI 是 SPA，它的 fetch/XHR/WebSocket 子请求不带 Basic 凭据 → 反复弹窗。
+// 改用签名 cookie：登录一次种 cookie，之后所有同源请求（含 WebSocket）自动携带，
+// 未登录则 302 跳 /login 页面（不弹窗）。
+// 自动化/修复助手可用 Authorization: Bearer <ONECLAW_INSTANCE_SECRET> 访问。
 
-function requireBasicAuth(req, res, next) {
-  if (!SETUP_PASSWORD) return next(); // 未设密码则放行（本地开发）
-  return requireSetupAuth(req, res, next);
+const AUTH_COOKIE = "ocsess";
+const COOKIE_SECRET = crypto.createHash("sha256")
+  .update(`${SETUP_PASSWORD || ""}:${GATEWAY_TOKEN}`).digest("hex");
+
+function signSession() {
+  const payload = String(Date.now());
+  const sig = crypto.createHmac("sha256", COOKIE_SECRET).update(payload).digest("hex");
+  return `${payload}.${sig}`;
+}
+function verifySession(value) {
+  if (!value || !value.includes(".")) return false;
+  const idx = value.lastIndexOf(".");
+  const payload = value.slice(0, idx);
+  const sig = value.slice(idx + 1);
+  const expected = crypto.createHmac("sha256", COOKIE_SECRET).update(payload).digest("hex");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  } catch { return false; }
+}
+function parseCookies(req) {
+  const out = {};
+  for (const part of (req.headers.cookie || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > -1) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}
+function bearerMatchesSecret(req) {
+  if (!ONECLAW_INSTANCE_SECRET) return false;
+  const auth = req.headers.authorization || "";
+  if (!auth.startsWith("Bearer ")) return false;
+  const tok = auth.slice(7).trim();
+  try {
+    return tok.length > 0 && crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(ONECLAW_INSTANCE_SECRET));
+  } catch { return false; }
+}
+function isAuthed(req) {
+  // 本地开发：未设密码也未设 secret → 放行
+  if (!SETUP_PASSWORD && !ONECLAW_INSTANCE_SECRET) return true;
+  if (bearerMatchesSecret(req)) return true;
+  return verifySession(parseCookies(req)[AUTH_COOKIE]);
+}
+// 页面请求：未登录 302 跳 /login（不弹窗）
+function requireAuthPage(req, res, next) {
+  if (isAuthed(req)) return next();
+  return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+}
+// API 请求：未登录返回 401 JSON（不带 WWW-Authenticate，不弹窗）
+function requireAuthApi(req, res, next) {
+  if (isAuthed(req)) return next();
+  return res.status(401).json({ ok: false, error: "unauthorized" });
 }
 
 // ── 路由 ──────────────────────────────────────────────────────────────────────
@@ -229,6 +280,28 @@ function requireBasicAuth(req, res, next) {
 // 健康检查（无需认证）——即使 openclaw 挂了也返回 200
 app.get("/health", (_req, res) => res.json({ ok: true, gatewayReady: gateway.isGatewayReady() }));
 app.get("/healthz", (_req, res) => res.json({ ok: true, gatewayReady: gateway.isGatewayReady() }));
+
+// ── 登录 ────────────────────────────────────────────────────────────────────
+app.get("/login", (_req, res) => {
+  res.sendFile(path.join(process.cwd(), "src", "public", "login.html"));
+});
+app.post("/login", express.urlencoded({ extended: false }), (req, res) => {
+  const password = String(req.body?.password || "");
+  const next = typeof req.body?.next === "string" && req.body.next.startsWith("/") ? req.body.next : "/openclaw";
+  if (!SETUP_PASSWORD) return res.redirect(next); // 未设密码直接放行
+  let ok = false;
+  try {
+    ok = crypto.timingSafeEqual(
+      crypto.createHash("sha256").update(password).digest(),
+      crypto.createHash("sha256").update(SETUP_PASSWORD).digest(),
+    );
+  } catch {}
+  if (!ok) return res.redirect("/login?error=1");
+  const secure = (req.headers["x-forwarded-proto"] || "").includes("https") ? "; Secure" : "";
+  res.setHeader("Set-Cookie",
+    `${AUTH_COOKIE}=${signSession()}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${secure}`);
+  res.redirect(next);
+});
 
 // ── setup 配置页面 ─────────────────────────────────────────────────────────────
 // 密码保护（SETUP_PASSWORD），用于首次配置 API key + 渠道
@@ -286,14 +359,14 @@ async function handleSetupConfigure(req, res) {
   }
 }
 
-app.get("/setup", requireBasicAuth, (_req, res) => {
+app.get("/setup", requireAuthPage, (_req, res) => {
   res.sendFile(path.join(process.cwd(), "src", "public", "setup.html"));
 });
-app.post("/setup/api/configure", requireBasicAuth, handleSetupConfigure);
+app.post("/setup/api/configure", requireAuthApi, handleSetupConfigure);
 
 // ── 修复助手 API ──────────────────────────────────────────────────────────────
 const repairRouter = createRepairRouter({
-  requireSetupAuth,
+  requireSetupAuth: requireAuthApi,
   instanceSecret: process.env.ONECLAW_INSTANCE_SECRET,
   runCmd,
   clawArgs,
@@ -303,44 +376,73 @@ const repairRouter = createRepairRouter({
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
 });
-app.use("/repair", requireBasicAuth);
+app.use("/repair", requireAuthApi);
 app.use("/repair", repairRouter);
 
 // ── WebUI 入口 ────────────────────────────────────────────────────────────────
-app.get("/", (_req, res) => {
+app.get("/", (req, res) => {
+  if (!isAuthed(req)) return res.redirect("/login");
   if (!isConfigured()) return res.redirect("/setup");
-  res.redirect("/openclaw");
+  res.redirect("/openclaw/");
 });
 
 // ── 反向代理到 openclaw gateway ───────────────────────────────────────────────
-// 所有 /openclaw* 路径需要 Basic Auth + 自动注入 ?token=
-// final catch-all 先把 /openclaw 请求重定向补上 token，再 proxy 到 gateway
+// gateway 鉴权通过注入 Authorization: Bearer 头完成（token 永不进 URL）。
+// Origin 改写成 gateway 自身地址，满足 gateway.controlUi.allowedOrigins 校验。
+// 这是经过验证的方式（参考原 server.js + CLAUDE.md quirk #6）。
+const GATEWAY_ORIGIN = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const proxy = httpProxy.createProxyServer({
-  target: `http://${GATEWAY_HOST}:${GATEWAY_PORT}`,
+  target: GATEWAY_ORIGIN,
   ws: true,
   xfwd: true,
   changeOrigin: true,
 });
+proxy.on("proxyReq", (proxyReq) => {
+  proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
+});
+proxy.on("proxyReqWs", (proxyReq) => {
+  proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
+});
 proxy.on("error", (err, _req, res) => {
   console.error("[proxy]", err.message);
-  if (res && !res.headersSent) {
+  if (res && !res.headersSent && typeof res.writeHead === "function") {
     res.writeHead(502).end("gateway unavailable");
   }
 });
 
 app.use((req, res) => {
-  // /openclaw 路径需要 Basic Auth + token 注入
+  // /openclaw* 需要登录会话（cookie）或 Bearer secret，未登录跳 /login
   if (req.path.startsWith("/openclaw")) {
-    return requireBasicAuth(req, res, () => {
+    if (!isAuthed(req)) {
+      return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+    }
+    if (gateway.isGatewayStarting() && !gateway.isGatewayReady()) {
+      return res.sendFile(path.join(process.cwd(), "src", "public", "loading.html"));
+    }
+    // Control UI 前端需要拿到 gateway token 才能发起 WebSocket connect RPC。
+    // 已通过 cookie 鉴权，这里把 token 注入到 URL（fragment 不会发到服务端，
+    // 比 query 更安全）。token 仅暴露给已登录用户自己的浏览器。
+    if (req.path === "/openclaw" || req.path === "/openclaw/") {
       if (!req.query.token) {
-        return res.redirect(`/openclaw?token=${GATEWAY_TOKEN}`);
+        return res.redirect(`/openclaw/?token=${GATEWAY_TOKEN}`);
       }
-      if (gateway.isGatewayStarting() && !gateway.isGatewayReady()) {
-        return res.sendFile(path.join(process.cwd(), "src", "public", "loading.html"));
-      }
-      proxy.web(req, res);
-    });
+    }
+    // 聊天 UI 需要 gatewayUrl(query) + token(fragment) 才能建立连接
+    if (req.path === "/openclaw/chat" && !req.query.gatewayUrl) {
+      const xfProto = req.headers["x-forwarded-proto"];
+      const proto = (typeof xfProto === "string" ? xfProto.split(",")[0].trim() : xfProto) || req.protocol || "http";
+      const wsProto = proto === "https" ? "wss" : "ws";
+      const host = req.headers["x-forwarded-host"] || req.headers.host || `localhost:${PORT}`;
+      const gatewayUrl = `${wsProto}://${host}/openclaw`;
+      const url = new URL(req.originalUrl || req.url, `http://${host}`);
+      url.searchParams.set("gatewayUrl", gatewayUrl);
+      return res.redirect(`${url.pathname}${url.search}#token=${GATEWAY_TOKEN}`);
+    }
+    return proxy.web(req, res);
   }
+  // 其他路径（gateway 的静态资源等）直接代理，鉴权由 gateway 的 token 头处理
   proxy.web(req, res);
 });
 
@@ -370,15 +472,13 @@ const server = app.listen(PORT, () => {
 });
 
 // WebSocket 升级转发到 openclaw
+// 浏览器同源 WebSocket 握手会自动带上 cookie，用它鉴权；
+// gateway 的鉴权由 proxyReqWs 注入的 Authorization 头完成（token 不进 URL）。
 server.on("upgrade", (req, socket, head) => {
-  // WebSocket 连接也要过 Basic Auth + 确保有 token
-  if (req.url?.startsWith("/openclaw")) {
-    const { searchParams } = new URL(req.url, "http://x");
-    if (!searchParams.get("token")) {
-      // 修改 URL 追加 token
-      const q = req.url.includes("?") ? "&" : "?";
-      req.url = `${req.url}${q}token=${GATEWAY_TOKEN}`;
-    }
+  if (!isAuthed(req)) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
+    return;
   }
   proxy.ws(req, socket, head);
 });

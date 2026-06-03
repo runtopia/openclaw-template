@@ -112,25 +112,26 @@ export function generateConfigDirect(opts) {
 
   // ── Gateway ───────────────────────────────────────────────────
   // bind=loopback：sidecar 做反代，gateway 只在内部监听
-  // trustedProxies：信任 sidecar（127.0.0.1）转发的请求，使 x-forwarded-* 生效
-  // allowedOrigins：浏览器从 sidecar 的公开端口访问 Control UI，需要把该 origin 加白
-  // allowInsecureAuth：允许 HTTP（非 HTTPS）访问 Control UI
-  // dangerouslyDisableDeviceAuth：关闭设备配对，bearer token 即可访问
+  // trustedProxies：信任 sidecar 转发，含 Docker 网桥网段
+  // allowedOrigins：sidecar 会把浏览器的 Origin 改写成 gateway 自身地址
+  //   (http://127.0.0.1:<port>)，所以这里只需白名单这个固定地址即可——
+  //   无论 Railway 公网域名是什么都不用改（域名各不相同也能用）。
+  const gatewayOrigin = `http://127.0.0.1:${port}`;
   const gateway = {
     mode: "local",
     auth: { mode: "token", token: gatewayToken },
     port,
     bind: "loopback",
-    trustedProxies: ["127.0.0.1", "::1"],
+    trustedProxies: ["127.0.0.1", "::1", "::ffff:127.0.0.1", "172.16.0.0/12", "192.168.0.0/16", "10.0.0.0/8"],
     controlUi: {
       allowInsecureAuth: true,
       dangerouslyDisableDeviceAuth: true,
       basePath: "/openclaw",
-      // 浏览器的 Origin 是访问 sidecar 的地址，不是 gateway 的地址
       allowedOrigins: [
+        gatewayOrigin,                  // proxy 改写后的固定 origin（核心）
+        `http://localhost:${port}`,
         `http://localhost:${publicPort}`,
         `http://127.0.0.1:${publicPort}`,
-        // Railway 容器内部访问场景
         "https://oneclaw.net",
         "https://www.oneclaw.net",
       ],

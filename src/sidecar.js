@@ -409,14 +409,35 @@ const GATEWAY_ORIGIN = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const proxy = httpProxy.createProxyServer({
   target: GATEWAY_ORIGIN,
   ws: true,
-  xfwd: true,
+  xfwd: false,            // 关键：不要加 X-Forwarded-*（见 stripForwardedHeaders 说明）
   changeOrigin: true,
 });
+
+// gateway 的 isLocalDirectRequest() 只要看到任何 X-Forwarded-* / Forwarded / X-Real-IP
+// 头，就判定 isLocalClient=false，进而拒绝 Control UI 的 allowInsecureAuth +
+// dangerouslyDisableDeviceAuth bypass，强制 device pairing（浏览器报 "pairing required:
+// device is not approved yet"）。自写 WS 客户端只用受限 scope、不申请 operator，所以不受影响。
+// sidecar 是 gateway（bind=loopback）唯一的可信前置代理，且已在本层做 cookie/token 鉴权，
+// 因此剥离这些转发头、让 gateway 把连接视为本地直连，是安全且必要的。
+const FORWARDED_HEADERS = ["forwarded", "x-real-ip", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port"];
+function stripForwardedHeaders(headers) {
+  if (!headers) return;
+  for (const key of Object.keys(headers)) {
+    const k = key.toLowerCase();
+    if (k === "forwarded" || k === "x-real-ip" || k.startsWith("x-forwarded-")) delete headers[key];
+  }
+}
+function dropForwardedOnProxyReq(proxyReq) {
+  for (const h of FORWARDED_HEADERS) proxyReq.removeHeader(h);
+}
+
 proxy.on("proxyReq", (proxyReq) => {
+  dropForwardedOnProxyReq(proxyReq);
   proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
 });
 proxy.on("proxyReqWs", (proxyReq) => {
+  dropForwardedOnProxyReq(proxyReq);
   proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
 });
@@ -495,6 +516,9 @@ server.on("upgrade", (req, socket, head) => {
     socket.destroy();
     return;
   }
+  // 剥离入站 X-Forwarded-* / Forwarded / X-Real-IP（Railway edge 注入），否则
+  // gateway 判 isLocalClient=false，Control UI 会被强制 device pairing。见上方 stripForwardedHeaders。
+  stripForwardedHeaders(req.headers);
   proxy.ws(req, socket, head);
 });
 

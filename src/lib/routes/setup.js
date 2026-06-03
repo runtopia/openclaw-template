@@ -298,7 +298,7 @@ export function createSetupRouter({
       const dmPolicy = payload.feishuDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "feishu",
-        npmSpec: "@openclaw/feishu",
+        npmSpec: "@openclaw/feishu@2026.5.27",
         pluginId: "feishu",
         config: {
           enabled: true,

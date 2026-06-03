@@ -81,9 +81,9 @@ export const CHANNEL_MANIFEST = [
     needsPairingClear: false,
   },
   {
-    id: "openclaw-lark",
+    id: "feishu",
     kind: "token",
-    pluginId: "openclaw-lark",
+    pluginId: "feishu",
     envCheck(env) {
       return !!(env.FEISHU_APP_ID?.trim() && env.FEISHU_APP_SECRET?.trim());
     },

@@ -209,14 +209,14 @@ export function generateConfigDirect(opts) {
     plugins.entries.slack = { enabled: true };
   }
   if (env.FEISHU_APP_ID?.trim() && env.FEISHU_APP_SECRET?.trim()) {
-    channels["openclaw-lark"] = {
+    channels.feishu = {
       enabled: true,
       appId: env.FEISHU_APP_ID.trim(),
       appSecret: env.FEISHU_APP_SECRET.trim(),
       dmPolicy: DM_OPEN,
       allowFrom: ALLOW_ALL,
     };
-    plugins.entries["openclaw-lark"] = { enabled: true };
+    plugins.entries.feishu = { enabled: true };
   }
   if (truthy(env.WHATSAPP_ENABLED)) {
     channels.whatsapp = { enabled: true, dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL };

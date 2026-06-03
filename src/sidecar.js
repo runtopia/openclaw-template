@@ -258,10 +258,25 @@ function bearerMatchesSecret(req) {
     return tok.length > 0 && crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(ONECLAW_INSTANCE_SECRET));
   } catch { return false; }
 }
+// URL query 里的 ?token=<GATEWAY_TOKEN> 也是有效凭据。
+// 浏览器 WebSocket 握手无法自定义 Authorization 头，且跨站/自写客户端不带 cookie，
+// 此时 URL query token 是唯一可行的鉴权通道（Control UI 前端本就把 token 放进 WS URL）。
+// token 即 gateway 的有效凭据，强度等价于 Bearer secret。
+function queryTokenMatchesGateway(req) {
+  let tok = "";
+  try {
+    tok = new URL(req.url, "http://internal").searchParams.get("token") || "";
+  } catch { return false; }
+  if (!tok || !GATEWAY_TOKEN) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(GATEWAY_TOKEN));
+  } catch { return false; }
+}
 function isAuthed(req) {
   // 本地开发：未设密码也未设 secret → 放行
   if (!SETUP_PASSWORD && !ONECLAW_INSTANCE_SECRET) return true;
   if (bearerMatchesSecret(req)) return true;
+  if (queryTokenMatchesGateway(req)) return true;
   return verifySession(parseCookies(req)[AUTH_COOKIE]);
 }
 // 页面请求：未登录 302 跳 /login（不弹窗）

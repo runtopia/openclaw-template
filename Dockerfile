@@ -54,7 +54,7 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v2
+ARG CACHEBUST_PLUGINS=v3
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && cd ${OPENCLAW_PLUGINS_DIR} \
@@ -63,7 +63,7 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
        github:runtopia/clawrouters-plugin \
        @openclaw/slack@2026.5.28 \
        @openclaw/discord@2026.5.28 \
-       @larksuite/openclaw-lark@2026.5.20 \
+       @openclaw/feishu@2026.5.27 \
        @openclaw/whatsapp@2026.5.28 \
        @tencent-weixin/openclaw-weixin@latest \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}

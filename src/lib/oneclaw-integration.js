@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const HEARTBEAT_INTERVAL_MS = 1 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const REMINDERS_CHECK_INTERVAL_MS = 60 * 1000;
 
 export function createOneclawIntegration({

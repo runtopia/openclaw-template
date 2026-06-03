@@ -1,5 +1,5 @@
 <!doctype html>
-<html :lang="lang" x-data="setupApp()">
+<html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -12,1053 +12,192 @@
     @theme {
       --font-sans: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
     }
-    [x-cloak] { display: none !important; }
   </style>
-  <script>
-  const I18N = {
-    en: {
-      title: 'Personal AI Assistant',
-      subtitle: 'Configure your AI assistant in a few simple steps',
-      status_loading: 'Loading...',
-      status_configured: 'Configured — open /openclaw',
-      status_notConfigured: 'Not configured — run setup below',
-      openUi: 'Open OpenClaw UI',
-      openTerminal: 'Open Terminal',
-      setupComplete: 'Setup Complete',
-      setupCompleteDesc: 'Your OpenClaw instance is configured and running',
-      runDoctor: 'Run Doctor',
-      doctorDesc: 'Performs health checks and repairs broken configuration. Creates a backup before making changes.',
-      doctorRunning: 'Running...',
-      approvePairing: 'Approve Pairing',
-      pairingDesc: 'Grant DM access to users who have requested pairing on Telegram or Discord.',
-      resetSetup: 'Reset Setup',
-      resetDesc: 'Deletes the config file so you can run onboarding again from scratch.',
-      resetButton: 'Reset',
-      step1Title: 'Model & Authentication',
-      step1Desc: 'Choose your AI provider and authentication method',
-      providerGroup: 'Provider Group',
-      authMethod: 'Auth Method',
-      apiKey: 'API Key / Token',
-      apiKeyPlaceholder: 'Paste your API key or token',
-      baseUrl: 'Base URL',
-      baseUrlPlaceholder: 'https://api.example.com/v1',
-      baseUrlOpenaiHint: 'OpenAI-compatible base URL, e.g.',
-      baseUrlAnthropicHint: 'Anthropic-compatible base URL, e.g.',
-      providerName: 'Provider Name',
-      providerNamePlaceholder: 'e.g. deepseek, anthropic',
-      visionLabel: 'Model supports vision / image input',
-      model: 'Model',
-      modelPlaceholder: 'e.g. openai/gpt-4.1, anthropic/claude-sonnet-4',
-      modelFormat: 'Format: provider/model-name',
-      wizardFlow: 'Wizard Flow',
-      flowQuickstart: 'Quickstart',
-      flowAdvanced: 'Advanced',
-      flowManual: 'Manual',
-      step2Title: 'Channels',
-      step2Desc: 'Connect messaging platforms (optional — can be added later)',
-      channelHint: 'Channel plugins are pre-installed in the image — enabling a channel takes effect immediately, no install wait.',
-      telegramPlaceholder: 'Bot token from @BotFather',
-      telegramHint: 'Message @BotFather on Telegram and run /newbot',
-      dmOpen: 'Open — anyone can DM',
-      dmPairing: 'Pairing — requires approval',
-      discordPlaceholder: 'Bot token from Developer Portal',
-      discordHint: 'Enable MESSAGE CONTENT INTENT in Bot → Privileged Gateway Intents',
-      feishuAppId: 'App ID (cli_xxx)',
-      feishuAppSecret: 'App Secret',
-      whatsappDesc: 'QR code scan — no token required',
-      wechatName: 'WeChat',
-      wechatDesc: 'QR scan login — scan via Repair console after setup',
-      dmAccess: 'DM Access',
-      step3Title: 'Run Setup',
-      step3Desc: 'Review your configuration and start OpenClaw',
-      configSummary: 'Configuration Summary',
-      configProvider: 'Provider',
-      configAuth: 'Auth',
-      configModel: 'Model',
-      configChannels: 'Channels',
-      configNone: 'None',
-      default: 'Default',
-      runSetup: 'Run Setup',
-      runSetupRunning: 'Running...',
-      approve: 'Approve',
-      cancel: 'Cancel',
-      back: 'Back',
-      next: 'Next',
-      resetConfirm: 'Reset setup? This deletes the config file so onboarding can run again.',
-      resetHint: 'Reset deletes the config file so you can rerun onboarding. Pairing approval grants DM access when dmPolicy=pairing.',
-      pairingModalTitle: 'Approve Pairing',
-      pairingModalChannel: 'Channel',
-      pairingModalChannelPlaceholder: 'Select channel...',
-      pairingModalCode: 'Pairing Code',
-      pairingModalCodePlaceholder: 'e.g. 3EY4PUYS',
-      channelMustBe: 'Channel must be "telegram" or "discord"',
-      enterPairingCode: 'Please enter a pairing code',
-      pairingApproved: 'Pairing approved successfully',
-      pairingFailed: 'Pairing failed: ',
-      doctorCompleted: 'Doctor completed successfully',
-      doctorFoundIssues: 'Doctor found issues',
-      repairTitle: 'Repair Assistant',
-      repairDesc: 'AI-powered assistant to diagnose and fix OpenClaw issues. Works even when the gateway is down.',
-      repairPlaceholder: 'Describe the issue, e.g. "gateway won\'t start, help me fix it"',
-      repairSend: 'Send',
-      repairSending: 'Thinking...',
-      repairRestart: 'Restart Gateway',
-      repairViewLogs: 'View Logs',
-      repairNoKey: 'No AI key available — chat is offline. Repair tools still work.',
-      repairToolCall: '🔧',
-      repairExpand: 'Show result',
-      repairCollapse: 'Hide result',
-    },
-    zh: {
-      title: '个人 AI 助手',
-      subtitle: '简单几步配置你的 AI 助手',
-      status_loading: '加载中...',
-      status_configured: '已配置 — 打开 /openclaw',
-      status_notConfigured: '未配置 — 在下方运行设置',
-      openUi: '打开 OpenClaw 界面',
-      openTerminal: '打开终端',
-      setupComplete: '设置完成',
-      setupCompleteDesc: '你的 OpenClaw 实例已配置并运行中',
-      runDoctor: '运行诊断',
-      doctorDesc: '执行健康检查并修复损坏的配置。修改前会创建备份。',
-      doctorRunning: '运行中...',
-      approvePairing: '批准配对',
-      pairingDesc: '为在 Telegram 或 Discord 上请求配对的用户授予私信权限。',
-      resetSetup: '重置设置',
-      resetDesc: '删除配置文件，以便从头重新运行初始化设置。',
-      resetButton: '重置',
-      step1Title: '模型与认证',
-      step1Desc: '选择你的 AI 提供商和认证方式',
-      providerGroup: '提供商分组',
-      authMethod: '认证方式',
-      apiKey: 'API 密钥 / 令牌',
-      apiKeyPlaceholder: '粘贴你的 API 密钥或令牌',
-      baseUrl: '基础 URL',
-      baseUrlPlaceholder: 'https://api.example.com/v1',
-      baseUrlOpenaiHint: 'OpenAI 兼容的基础 URL，例如',
-      baseUrlAnthropicHint: 'Anthropic 兼容的基础 URL，例如',
-      providerName: '提供商名称',
-      providerNamePlaceholder: '例如 deepseek、anthropic',
-      visionLabel: '模型支持视觉 / 图像输入',
-      model: '模型',
-      modelPlaceholder: '例如 openai/gpt-4.1、anthropic/claude-sonnet-4',
-      modelFormat: '格式：provider/model-name',
-      wizardFlow: '向导流程',
-      flowQuickstart: '快速开始',
-      flowAdvanced: '高级',
-      flowManual: '手动',
-      step2Title: '渠道',
-      step2Desc: '连接消息平台（可选 — 可稍后添加）',
-      channelHint: '提示：所有渠道插件已预装进镜像，启用渠道即时生效，无需等待安装。',
-      telegramPlaceholder: '从 @BotFather 获取的 Bot 令牌',
-      telegramHint: '在 Telegram 上给 @BotFather 发送消息并运行 /newbot',
-      dmOpen: '开放 — 任何人可私信',
-      dmPairing: '配对 — 需要批准',
-      discordPlaceholder: '从开发者门户获取的 Bot 令牌',
-      discordHint: '在 Bot → 特权网关意图中启用 MESSAGE CONTENT INTENT',
-      feishuAppId: '应用 ID (cli_xxx)',
-      feishuAppSecret: '应用密钥',
-      whatsappDesc: '二维码扫描 — 无需令牌',
-      wechatName: '微信',
-      wechatDesc: '扫码登录 — 配置后在修复助手控制台扫码',
-      dmAccess: '私信权限',
-      step3Title: '运行设置',
-      step3Desc: '查看配置并启动 OpenClaw',
-      configSummary: '配置摘要',
-      configProvider: '提供商',
-      configAuth: '认证',
-      configModel: '模型',
-      configChannels: '渠道',
-      configNone: '无',
-      default: '默认',
-      runSetup: '运行设置',
-      runSetupRunning: '运行中...',
-      approve: '批准',
-      cancel: '取消',
-      back: '返回',
-      next: '下一步',
-      resetConfirm: '重置设置？这将删除配置文件以便重新运行初始化。',
-      resetHint: '重置删除配置文件以便重新运行初始化。配对批准在 dmPolicy=pairing 时授予私信权限。',
-      pairingModalTitle: '批准配对',
-      pairingModalChannel: '渠道',
-      pairingModalChannelPlaceholder: '选择渠道...',
-      pairingModalCode: '配对码',
-      pairingModalCodePlaceholder: '例如 3EY4PUYS',
-      channelMustBe: '渠道必须是 "telegram" 或 "discord"',
-      enterPairingCode: '请输入配对码',
-      pairingApproved: '配对批准成功',
-      pairingFailed: '配对失败：',
-      doctorCompleted: '诊断完成',
-      doctorFoundIssues: '诊断发现问题',
-      repairTitle: '修复助手',
-      repairDesc: 'AI 驱动的修复助手，可诊断并修复 OpenClaw 问题。即使 gateway 宕机也可使用。',
-      repairPlaceholder: '描述问题，例如"gateway 启动失败，帮我排查"',
-      repairSend: '发送',
-      repairSending: '思考中...',
-      repairRestart: '重启 Gateway',
-      repairViewLogs: '查看日志',
-      repairNoKey: '没有可用的 AI Key，聊天功能离线。修复工具仍然可用。',
-      repairToolCall: '🔧',
-      repairExpand: '展开结果',
-      repairCollapse: '收起结果',
-    }
-  };
-
-  document.addEventListener('alpine:init', () => {
-    Alpine.data('setupApp', () => ({
-      step: 1,
-      totalSteps: 3,
-      statusKey: 'status_loading',
-      lang: 'en',
-      configured: false,
-      openclawVersion: '',
-      authGroups: [],
-      selectedGroup: '',
-      authChoices: [],
-      selectedAuth: '',
-      authSecret: '',
-      customBaseUrl: '',
-      customProviderId: '',
-      customVision: false,
-      flow: 'quickstart',
-      telegramToken: '',
-      telegramDmPolicy: 'open',
-      discordToken: '',
-      discordDmPolicy: 'open',
-      slackBotToken: '',
-      slackAppToken: '',
-      feishuAppId: '',
-      feishuAppSecret: '',
-      feishuDmPolicy: 'open',
-      whatsappEnabled: false,
-      whatsappDmPolicy: 'open',
-      wechatEnabled: false,
-      wechatDmPolicy: 'open',
-      availableChannels: {},
-
-      get suggestedProviderId() {
-        try {
-          const u = new URL(this.customBaseUrl);
-          const host = u.hostname.toLowerCase().replace(/^(www|api|v\d+)\./i, '');
-          return (host.split('.')[0] || '').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
-        } catch { return ''; }
-      },
-      model: '',
-      log: '',
-      loading: false,
-      pairingChannel: '',
-      pairingCode: '',
-      showPairingModal: false,
-      isReady: false,
-      tuiEnabled: false,
-      repairMessages: [],
-      repairInput: '',
-      repairSending: false,
-      repairChatAvailable: false,
-      repairLogs: '',
-      repairShowLogs: false,
-
-      get currentGroup() {
-        return this.authGroups.find(g => g.value === this.selectedGroup);
-      },
-
-      detectLanguage() {
-        const navLang = (navigator.language || navigator.userLanguage || 'en').toLowerCase();
-        this.lang = navLang.startsWith('zh') ? 'zh' : 'en';
-        document.documentElement.lang = this.lang;
-      },
-
-      t(key) {
-        return (I18N[this.lang] && I18N[this.lang][key]) || I18N['en'][key] || key;
-      },
-
-      async init() {
-        this.detectLanguage();
-        await this.refreshStatus();
-      },
-
-      async httpJson(url, opts = {}) {
-        opts.credentials = 'same-origin';
-        const res = await fetch(url, opts);
-        if (!res.ok) {
-          const t = await res.text();
-          throw new Error('HTTP ' + res.status + ': ' + (t || res.statusText));
-        }
-        return res.json();
-      },
-
-      async refreshStatus() {
-        this.statusKey = 'status_loading';
-        try {
-          const j = await this.httpJson('/setup/api/status');
-          this.configured = j.configured;
-          this.openclawVersion = j.openclawVersion || '';
-          this.tuiEnabled = j.tuiEnabled || false;
-          this.availableChannels = j.availableChannels || {};
-          this.statusKey = j.configured ? 'status_configured' : 'status_notConfigured';
-          this.authGroups = j.authGroups || [];
-          if (this.authGroups.length > 0) {
-            this.selectedGroup = this.authGroups[0].value;
-            this.updateAuthChoices();
-          }
-          if (j.channelsAddHelp && j.channelsAddHelp.indexOf('telegram') === -1) {
-            this.log += '\nNote: this openclaw build does not list telegram in `channels add --help`. Telegram auto-add will be skipped.\n';
-          }
-          try {
-            const rj = await this.httpJson('/setup/api/repair/status');
-            this.repairChatAvailable = rj.repairChatAvailable || false;
-          } catch {}
-          this.isReady = true;
-        } catch (e) {
-          this.statusKey = 'status_loading';
-          this.log += this.t('status_loading') + ': ' + String(e) + '\n';
-          this.isReady = true;
-        }
-      },
-
-      updateAuthChoices() {
-        const group = this.currentGroup;
-        this.authChoices = (group && group.options) ? group.options : [];
-        if (this.authChoices.length > 0) {
-          this.selectedAuth = this.authChoices[0].value;
-        }
-      },
-
-      nextStep() {
-        if (this.step < this.totalSteps) this.step++;
-      },
-
-      prevStep() {
-        if (this.step > 1) this.step--;
-      },
-
-      async runSetup() {
-        const payload = {
-          flow: this.flow,
-          authChoice: this.selectedAuth,
-          authSecret: this.authSecret,
-          customBaseUrl: this.customBaseUrl,
-          customProviderId: this.customProviderId,
-          customVision: this.customVision,
-          model: this.model,
-          telegramToken: this.telegramToken,
-          telegramDmPolicy: this.telegramDmPolicy,
-          discordToken: this.discordToken,
-          discordDmPolicy: this.discordDmPolicy,
-          slackBotToken: this.slackBotToken,
-          slackAppToken: this.slackAppToken,
-          feishuAppId: this.feishuAppId,
-          feishuAppSecret: this.feishuAppSecret,
-          feishuDmPolicy: this.feishuDmPolicy,
-          whatsappEnabled: this.whatsappEnabled,
-          whatsappDmPolicy: this.whatsappDmPolicy,
-          wechatEnabled: this.wechatEnabled,
-          wechatDmPolicy: this.wechatDmPolicy,
-        };
-
-        this.log = this.t('runSetupRunning') + '\n';
-        this.loading = true;
-
-        try {
-          const res = await fetch('/setup/api/run', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          const text = await res.text();
-          let j;
-          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
-          this.log += (j.output || JSON.stringify(j, null, 2));
-          await this.refreshStatus();
-        } catch (e) {
-          this.log += '\n' + String(e) + '\n';
-        } finally {
-          this.loading = false;
-        }
-      },
-
-      openPairingModal() {
-        this.pairingChannel = '';
-        this.pairingCode = '';
-        this.showPairingModal = true;
-      },
-
-      async approvePairing() {
-        const channel = this.pairingChannel.trim().toLowerCase();
-        if (channel !== 'telegram' && channel !== 'discord') {
-          alert(this.t('channelMustBe'));
-          return;
-        }
-        const code = this.pairingCode.trim();
-        if (!code) {
-          alert(this.t('enterPairingCode'));
-          return;
-        }
-        this.showPairingModal = false;
-        this.log += '\nApproving pairing for ' + channel + '...\n';
-
-        try {
-          const res = await fetch('/setup/api/pairing/approve', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ channel: channel, code: code })
-          });
-          const t = await res.text();
-          let result;
-          try { result = JSON.parse(t); } catch (_e) { result = { ok: false, output: t }; }
-          if (result.ok) {
-            const msg = result.output || this.t('pairingApproved');
-            this.log += '✓ ' + msg + '\n';
-            alert('✓ ' + msg.trim());
-          } else {
-            const msg = result.output || result.error || 'Unknown error';
-            this.log += '✗ Failed: ' + msg + '\n';
-            alert('✗ ' + this.t('pairingFailed') + msg.trim());
-          }
-        } catch (e) {
-          this.log += '✗ Error: ' + String(e) + '\n';
-          alert('✗ ' + this.t('pairingFailed') + String(e));
-        }
-      },
-
-      async resetSetup() {
-        if (!confirm(this.t('resetConfirm'))) return;
-        this.log = 'Resetting...\n';
-        this.loading = true;
-
-        try {
-          const res = await fetch('/setup/api/reset', { method: 'POST', credentials: 'same-origin' });
-          const t = await res.text();
-          this.log += t + '\n';
-          await this.refreshStatus();
-        } catch (e) {
-          this.log += String(e) + '\n';
-        } finally {
-          this.loading = false;
-        }
-      },
-
-      async runDoctor() {
-        this.log = 'Running doctor...\n';
-        this.loading = true;
-
-        try {
-          const res = await fetch('/setup/api/doctor', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' }
-          });
-          const text = await res.text();
-          let j;
-          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
-          this.log += (j.output || JSON.stringify(j, null, 2));
-          if (j.ok) {
-            this.log += '\n✓ ' + this.t('doctorCompleted') + '\n';
-          } else {
-            this.log += '\n✗ ' + this.t('doctorFoundIssues') + '\n';
-          }
-        } catch (e) {
-          this.log += String(e) + '\n';
-        } finally {
-          this.loading = false;
-        }
-      },
-
-      async sendRepairMessage() {
-        if (!this.repairInput.trim() || this.repairSending) return;
-        const userMsg = { role: 'user', content: this.repairInput.trim() };
-        this.repairMessages.push({ ...userMsg, _type: 'user' });
-        this.repairInput = '';
-        this.repairSending = true;
-        const history = this.repairMessages
-          .filter(m => {
-            if (m._type !== 'user' && m._type !== 'assistant') return false;
-            const c = (m.content || '').trim();
-            if (!c) return false;
-            // 排除错误消息（不是真实 AI 回复，不应进入 history）
-            if (m._type === 'assistant' && c.startsWith('❌')) return false;
-            return true;
-          })
-          .map(m => ({ role: m.role, content: m.content }));
-        const aiMsgIdx = this.repairMessages.length;
-        this.repairMessages.push({ role: 'assistant', content: '', _type: 'assistant', _toolCalls: [] });
-        // Replace the entire array (assignment guarantees reactivity in Alpine)
-        const updateAiMsg = (updater) => {
-          const arr = this.repairMessages.slice();
-          arr[aiMsgIdx] = updater(arr[aiMsgIdx]);
-          this.repairMessages = arr;
-        };
-        try {
-          const res = await fetch('/setup/api/repair/chat', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: history }),
-          });
-          if (!res.ok) {
-            const errText = await res.text();
-            updateAiMsg(m => ({ ...m, content: `❌ ${res.status}: ${errText}` }));
-            return;
-          }
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let buf = '';
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            const parts = buf.split('\n\n');
-            buf = parts.pop();
-            for (const part of parts) {
-              if (!part.startsWith('data: ')) continue;
-              try {
-                const ev = JSON.parse(part.slice(6));
-                if (ev.type === 'text') {
-                  updateAiMsg(m => ({ ...m, content: m.content + ev.delta }));
-                } else if (ev.type === 'tool_call') {
-                  updateAiMsg(m => ({ ...m, _toolCalls: [...m._toolCalls, { ...ev, _output: null, _expanded: false }] }));
-                } else if (ev.type === 'tool_result') {
-                  updateAiMsg(m => ({ ...m, _toolCalls: m._toolCalls.map(tc => tc.id === ev.id ? { ...tc, _output: ev.output } : tc) }));
-                } else if (ev.type === 'error') {
-                  updateAiMsg(m => ({ ...m, content: m.content + '\n\n❌ ' + ev.message }));
-                }
-              } catch (e) {
-                // ignore parse errors
-              }
-            }
-          }
-        } catch (err) {
-          updateAiMsg(m => ({ ...m, content: m.content + '\n\n❌ ' + String(err) }));
-        } finally {
-          this.repairSending = false;
-        }
-      },
-
-      async runRepairRestart() {
-        try {
-          this.repairMessages.push({ _type: 'system', content: '正在重启 gateway...' });
-          this.repairMessages = [...this.repairMessages];
-          await this.httpJson('/setup/api/repair/restart', { method: 'POST' });
-          this.repairMessages.push({ _type: 'system', content: '✅ 重启指令已发送，正在等待 gateway 就绪...' });
-          this.repairMessages = [...this.repairMessages];
-          // 后端重启已改为非阻塞，这里轮询 status 确认 gateway 是否真正起来（最多 ~60s）
-          let ready = false;
-          for (let i = 0; i < 30; i++) {
-            await new Promise(r => setTimeout(r, 2000));
-            try {
-              const st = await this.httpJson('/setup/api/repair/status');
-              if (st.gatewayReady) { ready = true; break; }
-            } catch {}
-          }
-          this.repairMessages.push({
-            _type: 'system',
-            content: ready ? '✅ Gateway 已就绪' : '⚠️ Gateway 60s 内仍未就绪，请用「查看日志」或让修复助手继续诊断',
-          });
-        } catch (e) {
-          this.repairMessages.push({ _type: 'system', content: '❌ 重启失败: ' + String(e) });
-        }
-        this.repairMessages = [...this.repairMessages];
-      },
-
-      async runRepairViewLogs() {
-        try {
-          const r = await this.httpJson('/setup/api/repair/logs?n=50');
-          this.repairLogs = r.lines.join('\n') || '(暂无日志)';
-          this.repairShowLogs = true;
-        } catch (e) {
-          this.repairLogs = '❌ ' + String(e);
-          this.repairShowLogs = true;
-        }
-      },
-    }));
-  });
-  </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
-<body class="bg-neutral-100 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 min-h-screen font-sans">
-  <div class="max-w-3xl mx-auto px-4 py-12 min-w-[400px]">
-    <div class="flex justify-center mb-6">
-      <picture>
-        <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/openclaw-logo-text-dark.png">
-        <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/openclaw-logo-text.png" alt="OpenClaw" class="max-w-[280px] h-auto">
-      </picture>
-    </div>
-    <h1 class="text-2xl font-semibold text-center tracking-tight mb-2" x-text="t('title')"></h1>
-    <p class="text-neutral-500 text-center text-sm mb-8" x-text="t('subtitle')"></p>
-
-    <div class="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-5 mb-6 shadow-sm dark:shadow-none">
-      <div class="flex items-center justify-between">
-        <div>
-          <span class="text-xs uppercase tracking-wide text-neutral-500 font-medium">🦞 OpenClaw</span>
-          <span x-show="openclawVersion" x-text="openclawVersion" class="text-xs text-neutral-400 dark:text-neutral-600 ml-2"></span>
-        </div>
-        <span x-text="t(statusKey)" class="text-sm" :class="configured ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'"></span>
-      </div>
-      <div x-show="configured" class="mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-800 flex flex-wrap gap-4">
-        <a href="/openclaw" target="_blank" class="inline-flex items-center gap-2 text-sm text-teal-600 dark:text-teal-400 hover:text-teal-500 dark:hover:text-teal-300 transition-colors">
-          <span x-text="t('openUi')"></span>
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-        </a>
-        <a x-show="tuiEnabled" href="/tui" target="_blank" class="inline-flex items-center gap-2 text-sm text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300 transition-colors">
-          <span x-text="t('openTerminal')"></span>
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-        </a>
-      </div>
+<body class="font-sans bg-gray-950 text-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+  <div class="w-full max-w-2xl">
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <div class="text-5xl mb-3">🦞</div>
+      <h1 class="text-3xl font-bold text-white">OpenClaw</h1>
+      <p class="text-gray-400 mt-1">配置你的 AI 助手</p>
     </div>
 
-    <div x-show="isReady && configured" x-cloak>
-      <div class="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-6 shadow-sm dark:shadow-none">
-        <h2 class="text-lg font-semibold mb-1" x-text="t('setupComplete')"></h2>
-        <p class="text-neutral-500 text-sm mb-6" x-text="t('setupCompleteDesc')"></p>
+    <!-- 状态提示 -->
+    <div id="status-message" class="hidden mb-6 px-4 py-3 rounded-lg text-sm"></div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div class="flex flex-col bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 border border-amber-200 dark:border-amber-800">
-            <div class="flex items-center gap-3 mb-3">
-              <div class="w-10 h-10 bg-amber-500/20 rounded-lg flex items-center justify-center">
-                <svg class="w-5 h-5 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-              </div>
-              <span class="font-medium text-amber-700 dark:text-amber-300" x-text="t('runDoctor')"></span>
-            </div>
-            <p class="text-sm text-amber-600/80 dark:text-amber-400/70 flex-1" x-text="t('doctorDesc')"></p>
-            <button @click="runDoctor()" :disabled="loading" class="w-full mt-4 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60 disabled:opacity-50 disabled:cursor-not-allowed text-amber-700 dark:text-amber-300 px-4 py-2.5 rounded-lg font-medium border border-amber-300 dark:border-amber-700 transition-colors">
-              <span x-show="!loading" x-text="t('runDoctor')"></span>
-              <span x-show="loading" class="flex items-center justify-center gap-2">
-                <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                <span x-text="t('doctorRunning')"></span>
-              </span>
-            </button>
-          </div>
+    <!-- 配置表单 -->
+    <div id="config-form" class="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-6">
+      <h2 class="text-lg font-semibold text-white">API Key 配置</h2>
+      <p class="text-sm text-gray-400 -mt-4">选择一个 Provider 并填入 API Key</p>
 
-          <div class="flex flex-col bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-200 dark:border-blue-800">
-            <div class="flex items-center gap-3 mb-3">
-              <div class="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                <svg class="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-              </div>
-              <span class="font-medium text-blue-700 dark:text-blue-300" x-text="t('approvePairing')"></span>
-            </div>
-            <p class="text-sm text-blue-600/80 dark:text-blue-400/70 flex-1" x-text="t('pairingDesc')"></p>
-            <button @click="openPairingModal()" :disabled="loading" class="w-full mt-4 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-900/60 disabled:opacity-50 disabled:cursor-not-allowed text-blue-700 dark:text-blue-300 px-4 py-2.5 rounded-lg font-medium border border-blue-300 dark:border-blue-700 transition-colors">
-              <span x-text="t('approvePairing')"></span>
-            </button>
-          </div>
+      <!-- Provider 选择 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-300 mb-2">Provider</label>
+        <select id="provider" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+          <option value="clawrouters">ClawRouters（推荐，支持多模型路由）</option>
+          <option value="anthropic">Anthropic（Claude）</option>
+          <option value="openai">OpenAI（GPT）</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="deepseek">DeepSeek</option>
+        </select>
+      </div>
 
-          <div class="flex flex-col bg-red-50 dark:bg-red-900/20 rounded-xl p-4 border border-red-200 dark:border-red-800">
-            <div class="flex items-center gap-3 mb-3">
-              <div class="w-10 h-10 bg-red-500/20 rounded-lg flex items-center justify-center">
-                <svg class="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-              </div>
-              <span class="font-medium text-red-700 dark:text-red-300" x-text="t('resetSetup')"></span>
-            </div>
-            <p class="text-sm text-red-600/80 dark:text-red-400/70 flex-1" x-text="t('resetDesc')"></p>
-            <button @click="resetSetup()" :disabled="loading" class="w-full mt-4 bg-red-100 dark:bg-red-900/40 hover:bg-red-200 dark:hover:bg-red-900/60 disabled:opacity-50 disabled:cursor-not-allowed text-red-700 dark:text-red-300 px-4 py-2.5 rounded-lg font-medium border border-red-300 dark:border-red-700 transition-colors">
-              <span x-text="t('resetButton')"></span>
-            </button>
-          </div>
+      <!-- API Key -->
+      <div>
+        <label class="block text-sm font-medium text-gray-300 mb-2">API Key</label>
+        <input id="api-key" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="输入你的 API Key" />
+      </div>
+
+      <!-- 渠道（可选） -->
+      <div>
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-medium text-gray-300">渠道（可选）</h3>
+          <button type="button" id="toggle-channels" class="text-xs text-blue-400 hover:text-blue-300" data-open="false">展开</button>
         </div>
-
-        <div x-show="log" class="bg-neutral-100 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 font-mono text-xs text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap max-h-64 overflow-y-auto" x-text="log"></div>
-
-        <!-- 修复助手面板 -->
-        <div class="mt-6 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-sm dark:shadow-none overflow-hidden">
-          <div class="p-4 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
-            <div>
-              <h3 class="font-semibold" x-text="t('repairTitle')"></h3>
-              <p class="text-xs text-neutral-500 mt-0.5" x-text="t('repairDesc')"></p>
-            </div>
-            <div class="flex gap-2">
-              <button @click="runRepairRestart()" :disabled="repairSending" class="text-xs px-3 py-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 disabled:opacity-50 transition-colors" x-text="t('repairRestart')"></button>
-              <button @click="runRepairViewLogs()" class="text-xs px-3 py-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 transition-colors" x-text="t('repairViewLogs')"></button>
-            </div>
-          </div>
-
-          <div x-show="!repairChatAvailable" class="px-4 py-3 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20" x-text="t('repairNoKey')"></div>
-
-          <div x-show="repairShowLogs" x-cloak class="border-b border-neutral-200 dark:border-neutral-800">
-            <div class="flex items-center justify-between px-4 py-2">
-              <span class="text-xs font-medium text-neutral-500">Gateway Logs</span>
-              <button @click="repairShowLogs = false" class="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200">✕</button>
-            </div>
-            <pre class="px-4 pb-3 font-mono text-xs text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap max-h-48 overflow-y-auto" x-text="repairLogs"></pre>
-          </div>
-
-          <div class="p-4 space-y-3 max-h-96 overflow-y-auto min-h-[80px]" x-ref="msgList">
-            <template x-for="(msg, idx) in repairMessages" :key="idx">
-              <div>
-                <div x-show="msg._type === 'user'" class="flex justify-end">
-                  <div class="bg-red-600 text-white text-sm px-4 py-2 rounded-2xl rounded-tr-sm max-w-[80%]" x-text="msg.content"></div>
-                </div>
-                <div x-show="msg._type === 'assistant'" class="flex flex-col gap-1">
-                  <template x-for="(tc, ti) in (msg._toolCalls || [])" :key="ti">
-                    <div class="bg-neutral-100 dark:bg-neutral-800 rounded-lg px-3 py-2 text-xs font-mono">
-                      <div class="flex items-center gap-2">
-                        <span x-text="t('repairToolCall')"></span>
-                        <span class="font-medium text-neutral-700 dark:text-neutral-300" x-text="tc.name"></span>
-                        <button x-show="tc._output" @click="tc._expanded = !tc._expanded" class="ml-auto text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 text-xs" x-text="tc._expanded ? t('repairCollapse') : t('repairExpand')"></button>
-                      </div>
-                      <pre x-show="tc._expanded && tc._output" class="mt-2 text-neutral-500 dark:text-neutral-400 whitespace-pre-wrap max-h-32 overflow-y-auto" x-text="tc._output"></pre>
-                    </div>
-                  </template>
-                  <div x-show="msg.content" class="bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-700 text-sm px-4 py-2 rounded-2xl rounded-tl-sm max-w-[90%] text-neutral-800 dark:text-neutral-200 whitespace-pre-wrap" x-text="msg.content"></div>
-                </div>
-                <div x-show="msg._type === 'system'" class="text-center">
-                  <span class="text-xs text-neutral-400 dark:text-neutral-600" x-text="msg.content"></span>
-                </div>
-              </div>
-            </template>
-            <div x-show="repairSending" class="flex gap-1 items-center px-1">
-              <div class="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style="animation-delay:0ms"></div>
-              <div class="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style="animation-delay:150ms"></div>
-              <div class="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style="animation-delay:300ms"></div>
-            </div>
-          </div>
-
-          <div class="border-t border-neutral-200 dark:border-neutral-800 p-3 flex gap-2">
-            <input
-              x-model="repairInput"
-              @keydown.enter.prevent="sendRepairMessage()"
-              :placeholder="t('repairPlaceholder')"
-              :disabled="repairSending || !repairChatAvailable"
-              class="flex-1 bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors disabled:opacity-50"
-            />
-            <button
-              @click="sendRepairMessage()"
-              :disabled="repairSending || !repairInput.trim() || !repairChatAvailable"
-              class="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
-              <span x-show="!repairSending" x-text="t('repairSend')"></span>
-              <span x-show="repairSending" x-text="t('repairSending')"></span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div x-show="isReady && !configured" x-cloak>
-      <div class="flex items-center justify-center gap-2 mb-8">
-        <template x-for="s in totalSteps" :key="s">
-          <div class="flex items-center">
-            <div
-              class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all cursor-pointer"
-              :class="step === s ? 'bg-red-600 text-white' : (step > s ? 'bg-emerald-600 text-white' : 'bg-neutral-200 dark:bg-neutral-800 text-neutral-500')"
-              @click="step = s"
-              x-text="s"
-            ></div>
-            <div x-show="s < totalSteps" class="w-12 h-0.5 mx-1" :class="step > s ? 'bg-emerald-600' : 'bg-neutral-200 dark:bg-neutral-800'"></div>
-          </div>
-        </template>
-      </div>
-
-      <div x-show="step === 1" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-x-4" x-transition:enter-end="opacity-100 translate-x-0">
-        <div class="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-6 shadow-sm dark:shadow-none">
-          <h2 class="text-lg font-semibold mb-1" x-text="t('step1Title')"></h2>
-          <p class="text-neutral-500 text-sm mb-6" x-text="t('step1Desc')"></p>
-
-          <div class="space-y-5">
-            <div>
-              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('providerGroup')"></label>
-              <select x-model="selectedGroup" @change="updateAuthChoices()" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-red-500 transition-colors">
-                <template x-for="g in authGroups" :key="g.value">
-                  <option :value="g.value" x-text="g.label + (g.hint ? ' — ' + g.hint : '')"></option>
-                </template>
-              </select>
-            </div>
-
-            <div>
-              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('authMethod')"></label>
-              <select x-model="selectedAuth" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-red-500 transition-colors">
-                <template x-for="o in authChoices" :key="o.value">
-                  <option :value="o.value" x-text="o.label + (o.hint ? ' — ' + o.hint : '')"></option>
-                </template>
-              </select>
-            </div>
-
-            <div>
-              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('apiKey')"></label>
-              <input x-model="authSecret" type="password" :placeholder="t('apiKeyPlaceholder')" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
-            </div>
-
-            <div x-show="selectedAuth === 'custom-openai-compatible' || selectedAuth === 'custom-anthropic-compatible'" x-cloak>
-              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('baseUrl')"></label>
-              <input x-model="customBaseUrl" type="text" :placeholder="t('baseUrlPlaceholder')" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
-              <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-2">
-                <span x-show="selectedAuth === 'custom-openai-compatible'" x-text="t('baseUrlOpenaiHint')"></span>
-                <span x-show="selectedAuth === 'custom-openai-compatible'"> <code class="bg-neutral-200 dark:bg-neutral-800 px-1 rounded">https://api.deepseek.com/v1</code></span>
-                <span x-show="selectedAuth === 'custom-anthropic-compatible'" x-text="t('baseUrlAnthropicHint')"></span>
-                <span x-show="selectedAuth === 'custom-anthropic-compatible'"> <code class="bg-neutral-200 dark:bg-neutral-800 px-1 rounded">https://api.example.com</code></span>
-              </p>
-            </div>
-
-            <div x-show="selectedAuth === 'custom-openai-compatible' || selectedAuth === 'custom-anthropic-compatible'" x-cloak>
-              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('providerName')"></label>
-              <input x-model="customProviderId" type="text" :placeholder="suggestedProviderId || t('providerNamePlaceholder')" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
-            </div>
-
-            <div x-show="selectedAuth === 'custom-openai-compatible' || selectedAuth === 'custom-anthropic-compatible'" x-cloak>
-              <label class="flex items-center gap-3 cursor-pointer">
-                <input type="checkbox" x-model="customVision" class="w-4 h-4 rounded border-neutral-300 dark:border-neutral-600 text-red-600 focus:ring-red-500" />
-                <span class="text-sm text-neutral-700 dark:text-neutral-300" x-text="t('visionLabel')"></span>
-              </label>
-            </div>
-
-            <div>
-              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('model')"></label>
-              <input x-model="model" type="text" :placeholder="t('modelPlaceholder')" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
-              <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-2" x-text="t('modelFormat')"></p>
-            </div>
-
-            <div>
-              <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('wizardFlow')"></label>
-              <select x-model="flow" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-red-500 transition-colors">
-                <option value="quickstart" x-text="t('flowQuickstart')"></option>
-                <option value="advanced" x-text="t('flowAdvanced')"></option>
-                <option value="manual" x-text="t('flowManual')"></option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div x-show="step === 2" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-x-4" x-transition:enter-end="opacity-100 translate-x-0">
-        <div class="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-6 shadow-sm dark:shadow-none">
-          <h2 class="text-lg font-semibold mb-1" x-text="t('step2Title')"></h2>
-          <p class="text-neutral-500 text-sm mb-6" x-text="t('step2Desc')"></p>
-
-          <div class="mb-5 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <p class="text-xs text-blue-700 dark:text-blue-300" x-text="t('channelHint')"></p>
-          </div>
-
-          <div class="space-y-5">
-            <!-- Telegram -->
-            <div x-show="availableChannels.telegram" x-cloak class="bg-sky-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-sky-200 dark:border-neutral-800">
-              <div class="flex items-center gap-3 mb-3">
-                <div class="w-8 h-8 bg-sky-500/20 rounded-lg flex items-center justify-center">
-                  <svg class="w-5 h-5 text-sky-500 dark:text-sky-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
-                </div>
-                <span class="font-medium">Telegram</span>
-              </div>
-              <input x-model="telegramToken" type="password" :placeholder="t('telegramPlaceholder')" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-sky-500 transition-colors" />
-              <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-2" x-text="t('telegramHint')"></p>
-              <div x-show="telegramToken" class="mt-3 flex items-center gap-3">
-                <label class="text-xs text-neutral-500 whitespace-nowrap" x-text="t('dmAccess')"></label>
-                <select x-model="telegramDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-500 transition-colors">
-                  <option value="open" x-text="t('dmOpen')"></option>
-                  <option value="pairing" x-text="t('dmPairing')"></option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Discord -->
-            <div x-show="availableChannels.discord" x-cloak class="bg-indigo-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-indigo-200 dark:border-neutral-800">
-              <div class="flex items-center gap-3 mb-3">
-                <div class="w-8 h-8 bg-indigo-500/20 rounded-lg flex items-center justify-center">
-                  <svg class="w-5 h-5 text-indigo-500 dark:text-indigo-400" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
-                </div>
-                <span class="font-medium">Discord</span>
-              </div>
-              <input x-model="discordToken" type="password" :placeholder="t('discordPlaceholder')" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors" />
-              <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-2" x-text="t('discordHint')"></p>
-              <div x-show="discordToken" class="mt-3 flex items-center gap-3">
-                <label class="text-xs text-neutral-500 whitespace-nowrap" x-text="t('dmAccess')"></label>
-                <select x-model="discordDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 transition-colors">
-                  <option value="open" x-text="t('dmOpen')"></option>
-                  <option value="pairing" x-text="t('dmPairing')"></option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Feishu / Lark -->
-            <div x-show="availableChannels.feishu" x-cloak class="bg-blue-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-blue-200 dark:border-neutral-800">
-              <div class="flex items-center gap-3 mb-3">
-                <div class="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                  <svg class="w-5 h-5 text-blue-600 dark:text-blue-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                </div>
-                <span class="font-medium">Feishu / Lark</span>
-              </div>
-              <div class="space-y-3">
-                <input x-model="feishuAppId" type="text" :placeholder="t('feishuAppId')" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-blue-500 transition-colors" />
-                <input x-model="feishuAppSecret" type="password" :placeholder="t('feishuAppSecret')" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-blue-500 transition-colors" />
-              </div>
-              <div x-show="feishuAppId && feishuAppSecret" class="mt-3 flex items-center gap-3">
-                <label class="text-xs text-neutral-500 whitespace-nowrap" x-text="t('dmAccess')"></label>
-                <select x-model="feishuDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors">
-                  <option value="open" x-text="t('dmOpen')"></option>
-                  <option value="pairing" x-text="t('dmPairing')"></option>
-                </select>
-              </div>
-            </div>
-
-            <!-- WhatsApp (QR) -->
-            <div x-show="availableChannels.whatsapp" x-cloak class="bg-emerald-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-emerald-200 dark:border-neutral-800">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                  <div class="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center">
-                    <svg class="w-5 h-5 text-emerald-600 dark:text-emerald-400" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                  </div>
-                  <div>
-                    <span class="font-medium">WhatsApp</span>
-                    <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-0.5" x-text="t('whatsappDesc')"></p>
-                  </div>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" x-model="whatsappEnabled" class="sr-only peer" />
-                  <div class="w-11 h-6 bg-neutral-200 dark:bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                </label>
-              </div>
-              <div x-show="whatsappEnabled" class="mt-3 flex items-center gap-3">
-                <label class="text-xs text-neutral-500 whitespace-nowrap" x-text="t('dmAccess')"></label>
-                <select x-model="whatsappDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors">
-                  <option value="open" x-text="t('dmOpen')"></option>
-                  <option value="pairing" x-text="t('dmPairing')"></option>
-                </select>
-              </div>
-            </div>
-
-            <!-- WeChat 微信 (QR) -->
-            <div x-show="availableChannels.wechat" x-cloak class="bg-green-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-green-200 dark:border-neutral-800">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                  <div class="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                    <svg class="w-5 h-5 text-green-600 dark:text-green-400" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.81-.05-.171-.585-.265-1.204-.265-1.838 0-3.831 3.561-6.937 7.95-6.937.27 0 .536.012.798.034C18.6 4.808 14.045 2.188 8.691 2.188zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-3.872 0-7.012 2.681-7.012 5.99 0 3.31 3.14 5.992 7.012 5.992.78 0 1.531-.114 2.232-.318a.658.658 0 0 1 .55.076l1.534.898a.272.272 0 0 0 .138.047c.134 0 .242-.111.242-.247 0-.06-.024-.12-.04-.178l-.315-1.193a.49.49 0 0 1 .177-.554C23.011 20.135 24 18.614 24 16.848c0-3.309-3.14-5.99-7.012-5.99zm-2.387 3.354c.534 0 .967.44.967.982a.976.976 0 0 1-.967.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982zm4.844 0c.534 0 .967.44.967.982a.976.976 0 0 1-.967.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z"/></svg>
-                  </div>
-                  <div>
-                    <span class="font-medium" x-text="t('wechatName')"></span>
-                    <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-0.5" x-text="t('wechatDesc')"></p>
-                  </div>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" x-model="wechatEnabled" class="sr-only peer" />
-                  <div class="w-11 h-6 bg-neutral-200 dark:bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                </label>
-              </div>
-              <div x-show="wechatEnabled" class="mt-3 flex items-center gap-3">
-                <label class="text-xs text-neutral-500 whitespace-nowrap" x-text="t('dmAccess')"></label>
-                <select x-model="wechatDmPolicy" class="flex-1 bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-500 transition-colors">
-                  <option value="open" x-text="t('dmOpen')"></option>
-                  <option value="pairing" x-text="t('dmPairing')"></option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Slack -->
-            <div x-show="availableChannels.slack" x-cloak class="bg-green-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-green-200 dark:border-neutral-800">
-              <div class="flex items-center gap-3 mb-3">
-                <div class="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                  <svg class="w-5 h-5 text-green-600 dark:text-green-400" viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 01-2.52 2.523A2.528 2.528 0 010 15.165a2.527 2.527 0 012.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 012.521-2.52 2.527 2.527 0 012.521 2.52v6.313A2.528 2.528 0 018.834 24a2.528 2.528 0 01-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 01-2.521-2.52A2.528 2.528 0 018.834 0a2.528 2.528 0 012.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 012.521 2.521 2.528 2.528 0 01-2.521 2.521H2.522A2.528 2.528 0 010 8.834a2.528 2.528 0 012.522-2.521h6.312zm10.124 2.521a2.528 2.528 0 012.522-2.521A2.528 2.528 0 0124 8.834a2.528 2.528 0 01-2.52 2.521h-2.522V8.834zm-1.271 0a2.528 2.528 0 01-2.521 2.521 2.528 2.528 0 01-2.521-2.521V2.522A2.528 2.528 0 0115.166 0a2.528 2.528 0 012.521 2.522v6.312zm-2.521 10.124a2.528 2.528 0 012.521 2.522A2.528 2.528 0 0115.166 24a2.528 2.528 0 01-2.521-2.522v-2.522h2.521zm0-1.271a2.528 2.528 0 01-2.521-2.521 2.528 2.528 0 012.521-2.521h6.312A2.528 2.528 0 0124 15.165a2.528 2.528 0 01-2.52 2.521h-6.313z"/></svg>
-                </div>
-                <span class="font-medium">Slack</span>
-              </div>
-              <div class="space-y-3">
-                <input x-model="slackBotToken" type="password" placeholder="Bot token (xoxb-...)" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-green-500 transition-colors" />
-                <input x-model="slackAppToken" type="password" placeholder="App token (xapp-...)" class="w-full bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-green-500 transition-colors" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div x-show="step === 3" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-x-4" x-transition:enter-end="opacity-100 translate-x-0">
-        <div class="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-6 shadow-sm dark:shadow-none">
-          <h2 class="text-lg font-semibold mb-1" x-text="t('step3Title')"></h2>
-          <p class="text-neutral-500 text-sm mb-6" x-text="t('step3Desc')"></p>
-
-          <div class="bg-neutral-50 dark:bg-neutral-800/50 rounded-lg p-4 border border-neutral-200 dark:border-neutral-800 mb-6">
-            <h3 class="text-sm font-medium text-neutral-600 dark:text-neutral-400 mb-3" x-text="t('configSummary')"></h3>
-            <dl class="space-y-2 text-sm">
-              <div class="flex justify-between">
-                <dt class="text-neutral-500" x-text="t('configProvider')"></dt>
-                <dd x-text="selectedGroup || '—'" class="text-neutral-700 dark:text-neutral-300"></dd>
-              </div>
-              <div class="flex justify-between">
-                <dt class="text-neutral-500" x-text="t('configAuth')"></dt>
-                <dd x-text="selectedAuth || '—'" class="text-neutral-700 dark:text-neutral-300"></dd>
-              </div>
-              <div class="flex justify-between">
-                <dt class="text-neutral-500" x-text="t('configModel')"></dt>
-                <dd x-text="model || t('default')" class="text-neutral-700 dark:text-neutral-300"></dd>
-              </div>
-              <div class="flex justify-between">
-                <dt class="text-neutral-500" x-text="t('configChannels')"></dt>
-                <dd class="text-neutral-700 dark:text-neutral-300 flex flex-wrap gap-1">
-                  <span x-show="telegramToken" class="inline-flex items-center bg-sky-100 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 px-2 py-0.5 rounded text-xs">Telegram</span>
-                  <span x-show="discordToken" class="inline-flex items-center bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded text-xs">Discord</span>
-                  <span x-show="feishuAppId && feishuAppSecret" class="inline-flex items-center bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded text-xs">Feishu</span>
-                  <span x-show="whatsappEnabled" class="inline-flex items-center bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded text-xs">WhatsApp</span>
-                  <span x-show="wechatEnabled" class="inline-flex items-center bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 px-2 py-0.5 rounded text-xs">WeChat</span>
-                  <span x-show="slackBotToken && slackAppToken" class="inline-flex items-center bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400 px-2 py-0.5 rounded text-xs">Slack</span>
-                  <span x-show="!telegramToken && !discordToken && !(feishuAppId && feishuAppSecret) && !whatsappEnabled && !wechatEnabled && !(slackBotToken && slackAppToken)" class="text-neutral-500" x-text="t('configNone')"></span>
-                </dd>
-              </div>
-            </dl>
-          </div>
-
-          <div class="flex flex-wrap gap-3 mb-4">
-            <button @click="runSetup()" :disabled="loading" class="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-colors">
-              <span x-show="!loading" x-text="t('runSetup')"></span>
-              <span x-show="loading" class="flex items-center gap-2">
-                <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                <span x-text="t('runSetupRunning')"></span>
-              </span>
-            </button>
-            <button @click="openPairingModal()" :disabled="loading" class="bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed text-neutral-700 dark:text-neutral-300 px-4 py-3 rounded-lg font-medium border border-neutral-300 dark:border-neutral-700 transition-colors">
-              <span x-text="t('approvePairing')"></span>
-            </button>
-            <button @click="resetSetup()" :disabled="loading" class="text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-3 rounded-lg font-medium transition-colors">
-              <span x-text="t('resetButton')"></span>
-            </button>
-          </div>
-
-          <div x-show="log" class="bg-neutral-100 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 font-mono text-xs text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap max-h-64 overflow-y-auto" x-text="log"></div>
-
-          <p class="text-xs text-neutral-500 dark:text-neutral-600 mt-4" x-text="t('resetHint')"></p>
-        </div>
-      </div>
-
-      <div class="flex justify-between mt-6">
-        <button
-          x-show="step > 1"
-          @click="prevStep()"
-          class="flex items-center gap-2 text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors"
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-          <span x-text="t('back')"></span>
-        </button>
-        <div x-show="step === 1"></div>
-        <button
-          x-show="step < totalSteps"
-          @click="nextStep()"
-          class="flex items-center gap-2 bg-neutral-200 dark:bg-neutral-800 hover:bg-neutral-300 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 px-5 py-2.5 rounded-lg font-medium transition-colors ml-auto"
-        >
-          <span x-text="t('next')"></span>
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-        </button>
-      </div>
-    </div>
-
-    <div x-show="showPairingModal" x-cloak class="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50" @click.self="showPairingModal = false">
-      <div class="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl dark:shadow-none">
-        <h3 class="text-lg font-semibold mb-4" x-text="t('pairingModalTitle')"></h3>
-        <div class="space-y-4">
+        <div id="channels-section" class="hidden mt-3 space-y-3">
+          <!-- Telegram -->
           <div>
-            <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('pairingModalChannel')"></label>
-            <select x-model="pairingChannel" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-red-500 transition-colors">
-              <option value="" x-text="t('pairingModalChannelPlaceholder')"></option>
-              <option value="telegram">Telegram</option>
-              <option value="discord">Discord</option>
-            </select>
+            <label class="block text-xs font-medium text-gray-400 mb-1">Telegram Bot Token</label>
+            <input id="ch-telegram" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="@BotFather 获取的 token" />
           </div>
+          <!-- Discord -->
           <div>
-            <label class="block text-xs uppercase tracking-wide text-neutral-500 font-medium mb-2" x-text="t('pairingModalCode')"></label>
-            <input x-model="pairingCode" type="text" :placeholder="t('pairingModalCodePlaceholder')" class="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-red-500 transition-colors" />
+            <label class="block text-xs font-medium text-gray-400 mb-1">Discord Bot Token</label>
+            <input id="ch-discord" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="Discord bot token" />
           </div>
-          <div class="flex gap-3 pt-2">
-            <button @click="approvePairing()" class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg font-medium transition-colors" x-text="t('approve')"></button>
-            <button @click="showPairingModal = false" class="flex-1 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 px-4 py-3 rounded-lg font-medium border border-neutral-300 dark:border-neutral-700 transition-colors" x-text="t('cancel')"></button>
+          <!-- Slack -->
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-medium text-gray-400 mb-1">Slack Bot Token</label>
+              <input id="ch-slack-bot" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-400 mb-1">Slack App Token</label>
+              <input id="ch-slack-app" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+            </div>
+          </div>
+          <!-- 飞书 -->
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-medium text-gray-400 mb-1">飞书 App ID</label>
+              <input id="ch-feishu-id" type="text" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-400 mb-1">飞书 App Secret</label>
+              <input id="ch-feishu-secret" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+            </div>
+          </div>
+          <!-- WhatsApp / 微信 -->
+          <div class="flex gap-4">
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+              <input id="ch-whatsapp" type="checkbox" class="rounded bg-gray-800 border-gray-600" />
+              启用 WhatsApp
+            </label>
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+              <input id="ch-wechat" type="checkbox" class="rounded bg-gray-800 border-gray-600" />
+              启用 微信
+            </label>
           </div>
         </div>
       </div>
+
+      <!-- 提交按钮 -->
+      <button id="btn-submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg px-4 py-3 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed" onclick="submitConfig()">
+        保存并启动
+      </button>
+    </div>
+
+    <!-- 成功页（隐藏） -->
+    <div id="success-page" class="hidden bg-gray-900 rounded-xl border border-gray-800 p-8 text-center space-y-4">
+      <div class="text-5xl">✅</div>
+      <h2 class="text-xl font-semibold text-white">配置完成</h2>
+      <p class="text-gray-400 text-sm">OpenClaw 正在启动...</p>
+      <a href="/openclaw" class="inline-block mt-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg px-6 py-2.5 text-sm transition-colors">
+        进入 OpenClaw WebUI
+      </a>
     </div>
   </div>
+
+  <script>
+  // 渠道折叠切换
+  document.getElementById('toggle-channels').addEventListener('click', function() {
+    const section = document.getElementById('channels-section');
+    const open = section.classList.toggle('hidden');
+    this.textContent = open ? '展开' : '收起';
+    this.dataset.open = open ? 'false' : 'true';
+  });
+
+  async function submitConfig() {
+    const btn = document.getElementById('btn-submit');
+    btn.disabled = true;
+    btn.textContent = '配置中...';
+
+    const apiKey = document.getElementById('api-key').value.trim();
+    const provider = document.getElementById('provider').value;
+
+    if (!apiKey) {
+      showStatus('请填写 API Key', 'error');
+      btn.disabled = false;
+      btn.textContent = '保存并启动';
+      return;
+    }
+
+    const payload = { apiKey, provider, channels: {} };
+
+    const telegram = document.getElementById('ch-telegram').value.trim();
+    if (telegram) payload.channels.telegram = { botToken: telegram };
+
+    const discord = document.getElementById('ch-discord').value.trim();
+    if (discord) payload.channels.discord = { botToken: discord };
+
+    const slackBot = document.getElementById('ch-slack-bot').value.trim();
+    const slackApp = document.getElementById('ch-slack-app').value.trim();
+    if (slackBot && slackApp) payload.channels.slack = { botToken: slackBot, appToken: slackApp };
+
+    const feishuId = document.getElementById('ch-feishu-id').value.trim();
+    const feishuSecret = document.getElementById('ch-feishu-secret').value.trim();
+    if (feishuId && feishuSecret) payload.channels.feishu = { appId: feishuId, appSecret: feishuSecret };
+
+    if (document.getElementById('ch-whatsapp').checked) payload.channels.whatsapp = { enabled: true };
+    if (document.getElementById('ch-wechat').checked) payload.channels.wechat = { enabled: true };
+
+    try {
+      const res = await fetch('/setup/api/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showStatus(data.error || '配置失败', 'error');
+        btn.disabled = false;
+        btn.textContent = '保存并启动';
+        return;
+      }
+      // 成功
+      document.getElementById('config-form').classList.add('hidden');
+      document.getElementById('success-page').classList.remove('hidden');
+      // 自动刷新页面 / 跳转
+      setTimeout(() => { window.location.href = '/openclaw'; }, 2000);
+    } catch (err) {
+      showStatus('请求失败: ' + err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = '保存并启动';
+    }
+  }
+
+  function showStatus(msg, type) {
+    const el = document.getElementById('status-message');
+    el.classList.remove('hidden', 'bg-green-900/50', 'text-green-300', 'bg-red-900/50', 'text-red-300');
+    if (type === 'error') {
+      el.classList.add('bg-red-900/50', 'text-red-300');
+    } else {
+      el.classList.add('bg-green-900/50', 'text-green-300');
+    }
+    el.textContent = msg;
+  }
+  </script>
 </body>
 </html>

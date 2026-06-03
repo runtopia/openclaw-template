@@ -31,7 +31,7 @@ const PREINSTALLED_PACKAGES = [
   "@oneclaw/clawrouters",
   "@openclaw/slack",
   "@openclaw/discord",
-  "@openclaw/feishu",
+  "@larksuite/openclaw-lark",
   "@openclaw/whatsapp",
   "@tencent-weixin/openclaw-weixin",
 ];

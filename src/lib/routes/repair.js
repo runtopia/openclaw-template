@@ -164,7 +164,13 @@ export function createRepairRouter({
     return requireSetupAuth(req, res, next);
   }
 
-  // GET /status
+  // GET / — 可用端点列表（无需认证，方便快速确认服务存活）
+  router.get("/", (_req, res) => {
+    res.json({
+      ok: true,
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config"],
+    });
+  });
   router.get("/status", requireRepairAuth, (req, res) => {
     const key = getRepairAiKey();
     res.json({

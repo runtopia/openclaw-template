@@ -4,14 +4,21 @@
 // Each channel entry declares:
 //   - id: channel identifier matching openclaw CLI name
 //   - envCheck: returns true when the env vars needed for this channel are present
-//   - reconcileShape: the config object written via `openclaw config set --json channels.<id>`
+//   - reconcileShape: the config object written to channels.<id> in openclaw.json
+//   - pluginId: the plugin entry to enable (undefined for built-in channels like telegram)
 //   - needsPairingClear: if true, clear <id>-pairing.json + <id>-allowFrom.json
 //     before writing config (token channels that might have stale pairing state)
 //
 // Adding a new channel only requires a new entry here — no new reconcile function.
+//
+// reconcileAllChannels() writes directly to openclaw.json via patchConfig() rather
+// than spawning `openclaw config set` subprocesses (~3-5s cold start each). This
+// makes Railway redeploys on configured instances ~15-30s faster when multiple
+// channels are active.
 
 import path from "node:path";
 import fs from "node:fs";
+import { patchConfig, setIn } from "./openclaw-config.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();
@@ -38,17 +45,19 @@ export const CHANNEL_MANIFEST = [
       };
     },
     needsPairingClear: true,
+    // telegram is built into openclaw core — no pluginId
   },
   {
     id: "discord",
     kind: "token",
+    pluginId: "discord",
     envCheck(env) {
       return !!env.DISCORD_BOT_TOKEN?.trim();
     },
     reconcileShape(env) {
       return {
         enabled: true,
-        token: env.DISCORD_BOT_TOKEN.trim(),
+        accounts: { default: { token: env.DISCORD_BOT_TOKEN.trim() } },
         dm: { policy: DM_OPEN, allowFrom: ALLOW_ALL },
         groupPolicy: "allowlist",
       };
@@ -58,6 +67,7 @@ export const CHANNEL_MANIFEST = [
   {
     id: "slack",
     kind: "token",
+    pluginId: "slack",
     envCheck(env) {
       return !!(env.SLACK_BOT_TOKEN?.trim() && env.SLACK_APP_TOKEN?.trim());
     },
@@ -71,8 +81,9 @@ export const CHANNEL_MANIFEST = [
     needsPairingClear: false,
   },
   {
-    id: "feishu",
+    id: "openclaw-lark",
     kind: "token",
+    pluginId: "openclaw-lark",
     envCheck(env) {
       return !!(env.FEISHU_APP_ID?.trim() && env.FEISHU_APP_SECRET?.trim());
     },
@@ -90,6 +101,7 @@ export const CHANNEL_MANIFEST = [
   {
     id: "whatsapp",
     kind: "qr",
+    pluginId: "whatsapp",
     envCheck(env) {
       return truthy(env.WHATSAPP_ENABLED);
     },
@@ -130,30 +142,50 @@ export function clearPairingStore(channelId, stateDir) {
   }
 }
 
-export async function setChannelConfig(channelId, cfgObj, { OPENCLAW_NODE, clawArgs, runCmd }) {
-  const r1 = await runCmd(OPENCLAW_NODE, clawArgs([
-    "config", "set", "--json", `channels.${channelId}`, JSON.stringify(cfgObj),
-  ]));
-  console.log(`[reconcile] channels.${channelId} exit=${r1.code}`);
-  if (r1.output) console.log(r1.output);
-
-  const r2 = await runCmd(OPENCLAW_NODE, clawArgs([
-    "config", "set", "--json", `plugins.entries.${channelId}`, '{"enabled":true}',
-  ]));
-  console.log(`[reconcile] plugins.entries.${channelId} exit=${r2.code}`);
-  if (r2.output) console.log(r2.output);
+// setChannelConfig — fast path: write directly to openclaw.json via patchConfig().
+//
+// Legacy CLI path (kept for reference):
+//   openclaw config set --json channels.<id> <json>
+//   openclaw config set --json plugins.entries.<id> {"enabled":true}
+// Each call spawns a fresh Node.js process (~3-5s cold start). With 3-4 channels
+// that's 18-40s of pure subprocess overhead on redeploy. Direct file write is ms.
+//
+// The ctx object still accepts {OPENCLAW_NODE, clawArgs, runCmd, stateDir} so
+// callers don't need to change their signature.
+export function setChannelConfig(channelId, cfgObj, ctx) {
+  const { stateDir } = ctx;
+  if (!stateDir) {
+    console.warn(`[reconcile] setChannelConfig: stateDir missing in ctx, skipping channels.${channelId}`);
+    return;
+  }
+  const configPath = path.join(stateDir, "openclaw.json");
+  if (!fs.existsSync(configPath)) {
+    console.warn(`[reconcile] setChannelConfig: ${configPath} does not exist, skipping`);
+    return;
+  }
+  patchConfig(configPath, (cfg) => {
+    setIn(cfg, `channels.${channelId}`, cfgObj);
+    // Also enable the plugin entry if the channel has one. For channels already
+    // written by generateConfigDirect() this is a no-op.
+    const ch = CHANNEL_MANIFEST.find((c) => c.id === channelId);
+    if (ch?.pluginId) setIn(cfg, `plugins.entries.${ch.pluginId}`, { enabled: true });
+  });
+  console.log(`[reconcile] channels.${channelId} written directly to openclaw.json`);
 }
 
-async function reconcileChannel(ch, ctx) {
+function reconcileChannel(ch, ctx) {
   console.log(`[reconcile] forcing channels.${ch.id} → dmPolicy=open, allowFrom=["*"]`);
   if (ch.needsPairingClear) clearPairingStore(ch.id, ctx.stateDir);
   const shape = ch.reconcileShape(ctx.env || process.env);
-  await setChannelConfig(ch.id, shape, ctx);
+  setChannelConfig(ch.id, shape, ctx);
 }
 
+// reconcileAllChannels — synchronous now (no more subprocess awaiting).
+// Kept async-compatible (returns a resolved Promise) so server.js callers
+// don't need to change.
 export async function reconcileAllChannels(ctx) {
   const active = getActiveChannels(ctx.env || process.env);
   for (const ch of active) {
-    await reconcileChannel(ch, ctx);
+    reconcileChannel(ch, ctx);
   }
 }

@@ -63,7 +63,7 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
        github:runtopia/clawrouters-plugin \
        @openclaw/slack@2026.5.28 \
        @openclaw/discord@2026.5.28 \
-       @openclaw/feishu@2026.5.28 \
+       @larksuite/openclaw-lark@2026.5.20 \
        @openclaw/whatsapp@2026.5.28 \
        @tencent-weixin/openclaw-weixin@latest \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
@@ -94,8 +94,9 @@ ENV PORT=8080
 ENV OPENCLAW_ENTRY=/usr/local/lib/node_modules/openclaw/dist/entry.js
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD curl -f http://localhost:8080/setup/healthz || exit 1
+# /health 是 openclaw gateway 自带的无认证端点
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
+  CMD curl -f http://localhost:${PORT}/health || exit 1
 
 # CMD runs as root so start.sh can fix /data ownership on Railway volume mounts,
 # then drops to the non-root openclaw user via gosu.

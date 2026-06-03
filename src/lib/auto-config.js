@@ -2,10 +2,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { hasAnyChannelConfig, reconcileAllChannels } from "./channel-manifest.js";
 import { ensureControlUiConfig } from "./control-ui-config.js";
 import { patchConfig, setIn } from "./openclaw-config.js";
 import { resolvePreinstalledPluginPaths } from "./preinstalled-plugins.js";
+import { generateConfigDirect } from "./direct-config.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();
@@ -102,6 +102,11 @@ export function resolveAuth(env) {
   return {};
 }
 
+// applyAutoConfig patches an already-existing openclaw.json with additional env-driven
+// overrides (plugins.load.paths, clawrouters model entries, WeChatplugin toggle, etc.).
+// When generateConfigDirect() is used, these fields are already baked in — this function
+// is kept for the setup-wizard path (which still runs `openclaw onboard`) and for
+// Railway redeploys where openclaw.json already exists.
 function applyAutoConfig(ctx) {
   const { env, stateDir, gatewayToken, internalGatewayPort } = ctx;
   const clawRoutersKey = (env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim();
@@ -186,40 +191,35 @@ export async function autoConfigureFromEnv(ctx) {
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.mkdirSync(path.join(stateDir, "credentials"), { recursive: true });
 
-  const auth = resolveAuth(env);
-  const onboardArgs = buildOnboardArgs({
-    flow: "quickstart",
-    ...auth,
-    model: (env.DEFAULT_MODEL || "").trim() || "",
-    workspaceDir,
-    internalGatewayPort: ctx.internalGatewayPort,
-    gatewayToken: ctx.gatewayToken,
-  });
-
-  console.log("[auto-config] running onboard...");
-  const onboard = await ctx.runCmd(ctx.OPENCLAW_NODE, ctx.clawArgs(onboardArgs));
-  console.log(`[auto-config] onboard exit=${onboard.code}`);
-  if (onboard.output) console.log(onboard.output);
-
-  if (onboard.code !== 0 || !isConfigured()) {
-    console.error("[auto-config] onboard failed");
+  // ── Fast path: generate openclaw.json directly (no subprocess) ──────────────
+  // This replaces `openclaw onboard --non-interactive` (which costs 30-60s on a
+  // cold instance) with an in-process JSON write (sub-ms). The resulting config
+  // is functionally equivalent: same gateway fields, same provider shape, same
+  // plugin paths, same channel tokens.
+  console.log("[auto-config] generating openclaw.json in-process (skipping onboard CLI)...");
+  try {
+    generateConfigDirect({
+      configPath: path.join(stateDir, "openclaw.json"),
+      workspaceDir,
+      gatewayToken: ctx.gatewayToken,
+      gatewayPort: ctx.internalGatewayPort,
+      gatewayHost: process.env.INTERNAL_GATEWAY_HOST || "127.0.0.1",
+      wrapperPort: Number(env.PORT || process.env.PORT || 8080),
+      env,
+      allowedOriginsEnv: env.GATEWAY_CONTROL_UI_ALLOWED_ORIGINS,
+    });
+  } catch (err) {
+    console.error(`[auto-config] direct config generation failed: ${err.message}`);
     return false;
   }
 
-  await reconcileAllChannels({ env, stateDir, OPENCLAW_NODE: ctx.OPENCLAW_NODE, clawArgs: ctx.clawArgs, runCmd: ctx.runCmd });
+  if (!isConfigured()) {
+    console.error("[auto-config] openclaw.json written but isConfigured() still false — gateway.mode missing?");
+    return false;
+  }
 
-  applyAutoConfig(ctx);
-
-  // Safety net: run `openclaw doctor --fix` so any residual config validation
-  // problems (e.g. missing provider models[] arrays, stale plugin entries)
-  // are auto-repaired before gateway boots. Without this, a single config
-  // schema drift could brick gateway startup.
-  console.log("[auto-config] running doctor --fix to validate config...");
-  const doctor = await ctx.runCmd(ctx.OPENCLAW_NODE, ctx.clawArgs(["doctor", "--fix", "--yes"]));
-  console.log(`[auto-config] doctor exit=${doctor.code}`);
-  if (doctor.output) console.log(doctor.output);
-
-  console.log("[auto-config] BUILD_ID=v20260518-doctor-fix — config patch + doctor safety net");
+  console.log("[auto-config] openclaw.json ready — skipping onboard + doctor subprocesses");
+  console.log("[auto-config] BUILD_ID=v20260603-direct-config — zero-subprocess fast path");
   console.log("[auto-config] configuration complete!");
   return true;
 }

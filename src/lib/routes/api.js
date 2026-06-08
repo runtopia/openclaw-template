@@ -5,7 +5,7 @@ import express from "express";
 export function createApiRouter({
   OPENCLAW_NODE, clawArgs, runCmd, isConfigured, gatewayToken,
   instanceSecret, instanceId, trackMessage, fetchPersonality, applyPersonality,
-  isGatewayReady, isGatewayStarting,
+  isGatewayReady, isGatewayStarting, gatewayTarget,
 }) {
   const router = express.Router();
 
@@ -34,7 +34,18 @@ export function createApiRouter({
     if (type === "test") {
       console.log(`[test] received: ${message}`);
       trackMessage(0, null);
-      return res.json({ ok: true, message: "Test received", instanceId, status: isGatewayReady() ? "healthy" : "starting" });
+      let status = "unhealthy";
+      if (gatewayTarget) {
+        for (const endpoint of ["/health", "/openclaw", "/"]) {
+          try {
+            const r = await fetch(`${gatewayTarget}${endpoint}`, { signal: AbortSignal.timeout(2000) });
+            if (r) { status = "healthy"; break; }
+          } catch { /* continue */ }
+        }
+      } else {
+        status = isGatewayReady() ? "healthy" : isGatewayStarting() ? "starting" : "unhealthy";
+      }
+      return res.json({ ok: true, message: "Test received", instanceId, status });
     }
     return res.json({ ok: true });
   });

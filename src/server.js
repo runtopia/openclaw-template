@@ -249,6 +249,7 @@ const apiRouter = createApiRouter({
   applyPersonality: oneclaw.applyPersonality,
   isGatewayReady: gateway.isGatewayReady,
   isGatewayStarting: gateway.isGatewayStarting,
+  gatewayTarget: gateway.GATEWAY_TARGET,
 });
 app.use("/api", apiRouter);
 

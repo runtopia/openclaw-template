@@ -41,13 +41,67 @@ export function createSkillsRouter() {
   const router = express.Router();
 
   // POST /skills/install
-  // body: { agentId, slug, version?, force? }
+  // body: { agentId, slug, version?, force?, downloadUrl? }
   router.post("/install", async (req, res) => {
-    const { agentId, slug, version, force } = req.body || {};
+    const { agentId, slug, version, force, downloadUrl } = req.body || {};
     if (!agentId || !slug) {
       return res.status(400).json({ ok: false, error: "agentId and slug are required" });
     }
 
+    // --- custom zip branch ---
+    if (downloadUrl) {
+      const ts = Date.now();
+      const zipPath = `/tmp/skill-${slug}-${ts}.zip`;
+      const tmpDir = `/tmp/skill-${slug}-${ts}`;
+
+      const cleanup = async () => {
+        try { await fs.rm(zipPath, { force: true }); } catch {}
+        try { await fs.rm(tmpDir, { recursive: true, force: true }); } catch {}
+      };
+
+      try {
+        // 1. Download zip
+        let fetchRes;
+        try {
+          fetchRes = await fetch(downloadUrl);
+        } catch (fetchErr) {
+          return res.json({ ok: false, stdout: "", stderr: `fetch failed: ${String(fetchErr)}`, code: -1 });
+        }
+        if (!fetchRes.ok) {
+          return res.json({ ok: false, stdout: "", stderr: `fetch HTTP ${fetchRes.status} for ${downloadUrl}`, code: -1 });
+        }
+
+        const buffer = Buffer.from(await fetchRes.arrayBuffer());
+        await fs.writeFile(zipPath, buffer);
+
+        // 2. Unzip to temp dir
+        try {
+          await execFile("unzip", ["-o", zipPath, "-d", tmpDir], { timeout: EXEC_TIMEOUT });
+        } catch (unzipErr) {
+          await cleanup();
+          const stderr = unzipErr.stderr || String(unzipErr);
+          return res.json({ ok: false, stdout: unzipErr.stdout || "", stderr: `unzip failed: ${stderr}`, code: -1 });
+        }
+
+        // 3. Install from local directory
+        const installArgs = ["skills", "install", tmpDir, "--as", slug, "--agent", agentId];
+        if (force) installArgs.push("--force");
+
+        try {
+          const { stdout, stderr } = await execFile("openclaw", installArgs, { timeout: EXEC_TIMEOUT });
+          return res.json({ ok: true, stdout: stdout || "", stderr: stderr || "", code: 0 });
+        } catch (err) {
+          const stdout = err.stdout || "";
+          const stderr = err.stderr || String(err);
+          const code = typeof err.code === "number" ? err.code : 1;
+          return res.json({ ok: false, stdout, stderr, code });
+        }
+      } finally {
+        await cleanup();
+      }
+    }
+
+    // --- original clawhub branch ---
     const args = ["skills", "install", slug, "--agent", agentId];
     if (version) args.push("--version", version);
     if (force) args.push("--force");

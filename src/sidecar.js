@@ -23,6 +23,7 @@ import httpProxy from "http-proxy";
 import { createGatewayManager } from "./lib/gateway.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
+import { createSkillsRouter } from "./lib/routes/skills.js";
 import { readEnvProviderKey, readDefaultProviderKey } from "./lib/repair-ai-key.js";
 import { generateConfigDirect } from "./lib/direct-config.js";
 import { patchConfig, setIn } from "./lib/openclaw-config.js";
@@ -393,6 +394,10 @@ const repairRouter = createRepairRouter({
 });
 app.use("/repair", requireAuthApi);
 app.use("/repair", repairRouter);
+
+// ── 技能管理 API ──────────────────────────────────────────────────────────────
+app.use("/skills", requireAuthApi);
+app.use("/skills", createSkillsRouter());
 
 // ── WebUI 入口 ────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {

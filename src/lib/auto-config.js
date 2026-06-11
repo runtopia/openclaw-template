@@ -5,7 +5,7 @@ import path from "node:path";
 import { ensureControlUiConfig } from "./control-ui-config.js";
 import { patchConfig, setIn } from "./openclaw-config.js";
 import { resolvePreinstalledPluginPaths } from "./preinstalled-plugins.js";
-import { generateConfigDirect } from "./direct-config.js";
+import { generateConfigDirect, buildHttpEndpoints } from "./direct-config.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();
@@ -119,6 +119,10 @@ function applyAutoConfig(ctx) {
   patchConfig(path.join(stateDir, "openclaw.json"), (cfg) => {
     setIn(cfg, "gateway.auth.token", gatewayToken);
     setIn(cfg, "gateway.trustedProxies", ["127.0.0.1"]);
+
+    // HTTP /v1/* OpenAI 兼容端点（env 注入，默认全关）。见 direct-config.js。
+    const httpEndpoints = buildHttpEndpoints(env);
+    if (httpEndpoints) setIn(cfg, "gateway.http.endpoints", httpEndpoints);
 
     // Point OpenClaw at the image-baked plugins (clawrouters/discord/feishu)
     // so they're discovered without a runtime npm install. See

@@ -90,6 +90,9 @@ open http://localhost:8080/setup  # password: test
 - `PORT` — wrapper HTTP port (default 8080)
 - `INTERNAL_GATEWAY_PORT` — gateway internal port (default 18789)
 - `OPENCLAW_ENTRY` — path to `entry.js` (default `/usr/local/lib/node_modules/openclaw/dist/entry.js`)
+- `GATEWAY_CHAT_COMPLETIONS_ENABLED` — enable `POST /v1/chat/completions` (also exposes `GET /v1/models` + `POST /v1/embeddings`, which have no independent switch). Default: off
+- `GATEWAY_RESPONSES_ENABLED` — enable `POST /v1/responses` (independent of chat completions). Default: off
+  - All `/v1/*` HTTP endpoints default to **off** (verified against openclaw `server-http.ts`); `models`/`embeddings` ride on `openAiCompatEnabled` (true when either chat completions or responses is on). All still require `gateway.auth` Bearer token. Injected via `buildHttpEndpoints()` in `src/lib/direct-config.js`, applied across all three config paths (direct-config / auto-config / setup wizard).
 
 ### Authentication Flow
 

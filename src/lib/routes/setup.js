@@ -8,6 +8,7 @@ import path from "node:path";
 import { ensureControlUiConfig } from "../control-ui-config.js";
 import { patchConfig, setIn, mergeIn } from "../openclaw-config.js";
 import { resolvePreinstalledPluginPaths } from "../preinstalled-plugins.js";
+import { buildHttpEndpoints } from "../direct-config.js";
 
 const VALID_FLOWS = ["quickstart", "advanced", "manual"];
 const VALID_AUTH_CHOICES = [
@@ -441,6 +442,10 @@ export function createSetupRouter({
           // In Docker (colima / Railway) the wrapper runs on 172.x, which
           // appears as ::ffff:172.17.x.x behind the proxy.
           setIn(cfg, "gateway.trustedProxies", ["127.0.0.1", "::ffff:172.17.0.0/16"]);
+
+          // HTTP /v1/* OpenAI 兼容端点（env 注入，默认全关）。见 direct-config.js。
+          const httpEndpoints = buildHttpEndpoints(process.env);
+          if (httpEndpoints) setIn(cfg, "gateway.http.endpoints", httpEndpoints);
 
           // Discover the image-baked plugins (clawrouters/discord/feishu) from
           // their fixed /opt path so enabling a channel needs no runtime npm

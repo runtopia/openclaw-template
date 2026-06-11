@@ -12,6 +12,19 @@ function truthy(v) {
   return s === "1" || s === "true" || s === "yes" || s === "on";
 }
 
+// ── HTTP /v1/* 端点开关（env 注入，默认全关）──────────────────────────────────
+// 返回 gateway.http.endpoints 对象；两个开关都没开则返回 null（不写 http 字段）。
+export function buildHttpEndpoints(env = process.env) {
+  const endpoints = {};
+  if (truthy(env.GATEWAY_CHAT_COMPLETIONS_ENABLED)) {
+    endpoints.chatCompletions = { enabled: true };
+  }
+  if (truthy(env.GATEWAY_RESPONSES_ENABLED)) {
+    endpoints.responses = { enabled: true };
+  }
+  return Object.keys(endpoints).length > 0 ? endpoints : null;
+}
+
 // ── 各 provider 配置构建函数 ──────────────────────────────────────────────────
 // 仅包含 provider 发现和 API 路由所需的最小字段。
 // 模型列表不在此硬编码——clawrouters 插件加载后会自动注册可用模型；
@@ -137,6 +150,16 @@ export function generateConfigDirect(opts) {
       ],
     },
   };
+
+  // ── HTTP /v1/* OpenAI 兼容端点 ─────────────────────────────────
+  // 默认全关（openclaw 源码 server-http.ts）。chatCompletions / responses
+  // 各自独立开关；/v1/models 与 /v1/embeddings 无独立开关，只要这两者任一
+  // 打开就跟着开放。通过 env 注入：
+  //   GATEWAY_CHAT_COMPLETIONS_ENABLED=true → POST /v1/chat/completions
+  //   GATEWAY_RESPONSES_ENABLED=true        → POST /v1/responses
+  // 仍受 gateway.auth 鉴权（外部客户端需带 Bearer token）。
+  const httpEndpoints = buildHttpEndpoints(env);
+  if (httpEndpoints) gateway.http = { endpoints: httpEndpoints };
 
   // ── Models ────────────────────────────────────────────────────
   // models.mode=merge：插件/provider 的模型列表与此配置合并，不覆盖

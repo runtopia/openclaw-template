@@ -216,7 +216,9 @@ let repairAiKey = readEnvProviderKey(process.env) || readDefaultProviderKey(CONF
 
 const app = express();
 app.disable("x-powered-by");
-app.use(express.json({ limit: "1mb" }));
+// 不全局解析 body：代理路径必须保持透明（原始请求流原样转发给 gateway）。
+// json 解析只挂在真正读取 req.body 的路由上（见下方 /setup、/repair、/skills）。
+const jsonParser = express.json({ limit: "1mb" });
 
 // ── 认证：cookie 会话 + Bearer(ONECLAW_INSTANCE_SECRET) ─────────────────────────
 //
@@ -381,7 +383,7 @@ async function handleSetupConfigure(req, res) {
 app.get("/setup", requireAuthPage, (_req, res) => {
   res.sendFile(path.join(process.cwd(), "src", "public", "setup.html"));
 });
-app.post("/setup/api/configure", requireAuthApi, handleSetupConfigure);
+app.post("/setup/api/configure", requireAuthApi, jsonParser, handleSetupConfigure);
 
 // ── 修复助手 API ──────────────────────────────────────────────────────────────
 const repairRouter = createRepairRouter({
@@ -396,10 +398,12 @@ const repairRouter = createRepairRouter({
   getRepairAiKey: () => repairAiKey,
 });
 app.use("/repair", requireAuthApi);
+app.use("/repair", jsonParser);
 app.use("/repair", repairRouter);
 
 // ── 技能管理 API ──────────────────────────────────────────────────────────────
 app.use("/skills", requireAuthApi);
+app.use("/skills", jsonParser);
 app.use("/skills", createSkillsRouter());
 
 // ── WebUI 入口 ────────────────────────────────────────────────────────────────

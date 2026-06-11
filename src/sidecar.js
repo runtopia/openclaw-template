@@ -35,6 +35,9 @@ import { resolvePreinstalledPluginPaths } from "./lib/preinstalled-plugins.js";
 const PORT = Number(process.env.PORT ?? 8080);                           // 对外端口（Railway $PORT）
 const GATEWAY_PORT = Number(process.env.INTERNAL_GATEWAY_PORT ?? 18789); // openclaw 내部端口
 const GATEWAY_HOST = "127.0.0.1";
+// 反代到 gateway 的超时（毫秒）。chat/responses 跑完整 agent 推理可能耗时数分钟，
+// 默认 10 分钟，可用 PROXY_TIMEOUT_MS 调整。
+const PROXY_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 600000);
 
 const STATE_DIR = process.env.OPENCLAW_STATE_DIR?.trim() || path.join(os.homedir(), ".openclaw");
 const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE_DIR?.trim() || path.join(STATE_DIR, "workspace");
@@ -416,6 +419,11 @@ const proxy = httpProxy.createProxyServer({
   ws: true,
   xfwd: false,            // 关键：不要加 X-Forwarded-*（见 stripForwardedHeaders 说明）
   changeOrigin: true,
+  // chat completions / responses 会触发完整 agent 推理（数十秒~数分钟），
+  // 默认无 proxyTimeout 时上游慢响应会被提前断开 → proxy.on("error") → 502
+  // "gateway unavailable"。放宽到 PROXY_TIMEOUT_MS（默认 10 分钟）。
+  proxyTimeout: PROXY_TIMEOUT_MS,
+  timeout: PROXY_TIMEOUT_MS,
 });
 
 // gateway 的 isLocalDirectRequest() 只要看到任何 X-Forwarded-* / Forwarded / X-Real-IP
@@ -511,6 +519,13 @@ const server = app.listen(PORT, () => {
     console.log("[sidecar] no config — gateway will not start until configured");
   }
 });
+
+// 放宽 wrapper HTTP server 超时，避免长时间的 chat/responses 推理被本层切断。
+// requestTimeout=0 关闭整请求超时；headersTimeout 仍保护慢 header 攻击。
+server.requestTimeout = 0;
+server.headersTimeout = 65000;
+server.timeout = PROXY_TIMEOUT_MS;
+server.keepAliveTimeout = 75000;
 
 // WebSocket 升级转发到 openclaw
 // 浏览器同源 WebSocket 握手会自动带上 cookie，用它鉴权；

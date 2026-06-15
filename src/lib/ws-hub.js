@@ -215,7 +215,7 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
         },
         auth: { token: gatewayToken },
         role: "operator",
-        scopes: [],
+        scopes: ["operator.admin", "operator.read", "operator.write", "operator.approvals", "operator.pairing", "talk.secrets"],
         // device field omitted: for token auth + allowInsecureAuth, device pairing
         // is not required. The nonce from connect.challenge is only needed inside
         // the device object for device-pairing auth, which we don't use.

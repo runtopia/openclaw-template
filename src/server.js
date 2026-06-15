@@ -7,7 +7,7 @@
 //   4. Startup orchestration:
 //      a. If already configured: reconcile channels → ensure gateway running
 //      b. If not configured + AI keys present: auto-configure → start gateway
-//   5. Handle WebSocket upgrades (gateway pass-through)
+//   5. Handle WebSocket upgrades (WS Hub multiplexing)
 //   6. Graceful shutdown
 
 import childProcess from "node:child_process";
@@ -20,6 +20,7 @@ import express from "express";
 import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./lib/gateway.js";
+import { createWsHub } from "./lib/ws-hub.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { autoConfigureFromEnv, hasAutoConfigEnvVars } from "./lib/auto-config.js";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./lib/channel-manifest.js";
@@ -142,6 +143,14 @@ const gateway = createGatewayManager({
   isConfigured,
 });
 
+// WebSocket Hub — multiplexes frontend clients over a single gateway WS connection
+const wsHub = createWsHub({
+  gatewayHost: INTERNAL_GATEWAY_HOST,
+  gatewayPort: INTERNAL_GATEWAY_PORT,
+  gatewayToken: OPENCLAW_GATEWAY_TOKEN,
+  basePath: "/openclaw",
+});
+
 // OneClaw integration (heartbeat, events, personality, reminders)
 const oneclaw = createOneclawIntegration({
   apiUrl: ONECLAW_API_URL,
@@ -253,6 +262,45 @@ const apiRouter = createApiRouter({
 });
 app.use("/api", apiRouter);
 
+// Media file serving (/media?path=<absolute-or-relative-path>)
+// Serves files under STATE_DIR/media only. Requires gateway bearer token (header or query param).
+app.get("/media", (req, res) => {
+  const headerToken = (req.headers.authorization || "").replace("Bearer ", "").trim();
+  const queryToken = String(req.query.token || "").trim();
+  const token = headerToken || queryToken;
+  if (!OPENCLAW_GATEWAY_TOKEN || token !== OPENCLAW_GATEWAY_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const rawPath = String(req.query.path || "");
+  if (!rawPath) return res.status(400).json({ error: "Missing path" });
+
+  // Resolve: accept absolute paths or relative to STATE_DIR
+  const resolved = path.isAbsolute(rawPath) ? rawPath : path.join(STATE_DIR, rawPath);
+  const mediaDir = path.join(STATE_DIR, "media");
+  const normalized = path.normalize(resolved);
+
+  // Security: must be inside STATE_DIR/media
+  if (!normalized.startsWith(mediaDir + path.sep) && normalized !== mediaDir) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  if (!fs.existsSync(normalized) || !fs.statSync(normalized).isFile()) {
+    return res.status(404).json({ error: "Not found" });
+  }
+
+  const ext = path.extname(normalized).toLowerCase();
+  const mimeMap = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp",
+    ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+    ".pdf": "application/pdf",
+  };
+  const contentType = mimeMap[ext] || "application/octet-stream";
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "private, max-age=86400");
+  fs.createReadStream(normalized).pipe(res);
+});
+
 // TUI route (/tui)
 const tuiRouter = createTuiRouter({
   ENABLE_WEB_TUI,
@@ -267,7 +315,7 @@ const tuiRouter = createTuiRouter({
 app.use("/tui", tuiRouter);
 
 // Gateway reverse proxy (catch-all)
-const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, ws: true, xfwd: true, changeOrigin: true });
+const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, xfwd: true, changeOrigin: true });
 gatewayProxy.on("error", (err) => console.error("[proxy]", err));
 // Rewrite Origin to the gateway's own host so gateway.controlUi.allowedOrigins
 // never has to know about the wrapper's external URL (localhost, *.up.railway.app,
@@ -276,10 +324,6 @@ gatewayProxy.on("error", (err) => console.error("[proxy]", err));
 // cannot obtain it. So this Origin rewrite does not weaken security.
 const GATEWAY_ORIGIN = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}`;
 gatewayProxy.on("proxyReq", (proxyReq) => {
-  proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
-  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
-});
-gatewayProxy.on("proxyReqWs", (proxyReq) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
 });
@@ -358,7 +402,7 @@ const server = app.listen(PORT, async () => {
     if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
     await ensureWebSocketConfig();
     gateway.ensureGatewayRunning()
-      .then(() => console.log("[wrapper] gateway started successfully at boot"))
+      .then(() => { wsHub.start(); console.log("[wrapper] gateway started successfully at boot"); })
       .catch((err) => console.error(`[wrapper] failed to start gateway at boot: ${err.message}`));
     return;
   }
@@ -387,7 +431,7 @@ const server = app.listen(PORT, async () => {
           if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
           await ensureWebSocketConfig();
           gateway.ensureGatewayRunning()
-            .then(() => console.log("[wrapper] gateway started successfully after auto-config"))
+            .then(() => { wsHub.start(); console.log("[wrapper] gateway started successfully after auto-config"); })
             .catch((err) => console.error(`[wrapper] failed to start gateway after auto-config: ${err.message}`));
         }
       } catch (err) {
@@ -419,7 +463,10 @@ server.on("upgrade", async (req, socket, head) => {
     socket.destroy();
     return;
   }
-  gatewayProxy.ws(req, socket, head, { target: gateway.GATEWAY_TARGET });
+
+  // Route gateway WS upgrades through the WS Hub
+  // Hub broadcasts event frames to all clients and routes res frames to the requester
+  wsHub.handleUpgrade(req, socket, head);
 });
 
 // ──────────────────────────────────────────────────────────────
@@ -430,6 +477,7 @@ async function gracefulShutdown(signal) {
   console.log(`[wrapper] received ${signal}, shutting down`);
 
   oneclaw.stop();
+  wsHub.close();
   await oneclaw.sendEvent("instance_stopping", { signal });
 
   setupRouter.cleanup();

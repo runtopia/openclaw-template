@@ -38,8 +38,15 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
   // ── Gateway connection lifecycle ───────────────────────────
 
   function connectToGateway() {
-    if (gatewayWs && (gatewayWs.readyState === WebSocket.OPEN || gatewayWs.readyState === WebSocket.CONNECTING)) {
-      return; // already connected or connecting
+    // If an old connection is still closing, detach its close handler first
+    // to prevent it from overwriting the new gatewayWs reference.
+    if (gatewayWs) {
+      if (gatewayWs.readyState === WebSocket.OPEN || gatewayWs.readyState === WebSocket.CONNECTING) {
+        return; // already connected or connecting — nothing to do
+      }
+      // readyState is CLOSING or CLOSED — detach to avoid race
+      gatewayWs.removeAllListeners();
+      gatewayWs = null;
     }
 
     intentionalClose = false;
@@ -84,14 +91,16 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       }
 
       if (frame.type === "event") {
-        // hello-ok event confirms handshake success
+        // hello-ok event confirms our handshake — do NOT broadcast this to
+        // frontend clients; they get their own fake hello-ok from connect interception.
         if (frame.event === "hello-ok" && !gatewayConnected) {
           gatewayConnected = true;
           reconnectAttempt = 0;
           console.log("[ws-hub] gateway handshake completed, hub is operational");
+          return; // internal only — skip broadcast
         }
-        // Broadcast all events to every connected frontend client
-        broadcastToClients(raw);
+        // Broadcast all other events to every connected frontend client
+        broadcastToClients(raw.toString()); // convert Buffer to string (text frames, not binary)
         return;
       }
 
@@ -257,20 +266,25 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
     }
 
     // Remove any pending reqOrigin entries for this client
+    // (collect keys first to avoid mutating Map during iteration)
     const prefix = `c${idx}-`;
+    const keysToDelete = [];
     for (const key of reqOrigin.keys()) {
       if (key.startsWith(prefix) && reqOrigin.get(key) === ws) {
-        reqOrigin.delete(key);
+        keysToDelete.push(key);
       }
+    }
+    for (const key of keysToDelete) {
+      reqOrigin.delete(key);
     }
   }
 
   // ── Broadcast ─────────────────────────────────────────────
 
-  function broadcastToClients(raw) {
+  function broadcastToClients(text) {
     for (const client of connectedClients) {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(raw);
+        client.send(text); // send as text frame (string), not binary Buffer
       }
     }
   }
@@ -332,6 +346,7 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
     connectedClients.clear();
     reqOrigin.clear();
     clientIndexMap.clear();
+    clientIndex = 0; // reset for next start cycle
 
     // Close the WebSocketServer
     wss.close();

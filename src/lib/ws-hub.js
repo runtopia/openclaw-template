@@ -67,8 +67,8 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
         id: `hub-handshake-${reqIdCounter}`,
         method: "connect",
         params: {
-          minProtocol: 1,
-          maxProtocol: 1,
+          minProtocol: 4,
+          maxProtocol: 4,
           client: {
             id: "openclaw-control-ui",   // must match GATEWAY_CLIENT_IDS enum
             version: "1.0.0",
@@ -207,7 +207,7 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
           type: "event",
           event: "hello-ok",
           payload: {
-            protocol: 1,
+            protocol: 4,
             server: {
               id: "openclaw-control-ui",
               version: "1.0.0",

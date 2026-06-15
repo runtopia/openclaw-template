@@ -216,15 +216,9 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
         auth: { token: gatewayToken },
         role: "operator",
         scopes: [],
-        // nonce goes in the device.nonce field for token-auth connections
-        // (per gateway source: assembleConnectParams builds device params with nonce)
-        device: {
-          id: `hub-device-${hubHandshakeId}`,
-          publicKey: "",
-          signature: "",
-          signedAt: Date.now(),
-          nonce: connectNonce,
-        },
+        // device field omitted: for token auth + allowInsecureAuth, device pairing
+        // is not required. The nonce from connect.challenge is only needed inside
+        // the device object for device-pairing auth, which we don't use.
       },
     };
     gatewayWs.send(JSON.stringify(connectFrame));

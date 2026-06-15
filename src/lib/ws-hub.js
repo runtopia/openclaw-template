@@ -70,10 +70,10 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
           minProtocol: 1,
           maxProtocol: 1,
           client: {
-            id: "openclaw-wrapper-hub",
+            id: "openclaw-control-ui",   // must match GATEWAY_CLIENT_IDS enum
             version: "1.0.0",
             platform: "node",
-            mode: "operator",
+            mode: "ui",                   // must match GATEWAY_CLIENT_MODES enum
           },
           auth: { token: gatewayToken },
         },
@@ -209,7 +209,7 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
           payload: {
             protocol: 1,
             server: {
-              id: "openclaw-wrapper-hub",
+              id: "openclaw-control-ui",
               version: "1.0.0",
             },
           },

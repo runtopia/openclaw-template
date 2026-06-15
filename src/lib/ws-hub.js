@@ -6,7 +6,14 @@
 //   req  → forward to gateway (prefix frame.id with client index)
 //   res  → route to originating client only (via reqOrigin map)
 //   event → broadcast to all connected frontend clients
-//   connect → intercept and answer locally (hub is already authenticated)
+//          (except tick and connect.challenge which are hub-internal)
+//   connect req from frontend → respond locally with res(ok=true, payload=cached helloOk)
+//
+// Gateway WS connect protocol (verified against openclaw source):
+//   Step 1: Gateway sends "connect.challenge" event frame with nonce
+//   Step 2: Client sends "connect" req frame with nonce + auth token
+//   Step 3: Gateway responds with res(ok=true, payload=helloOk object)
+//   No separate "hello-ok" event frame is sent — helloOk data comes as res.payload.
 
 import { WebSocket, WebSocketServer } from "ws";
 
@@ -14,16 +21,21 @@ const BACKOFF_BASE_MS = 2000;
 const BACKOFF_CAP_MS = 30000;
 const BACKOFF_MAX_ATTEMPTS = 20;
 
+// Events that are hub-internal and should NOT be broadcast to frontend clients.
+const SUPPRESSED_EVENTS = new Set(["tick", "connect.challenge", "hello-ok"]);
+
 export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }) {
   const GATEWAY_WS_URL = `ws://${gatewayHost}:${gatewayPort}${basePath || "/openclaw"}`;
   const GATEWAY_ORIGIN = `http://${gatewayHost}:${gatewayPort}`;
 
   // ── State ──────────────────────────────────────────────────
 
-  let gatewayWs = null;         // single persistent connection to gateway
-  let gatewayConnected = false;  // true after connect handshake completes
-  let clientIndex = 0;          // monotonically increasing client counter
-  let reqIdCounter = 0;         // for generating hub's own req IDs (handshake)
+  let gatewayWs = null;              // single persistent connection to gateway
+  let gatewayConnected = false;      // true after connect handshake completes
+  let connectNonce = null;           // nonce from connect.challenge event
+  let cachedHelloOk = null;          // helloOk payload from gateway's res (used for frontend clients)
+  let hubHandshakeId = null;         // the req.id we used for our connect handshake
+  let clientIndex = 0;              // monotonically increasing client counter
 
   const connectedClients = new Set();  // frontend client WebSocket instances
   const reqOrigin = new Map();         // prefixedId → clientWs (for routing res)
@@ -36,6 +48,11 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
   const wss = new WebSocketServer({ noServer: true });
 
   // ── Gateway connection lifecycle ───────────────────────────
+  //
+  // OpenClaw gateway WS connect protocol (3-step):
+  //   1. Gateway pushes: { type:"event", event:"connect.challenge", payload:{ nonce, ts } }
+  //   2. Client sends:   { type:"req", id:"<uuid>", method:"connect", params:{ minProtocol:4, maxProtocol:4, client:{...}, auth:{token}, ... } }
+  //   3. Gateway responds: { type:"res", id:"<uuid>", ok:true, payload:{ type:"hello-ok", protocol:4, server:{}, features:{}, snapshot:{}, auth:{}, policy:{} } }
 
   function connectToGateway() {
     // If an old connection is still closing, detach its close handler first
@@ -49,6 +66,8 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       gatewayWs = null;
     }
 
+    connectNonce = null;
+    hubHandshakeId = null;
     intentionalClose = false;
     console.log(`[ws-hub] connecting to gateway at ${GATEWAY_WS_URL}`);
 
@@ -60,25 +79,9 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
     });
 
     gatewayWs.on("open", () => {
-      console.log("[ws-hub] gateway WS connection opened, sending connect handshake");
-      reqIdCounter++;
-      const handshakeFrame = {
-        type: "req",
-        id: `hub-handshake-${reqIdCounter}`,
-        method: "connect",
-        params: {
-          minProtocol: 4,
-          maxProtocol: 4,
-          client: {
-            id: "openclaw-control-ui",   // must match GATEWAY_CLIENT_IDS enum
-            version: "1.0.0",
-            platform: "node",
-            mode: "ui",                   // must match GATEWAY_CLIENT_MODES enum
-          },
-          auth: { token: gatewayToken },
-        },
-      };
-      gatewayWs.send(JSON.stringify(handshakeFrame));
+      console.log("[ws-hub] gateway WS connection opened, waiting for connect.challenge");
+      // Gateway will send connect.challenge event frame next.
+      // We do NOT send connect immediately — we must wait for the nonce first.
     });
 
     gatewayWs.on("message", (raw) => {
@@ -91,25 +94,64 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       }
 
       if (frame.type === "event") {
-        // hello-ok is the gateway's handshake confirmation — always suppress it.
-        // Frontend clients get their own synthetic hello-ok from connect interception;
-        // broadcasting the gateway's would confuse them.
+        // Step 1: Handle connect.challenge — gateway pushes nonce, then we send connect
+        if (frame.event === "connect.challenge") {
+          const nonce = frame.payload?.nonce;
+          if (!nonce || typeof nonce !== "string" || nonce.trim().length === 0) {
+            console.error("[ws-hub] connect.challenge missing nonce, closing");
+            gatewayWs.close(1008, "connect challenge missing nonce");
+            return;
+          }
+          connectNonce = nonce.trim();
+          console.log("[ws-hub] received connect.challenge nonce, sending connect req");
+          sendHubConnectReq();
+          return; // internal — don't broadcast challenge to frontend clients
+        }
+
+        // hello-ok event: In the current protocol, gateway does NOT send a separate
+        // hello-ok event frame. But if it ever does (e.g., protocol change), suppress it.
         if (frame.event === "hello-ok") {
           if (!gatewayConnected) {
+            // This shouldn't happen with current protocol, but handle gracefully
             gatewayConnected = true;
             reconnectAttempt = 0;
-            console.log("[ws-hub] gateway handshake completed, hub is operational");
+            console.log("[ws-hub] received hello-ok event (unexpected in protocol v4)");
           }
-          return; // internal only — never broadcast hello-ok to frontend clients
+          return; // suppress — frontend clients get helloOk via res.payload
         }
-        // Broadcast all other events to every connected frontend client
-        broadcastToClients(raw.toString()); // convert Buffer to string (text frames, not binary)
+
+        // tick events are heartbeat — no need to broadcast to frontend clients
+        if (frame.event === "tick") {
+          return;
+        }
+
+        // All other events → broadcast to frontend clients
+        broadcastToClients(raw.toString());
         return;
       }
 
       if (frame.type === "res") {
-        // Route response to the originating client only
         const prefixedId = frame.id;
+
+        // Step 3: Handle our own handshake response
+        if (hubHandshakeId && prefixedId === hubHandshakeId) {
+          if (frame.ok) {
+            // Cache the helloOk payload for use with frontend clients
+            cachedHelloOk = frame.payload;
+            gatewayConnected = true;
+            reconnectAttempt = 0;
+            console.log("[ws-hub] gateway handshake completed, hub is operational");
+          } else {
+            console.error(`[ws-hub] gateway handshake failed: ${JSON.stringify(frame.error)}`);
+            gatewayConnected = false;
+            cachedHelloOk = null;
+            gatewayWs.close();
+          }
+          hubHandshakeId = null;
+          return; // internal — don't route to frontend clients
+        }
+
+        // Route other res frames to the originating client only
         const clientWs = reqOrigin.get(prefixedId);
         if (clientWs) {
           reqOrigin.delete(prefixedId);
@@ -120,15 +162,6 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
             clientWs.send(JSON.stringify(routedFrame));
           }
         } else {
-          // Response for a req we sent ourselves (e.g., handshake) — ignore
-          if (frame.id?.startsWith("hub-handshake-")) {
-            if (!frame.ok) {
-              console.error(`[ws-hub] gateway handshake failed: ${JSON.stringify(frame.error)}`);
-              gatewayConnected = false;
-              gatewayWs.close();
-            }
-            return;
-          }
           console.warn(`[ws-hub] received res for unknown req id: ${prefixedId}`);
         }
         return;
@@ -142,6 +175,9 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       console.warn(`[ws-hub] gateway WS closed: code=${code} reason=${reasonStr}`);
       gatewayWs = null;
       gatewayConnected = false;
+      cachedHelloOk = null;
+      connectNonce = null;
+      hubHandshakeId = null;
 
       if (intentionalClose) {
         intentionalClose = false;
@@ -156,6 +192,43 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       console.error(`[ws-hub] gateway WS error: ${err.message}`);
       // The "close" event will follow and handle reconnect
     });
+  }
+
+  // Step 2: Send connect req to gateway using nonce from connect.challenge
+  function sendHubConnectReq() {
+    if (!gatewayWs || gatewayWs.readyState !== WebSocket.OPEN) return;
+    if (!connectNonce) return;
+
+    hubHandshakeId = `hub-connect-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const connectFrame = {
+      type: "req",
+      id: hubHandshakeId,
+      method: "connect",
+      params: {
+        minProtocol: 4,
+        maxProtocol: 4,
+        client: {
+          id: "openclaw-control-ui",   // must match GATEWAY_CLIENT_IDS enum
+          version: "1.0.0",
+          platform: "node",
+          mode: "ui",                   // must match GATEWAY_CLIENT_MODES enum
+        },
+        auth: { token: gatewayToken },
+        role: "operator",
+        scopes: [],
+        // nonce goes in the device.nonce field for token-auth connections
+        // (per gateway source: assembleConnectParams builds device params with nonce)
+        device: {
+          id: `hub-device-${hubHandshakeId}`,
+          publicKey: "",
+          signature: "",
+          signedAt: Date.now(),
+          nonce: connectNonce,
+        },
+      },
+    };
+    gatewayWs.send(JSON.stringify(connectFrame));
+    console.log(`[ws-hub] sent connect req (id=${hubHandshakeId})`);
   }
 
   function scheduleReconnect() {
@@ -201,23 +274,42 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
         return;
       }
 
-      // Intercept connect handshake — answer locally, don't forward
+      // Intercept connect handshake — respond locally with cached helloOk
+      // Gateway protocol: connect is a req/res call. The client's request<HelloOk>("connect")
+      // Promise resolves via res.payload. We must send a res frame (not an event frame).
       if (frame.type === "req" && frame.method === "connect") {
-        const helloOk = {
-          type: "event",
-          event: "hello-ok",
-          payload: {
-            protocol: 4,
-            server: {
-              id: "openclaw-control-ui",
-              version: "1.0.0",
+        if (!cachedHelloOk) {
+          // Hub not connected to gateway yet — can't serve helloOk
+          const errorRes = {
+            type: "res",
+            id: frame.id,
+            ok: false,
+            error: {
+              code: "UNAVAILABLE",
+              message: "Gateway WebSocket not connected",
+              retryable: true,
+              retryAfterMs: 2000,
             },
-          },
-          seq: 0,
+          };
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(errorRes));
+          }
+          return;
+        }
+
+        // Respond with res(ok=true) + cached helloOk as payload
+        // This resolves the client's request<HelloOk>("connect") Promise,
+        // giving them the real helloOk data (features, snapshot, auth, policy).
+        const resFrame = {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: cachedHelloOk,
         };
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(helloOk));
+          ws.send(JSON.stringify(resFrame));
         }
+        console.log(`[ws-hub] client c${idx} connect handshake answered locally with cached helloOk`);
         return;
       }
 
@@ -323,6 +415,9 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
     }
 
     gatewayConnected = false;
+    cachedHelloOk = null;
+    connectNonce = null;
+    hubHandshakeId = null;
     reconnectAttempt = 0;
 
     // Reconnect fresh
@@ -346,6 +441,9 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       gatewayWs = null;
     }
     gatewayConnected = false;
+    cachedHelloOk = null;
+    connectNonce = null;
+    hubHandshakeId = null;
 
     // Close all frontend client connections
     for (const client of connectedClients) {

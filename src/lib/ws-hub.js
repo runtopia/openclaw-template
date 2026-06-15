@@ -91,13 +91,16 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       }
 
       if (frame.type === "event") {
-        // hello-ok event confirms our handshake — do NOT broadcast this to
-        // frontend clients; they get their own fake hello-ok from connect interception.
-        if (frame.event === "hello-ok" && !gatewayConnected) {
-          gatewayConnected = true;
-          reconnectAttempt = 0;
-          console.log("[ws-hub] gateway handshake completed, hub is operational");
-          return; // internal only — skip broadcast
+        // hello-ok is the gateway's handshake confirmation — always suppress it.
+        // Frontend clients get their own synthetic hello-ok from connect interception;
+        // broadcasting the gateway's would confuse them.
+        if (frame.event === "hello-ok") {
+          if (!gatewayConnected) {
+            gatewayConnected = true;
+            reconnectAttempt = 0;
+            console.log("[ws-hub] gateway handshake completed, hub is operational");
+          }
+          return; // internal only — never broadcast hello-ok to frontend clients
         }
         // Broadcast all other events to every connected frontend client
         broadcastToClients(raw.toString()); // convert Buffer to string (text frames, not binary)
@@ -310,8 +313,11 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       reconnectTimer = null;
     }
 
-    // Close existing gateway connection
+    // Close existing gateway connection — detach listeners first
+    // to prevent stale close/error handlers from corrupting the new gatewayWs
+    // reference or triggering a redundant reconnect.
     if (gatewayWs) {
+      gatewayWs.removeAllListeners();
       gatewayWs.close();
       gatewayWs = null;
     }
@@ -320,6 +326,7 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
     reconnectAttempt = 0;
 
     // Reconnect fresh
+    intentionalClose = false;
     connectToGateway();
   }
 
@@ -332,8 +339,9 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       reconnectTimer = null;
     }
 
-    // Close gateway connection
+    // Close gateway connection — detach listeners first to prevent stale handlers
     if (gatewayWs) {
+      gatewayWs.removeAllListeners();
       gatewayWs.close();
       gatewayWs = null;
     }

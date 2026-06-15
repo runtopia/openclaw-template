@@ -226,6 +226,7 @@ const setupRouter = createSetupRouter({
   TUI_IDLE_TIMEOUT_MS,
   TUI_MAX_SESSION_MS,
   onSetupComplete: refreshRepairAiKey,
+  wsHub,
 });
 app.use("/setup", setupRouter);
 
@@ -241,6 +242,7 @@ const repairRouter = createRepairRouter({
   configFilePath,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
+  wsHub,
 });
 app.use("/setup/api/repair", repairRouter);
 

@@ -83,6 +83,7 @@ export function createSetupRouter({
   configFilePath, port, internalGatewayHost, internalGatewayPort,
   ENABLE_WEB_TUI,
   onSetupComplete,
+  wsHub,
 }) {
   const router = express.Router();
 
@@ -519,6 +520,7 @@ export function createSetupRouter({
 
         extra += "\n[setup] Starting gateway...\n";
         await restartGateway();
+        wsHub?.restart();
         extra += "[setup] Gateway started.\n";
         if (typeof onSetupComplete === "function") onSetupComplete();
       }

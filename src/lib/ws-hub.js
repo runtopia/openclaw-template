@@ -120,8 +120,12 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
           return; // suppress — frontend clients get helloOk via res.payload
         }
 
-        // tick events are heartbeat — no need to broadcast to frontend clients
+        // tick events are heartbeat — broadcast to frontend clients so they can
+        // reset their tick watchdog timer and avoid "tick timeout" disconnects.
+        // (The gateway client uses tick events to detect silent stalls and will
+        // close the connection if no tick received for tickIntervalMs * 2.)
         if (frame.event === "tick") {
+          broadcastToClients(raw.toString());
           return;
         }
 

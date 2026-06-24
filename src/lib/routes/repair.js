@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "node:fs";
 import { patchConfig, setIn } from "../openclaw-config.js";
+import { startWechatLogin, getWechatLoginState } from "../wechat-login.js";
 
 const SENSITIVE_KEYS = new Set(["apiKey", "token", "secret", "password", "key"]);
 
@@ -99,7 +100,7 @@ const REPAIR_TOOLS = [
 ];
 
 async function executeTool(name, args, ctx) {
-  const { gatewayManager, runCmd, OPENCLAW_NODE, clawArgs, configFilePath, restartGateway } = ctx;
+  const { gatewayManager, runCmd, OPENCLAW_NODE, clawArgs, configFilePath, restartGateway, wsHub } = ctx;
   switch (name) {
     case "get_status":
       return JSON.stringify({
@@ -123,6 +124,7 @@ async function executeTool(name, args, ctx) {
     }
     case "restart_gateway":
       await restartGateway({ waitReady: false });
+      wsHub?.restart();
       return "已触发 gateway 重启，正在后台启动（不等待就绪）。请随后调用 get_status 查看是否就绪、read_logs 查看启动日志后再下结论，不要假设它已经起来。";
     case "patch_config": {
       patchConfig(configFilePath(), (cfg) => setIn(cfg, args.path, args.value));
@@ -152,6 +154,7 @@ export function createRepairRouter({
   configFilePath,
   gatewayManager,
   getRepairAiKey,
+  wsHub,
 }) {
   const router = express.Router();
 
@@ -168,7 +171,7 @@ export function createRepairRouter({
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login"],
     });
   });
   router.get("/status", requireRepairAuth, (req, res) => {
@@ -207,6 +210,7 @@ export function createRepairRouter({
   router.post("/restart", requireRepairAuth, async (_req, res) => {
     try {
       await restartGateway({ waitReady: false });
+      wsHub?.restart();
       res.json({ ok: true, pending: true });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
@@ -243,6 +247,48 @@ export function createRepairRouter({
     }
   });
 
+  // ── WhatsApp QR login ───────────────────────────────────────
+  // WhatsApp's QR is NOT printed to gateway stdout; it's returned by the
+  // gateway WS RPC `web.login.start` as a PNG data URL. We forward the RPC
+  // over the wrapper's persistent gateway WS (wsHub.rpcGateway) so the
+  // dashboard can fetch it via plain HTTP.
+  //   POST /whatsapp-login/start → { qrDataUrl, connected, message }
+  //   POST /whatsapp-login/wait  → { qrDataUrl, connected, message }  (pass currentQrDataUrl in body)
+  async function whatsappLoginRpc(res, method, params) {
+    if (!wsHub) return res.status(503).json({ ok: false, error: "ws hub unavailable" });
+    try {
+      const frame = await wsHub.rpcGateway(method, params);
+      // frame: { ok, payload: { qrDataUrl?, connected?, message? } }
+      const p = frame.payload || {};
+      res.json({ ok: !!frame.ok, qrDataUrl: p.qrDataUrl ?? null, connected: !!p.connected, message: p.message ?? null, error: frame.ok ? null : (frame.error?.message ?? "rpc failed") });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: String(err?.message || err) });
+    }
+  }
+
+  router.post("/whatsapp-login/start", requireRepairAuth, async (req, res) => {
+    const force = req.body?.force === true;
+    await whatsappLoginRpc(res, "web.login.start", { force, timeoutMs: 30_000 });
+  });
+
+  router.post("/whatsapp-login/wait", requireRepairAuth, async (req, res) => {
+    const currentQrDataUrl = typeof req.body?.currentQrDataUrl === "string" ? req.body.currentQrDataUrl : undefined;
+    await whatsappLoginRpc(res, "web.login.wait", { timeoutMs: 30_000, ...(currentQrDataUrl ? { currentQrDataUrl } : {}) });
+  });
+
+  // ── WeChat QR login ──────────────────────────────────────────
+  // WeChat has no web RPC; its QR only appears when running
+  // `openclaw channels login --channel openclaw-weixin` (printed to stdout as
+  // a URL). We spawn that process and parse its stdout for the qrUrl.
+  router.post("/wechat-login/start", requireRepairAuth, (_req, res) => {
+    const s = startWechatLogin({ OPENCLAW_NODE, clawArgs });
+    res.json({ ok: true, ...s });
+  });
+
+  router.get("/wechat-login", requireRepairAuth, (_req, res) => {
+    res.json({ ok: true, ...getWechatLoginState() });
+  });
+
   // POST /chat — SSE streaming with tool use
   router.post("/chat", requireRepairAuth, async (req, res) => {
     const repairAiKey = getRepairAiKey();
@@ -268,7 +314,7 @@ export function createRepairRouter({
     }, 15000);
     req.on("close", () => clearInterval(heartbeat));
 
-    const toolCtx = { gatewayManager, runCmd, OPENCLAW_NODE, clawArgs, configFilePath, restartGateway };
+    const toolCtx = { gatewayManager, runCmd, OPENCLAW_NODE, clawArgs, configFilePath, restartGateway, wsHub };
     const systemPrompt = "你是 OpenClaw 修复助手。诊断并修复 gateway 配置和运行问题。使用工具获取信息再采取行动，解释你的每一步操作。";
     const isAnthropic = repairAiKey.api === "anthropic-messages";
 

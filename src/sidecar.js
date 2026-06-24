@@ -21,6 +21,7 @@ import express from "express";
 import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./lib/gateway.js";
+import { createGatewayRpc } from "./lib/gateway-rpc.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
 import { createSkillsRouter } from "./lib/routes/skills.js";
@@ -191,6 +192,13 @@ const gateway = createGatewayManager({
   internalGatewayHost: GATEWAY_HOST,
   gatewayToken: GATEWAY_TOKEN,
   isConfigured,
+});
+
+const gatewayRpc = createGatewayRpc({
+  gatewayHost: GATEWAY_HOST,
+  gatewayPort: GATEWAY_PORT,
+  gatewayToken: GATEWAY_TOKEN,
+  basePath: "/openclaw",
 });
 
 // ── OneClaw 心跳上报 ──────────────────────────────────────────────────────────
@@ -396,6 +404,7 @@ const repairRouter = createRepairRouter({
   configFilePath: () => CONFIG_PATH,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
+  wsHub: gatewayRpc,
 });
 app.use("/repair", requireAuthApi);
 app.use("/repair", jsonParser);
@@ -453,6 +462,9 @@ proxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
 });
+// WebSocket upgrade: inject the same Bearer token + strip forwarded headers so
+// the gateway treats the proxied client as a trusted local connection (and each
+// frontend client gets its own gateway connect handshake / subscriptions).
 proxy.on("proxyReqWs", (proxyReq) => {
   dropForwardedOnProxyReq(proxyReq);
   proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
@@ -514,6 +526,7 @@ const server = app.listen(PORT, () => {
   if (isConfigured()) {
     gateway.ensureGatewayRunning()
       .then(async () => {
+        gatewayRpc.start();
         console.log("[sidecar] gateway ready");
         await ensureWorkspaceFiles();
         if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
@@ -543,6 +556,11 @@ server.on("upgrade", (req, socket, head) => {
   // 剥离入站 X-Forwarded-* / Forwarded / X-Real-IP（Railway edge 注入），否则
   // gateway 判 isLocalClient=false，Control UI 会被强制 device pairing。见上方 stripForwardedHeaders。
   stripForwardedHeaders(req.headers);
+  // Reverse-proxy the WS upgrade straight to the gateway. Each frontend client
+  // gets its own gateway connection (connect handshake + subscriptions), so
+  // per-client event routing works correctly. (Replaces the old ws-hub
+  // multiplexer, which merged all clients into one gateway connection and
+  // broadcast events — breaking openclaw's per-client subscription model.)
   proxy.ws(req, socket, head);
 });
 
@@ -551,6 +569,7 @@ server.on("upgrade", (req, socket, head) => {
 function shutdown(signal) {
   console.log(`[sidecar] ${signal} received — shutting down`);
   oneclaw.stop();
+  gatewayRpc.close();
   gateway.stopGateway();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);

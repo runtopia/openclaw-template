@@ -20,6 +20,7 @@ import express from "express";
 import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./lib/gateway.js";
+import { createGatewayRpc } from "./lib/gateway-rpc.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { autoConfigureFromEnv, hasAutoConfigEnvVars } from "./lib/auto-config.js";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./lib/channel-manifest.js";
@@ -142,6 +143,16 @@ const gateway = createGatewayManager({
   isConfigured,
 });
 
+// Gateway RPC client — wrapper's own single WS connection to the gateway (for
+// repair endpoints forwarding gateway RPCs like web.login). Frontend clients
+// connect directly via the WS reverse proxy, each with its own handshake.
+const wsHub = createGatewayRpc({
+  gatewayHost: INTERNAL_GATEWAY_HOST,
+  gatewayPort: INTERNAL_GATEWAY_PORT,
+  gatewayToken: OPENCLAW_GATEWAY_TOKEN,
+  basePath: "/openclaw",
+});
+
 // OneClaw integration (heartbeat, events, personality, reminders)
 const oneclaw = createOneclawIntegration({
   apiUrl: ONECLAW_API_URL,
@@ -232,6 +243,7 @@ const repairRouter = createRepairRouter({
   configFilePath,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
+  wsHub,
 });
 app.use("/setup/api/repair", repairRouter);
 
@@ -306,7 +318,7 @@ const tuiRouter = createTuiRouter({
 app.use("/tui", tuiRouter);
 
 // Gateway reverse proxy (catch-all)
-const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, ws: true, xfwd: true, changeOrigin: true });
+const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, xfwd: true, changeOrigin: true, ws: true });
 gatewayProxy.on("error", (err) => console.error("[proxy]", err));
 // Rewrite Origin to the gateway's own host so gateway.controlUi.allowedOrigins
 // never has to know about the wrapper's external URL (localhost, *.up.railway.app,
@@ -397,7 +409,7 @@ const server = app.listen(PORT, async () => {
     if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
     await ensureWebSocketConfig();
     gateway.ensureGatewayRunning()
-      .then(() => console.log("[wrapper] gateway started successfully at boot"))
+      .then(() => { wsHub.start(); console.log("[wrapper] gateway started successfully at boot"); })
       .catch((err) => console.error(`[wrapper] failed to start gateway at boot: ${err.message}`));
     return;
   }
@@ -426,7 +438,7 @@ const server = app.listen(PORT, async () => {
           if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
           await ensureWebSocketConfig();
           gateway.ensureGatewayRunning()
-            .then(() => console.log("[wrapper] gateway started successfully after auto-config"))
+            .then(() => { wsHub.start(); console.log("[wrapper] gateway started successfully after auto-config"); })
             .catch((err) => console.error(`[wrapper] failed to start gateway after auto-config: ${err.message}`));
         }
       } catch (err) {
@@ -458,7 +470,10 @@ server.on("upgrade", async (req, socket, head) => {
     socket.destroy();
     return;
   }
-  gatewayProxy.ws(req, socket, head, { target: gateway.GATEWAY_TARGET });
+
+  // Reverse-proxy the WS upgrade straight to the gateway — each frontend client
+  // gets its own gateway connection (connect handshake + subscriptions).
+  gatewayProxy.ws(req, socket, head);
 });
 
 // ──────────────────────────────────────────────────────────────
@@ -469,6 +484,7 @@ async function gracefulShutdown(signal) {
   console.log(`[wrapper] received ${signal}, shutting down`);
 
   oneclaw.stop();
+  wsHub.close();
   await oneclaw.sendEvent("instance_stopping", { signal });
 
   setupRouter.cleanup();

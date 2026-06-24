@@ -34,7 +34,7 @@ function setState(patch) {
 }
 
 export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
-  if (proc) return getState(); // already running — idempotent
+  if (proc) return getWechatLoginState(); // already running — idempotent
   state = { status: "starting", qrUrl: null, message: null, updatedAt: Date.now() };
 
   const args = clawArgs(["channels", "login", "--channel", "openclaw-weixin"]);
@@ -46,7 +46,7 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
   } catch (err) {
     proc = null;
     setState({ status: "error", message: `spawn failed: ${err.message}` });
-    return getState();
+    return getWechatLoginState();
   }
 
   setState({ status: "scan", message: "waiting for QR from channels login" });
@@ -87,7 +87,7 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
     proc = null;
   });
 
-  return getState();
+  return getWechatLoginState();
 }
 
 export function getWechatLoginState() {

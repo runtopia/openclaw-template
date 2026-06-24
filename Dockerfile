@@ -30,7 +30,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Pin OpenClaw core.
-ARG OPENCLAW_VERSION=2026.5.28
+ARG OPENCLAW_VERSION=2026.6.10
 RUN npm install -g openclaw@${OPENCLAW_VERSION}
 
 # Pre-install plugins OUTSIDE the /data volume, into a fixed image path.
@@ -54,18 +54,18 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v3
+ARG CACHEBUST_PLUGINS=v4
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && cd ${OPENCLAW_PLUGINS_DIR} \
   && npm init -y >/dev/null 2>&1 \
   && npm install --omit=dev --no-audit --no-fund \
        github:runtopia/clawrouters-plugin \
-       @openclaw/slack@2026.5.28 \
-       @openclaw/discord@2026.5.28 \
-       @openclaw/feishu@2026.5.27 \
-       @openclaw/whatsapp@2026.5.28 \
-       @tencent-weixin/openclaw-weixin@latest \
+       @openclaw/slack@2026.6.10 \
+       @openclaw/discord@2026.6.10 \
+       @openclaw/feishu@2026.6.10 \
+       @openclaw/whatsapp@2026.6.10 \
+       @tencent-weixin/openclaw-weixin@2.4.6 \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 
 WORKDIR /app

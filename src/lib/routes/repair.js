@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "node:fs";
 import { patchConfig, setIn } from "../openclaw-config.js";
+import { startWechatLogin, getWechatLoginState } from "../wechat-login.js";
 
 const SENSITIVE_KEYS = new Set(["apiKey", "token", "secret", "password", "key"]);
 
@@ -273,6 +274,19 @@ export function createRepairRouter({
   router.post("/whatsapp-login/wait", requireRepairAuth, async (req, res) => {
     const currentQrDataUrl = typeof req.body?.currentQrDataUrl === "string" ? req.body.currentQrDataUrl : undefined;
     await whatsappLoginRpc(res, "web.login.wait", { timeoutMs: 30_000, ...(currentQrDataUrl ? { currentQrDataUrl } : {}) });
+  });
+
+  // ── WeChat QR login ──────────────────────────────────────────
+  // WeChat has no web RPC; its QR only appears when running
+  // `openclaw channels login --channel openclaw-weixin` (printed to stdout as
+  // a URL). We spawn that process and parse its stdout for the qrUrl.
+  router.post("/wechat-login/start", requireRepairAuth, (_req, res) => {
+    const s = startWechatLogin({ OPENCLAW_NODE, clawArgs });
+    res.json({ ok: true, ...s });
+  });
+
+  router.get("/wechat-login", requireRepairAuth, (_req, res) => {
+    res.json({ ok: true, ...getWechatLoginState() });
   });
 
   // POST /chat — SSE streaming with tool use

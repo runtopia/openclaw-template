@@ -23,13 +23,18 @@ let state = { status: "idle", qrUrl: null, message: null, updatedAt: 0 };
 const QR_URL_RE = /https:\/\/liteapp\.weixin\.qq\.com\/q\/\S+/;
 // Scan-completed markers (channel.js prints "✅ 已连接..." on success).
 const CONNECTED_RE = /已连接|✅|登录成功|connected/i;
+// Pairing-code prompt — channels login reads stdin here. bot_type=3 normally
+// doesn't trigger this, but if it does (e.g. risky-login verify), the CLI
+// blocks on stdin (which we don't write) → surface it as a status instead of
+// hanging silently. The dashboard can then tell the user to use the terminal.
+const NEED_VERIFY_RE = /输入手机微信显示的数字|need_verifycode|配对码|verify/i;
 
 function setState(patch) {
   state = { ...state, ...patch, updatedAt: Date.now() };
 }
 
 export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
-  if (proc) return getState(); // already running — idempotent
+  if (proc) return getWechatLoginState(); // already running — idempotent
   state = { status: "starting", qrUrl: null, message: null, updatedAt: Date.now() };
 
   const args = clawArgs(["channels", "login", "--channel", "openclaw-weixin"]);
@@ -41,7 +46,7 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
   } catch (err) {
     proc = null;
     setState({ status: "error", message: `spawn failed: ${err.message}` });
-    return getState();
+    return getWechatLoginState();
   }
 
   setState({ status: "scan", message: "waiting for QR from channels login" });
@@ -50,14 +55,19 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
     const text = chunk.toString();
     const m = text.match(QR_URL_RE);
     if (m) {
-      // Strip any trailing punctuation/whitespace that \S+ wouldn't catch (none
-      // expected, but be safe).
-      const url = m[0].replace(/[)\].,;].*$/, "");
+      // \S+ already matches the full URL up to the line's end (no whitespace).
+      // Do NOT strip trailing '.' — the URL contains dots (liteapp.weixin.qq.com)
+      // and a `[.)\]...]` char-class would truncate it to "https://liteapp".
+      const url = m[0].replace(/[)\]]+$/, "");
       setState({ qrUrl: url, status: "scan" });
       return;
     }
     if (CONNECTED_RE.test(text)) {
       setState({ status: "connected", message: text.trim().slice(0, 200) });
+      return;
+    }
+    if (NEED_VERIFY_RE.test(text)) {
+      setState({ status: "need_verifycode", message: "需要输入手机微信显示的配对码，请在实例终端完成 channels login" });
       return;
     }
     // Keep the last informative (non-QR-glyph, non-empty) line for debugging.
@@ -77,7 +87,7 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
     proc = null;
   });
 
-  return getState();
+  return getWechatLoginState();
 }
 
 export function getWechatLoginState() {

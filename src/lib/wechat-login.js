@@ -55,9 +55,10 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
     const text = chunk.toString();
     const m = text.match(QR_URL_RE);
     if (m) {
-      // Strip any trailing punctuation/whitespace that \S+ wouldn't catch (none
-      // expected, but be safe).
-      const url = m[0].replace(/[)\].,;].*$/, "");
+      // \S+ already matches the full URL up to the line's end (no whitespace).
+      // Do NOT strip trailing '.' — the URL contains dots (liteapp.weixin.qq.com)
+      // and a `[.)\]...]` char-class would truncate it to "https://liteapp".
+      const url = m[0].replace(/[)\]]+$/, "");
       setState({ qrUrl: url, status: "scan" });
       return;
     }

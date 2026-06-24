@@ -40,6 +40,7 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
   const connectedClients = new Set();  // frontend client WebSocket instances
   const reqOrigin = new Map();         // prefixedId → clientWs (for routing res)
   const clientIndexMap = new Map();    // clientWs → assigned index (for cleanup)
+  const selfPending = new Map();      // selfRpc id → { resolve, reject } (wrapper-issued RPCs)
 
   let reconnectAttempt = 0;
   let reconnectTimer = null;
@@ -155,6 +156,14 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
           return; // internal — don't route to frontend clients
         }
 
+        // Self-issued RPCs (wrapper calling gateway directly, e.g. whatsapp QR login)
+        if (selfPending.has(prefixedId)) {
+          const { resolve } = selfPending.get(prefixedId);
+          selfPending.delete(prefixedId);
+          resolve(frame);
+          return;
+        }
+
         // Route other res frames to the originating client only
         const clientWs = reqOrigin.get(prefixedId);
         if (clientWs) {
@@ -182,6 +191,12 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       cachedHelloOk = null;
       connectNonce = null;
       hubHandshakeId = null;
+
+      // Reject any in-flight wrapper-issued RPCs so callers don't hang.
+      for (const { resolve } of selfPending.values()) {
+        resolve({ ok: false, error: { code: "disconnected", message: "gateway WS closed" } });
+      }
+      selfPending.clear();
 
       if (intentionalClose) {
         intentionalClose = false;
@@ -241,6 +256,30 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
       reconnectTimer = null;
       connectToGateway();
     }, delay);
+  }
+
+  // ── Self-issued gateway RPC ────────────────────────────────
+  //
+  // Lets the wrapper itself issue RPCs to the gateway over the same persistent
+  // WS connection used for frontend multiplexing (e.g. web.login.start to fetch
+  // a WhatsApp QR data URL). Rejects if the gateway WS isn't connected yet.
+
+  function rpcGateway(method, params = {}, timeoutMs = 35_000) {
+    return new Promise((resolve, reject) => {
+      if (!gatewayWs || gatewayWs.readyState !== WebSocket.OPEN || !gatewayConnected) {
+        reject(new Error("gateway WS not connected"));
+        return;
+      }
+      const id = `self-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const timer = setTimeout(() => {
+        selfPending.delete(id);
+        reject(new Error(`rpc timeout: ${method}`));
+      }, timeoutMs);
+      selfPending.set(id, {
+        resolve: (frame) => { clearTimeout(timer); resolve(frame); },
+      });
+      gatewayWs.send(JSON.stringify({ type: "req", id, method, params }));
+    });
   }
 
   // ── Client ID prefixing ───────────────────────────────────
@@ -471,5 +510,6 @@ export function createWsHub({ gatewayHost, gatewayPort, gatewayToken, basePath }
     close,
     isGatewayConnected,
     getConnectedClientCount,
+    rpcGateway,
   };
 }

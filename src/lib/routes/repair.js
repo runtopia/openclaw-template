@@ -170,7 +170,7 @@ export function createRepairRouter({
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login"],
     });
   });
   router.get("/status", requireRepairAuth, (req, res) => {
@@ -244,6 +244,35 @@ export function createRepairRouter({
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
     }
+  });
+
+  // ── WhatsApp QR login ───────────────────────────────────────
+  // WhatsApp's QR is NOT printed to gateway stdout; it's returned by the
+  // gateway WS RPC `web.login.start` as a PNG data URL. We forward the RPC
+  // over the wrapper's persistent gateway WS (wsHub.rpcGateway) so the
+  // dashboard can fetch it via plain HTTP.
+  //   POST /whatsapp-login/start → { qrDataUrl, connected, message }
+  //   POST /whatsapp-login/wait  → { qrDataUrl, connected, message }  (pass currentQrDataUrl in body)
+  async function whatsappLoginRpc(res, method, params) {
+    if (!wsHub) return res.status(503).json({ ok: false, error: "ws hub unavailable" });
+    try {
+      const frame = await wsHub.rpcGateway(method, params);
+      // frame: { ok, payload: { qrDataUrl?, connected?, message? } }
+      const p = frame.payload || {};
+      res.json({ ok: !!frame.ok, qrDataUrl: p.qrDataUrl ?? null, connected: !!p.connected, message: p.message ?? null, error: frame.ok ? null : (frame.error?.message ?? "rpc failed") });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: String(err?.message || err) });
+    }
+  }
+
+  router.post("/whatsapp-login/start", requireRepairAuth, async (req, res) => {
+    const force = req.body?.force === true;
+    await whatsappLoginRpc(res, "web.login.start", { force, timeoutMs: 30_000 });
+  });
+
+  router.post("/whatsapp-login/wait", requireRepairAuth, async (req, res) => {
+    const currentQrDataUrl = typeof req.body?.currentQrDataUrl === "string" ? req.body.currentQrDataUrl : undefined;
+    await whatsappLoginRpc(res, "web.login.wait", { timeoutMs: 30_000, ...(currentQrDataUrl ? { currentQrDataUrl } : {}) });
   });
 
   // POST /chat — SSE streaming with tool use

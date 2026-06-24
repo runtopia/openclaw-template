@@ -1,5 +1,6 @@
 import express from "express";
 import fs from "node:fs";
+import path from "node:path";
 import { patchConfig, setIn } from "../openclaw-config.js";
 import { startWechatLogin, getWechatLoginState } from "../wechat-login.js";
 
@@ -289,23 +290,31 @@ export function createRepairRouter({
     res.json({ ok: true, ...getWechatLoginState() });
   });
 
-  // GET /channel-status — 返回各 qr 通道是否已绑定(已扫码登录)。
-  // 用 gateway channels.status RPC 的 channelAccounts[].linked 判断:
-  // channelAccounts 非空不等于已绑定(enabled 通道有 default account 但 linked=false),
-  // 必须 linked=true 才算真绑定。
-  router.get("/channel-status", requireRepairAuth, async (_req, res) => {
-    if (!wsHub) return res.status(503).json({ ok: false, error: "ws hub unavailable" });
+  // GET /channel-status — 返回各 qr 通道是否已绑定(凭证已存)。
+  // 用凭证文件判断(持久状态),不用 channels.status 的 linked —— linked 反映
+  // 运行时连接(wechat 通道 starting 时 linked=false),即使凭证已绑也会误判 false。
+  //   wechat:  <STATE_DIR>/openclaw-weixin/accounts.json 非空(插件自管,lobster-coach
+  //            也用 listIndexedWeixinAccountIds 判断)
+  //   whatsapp: <STATE_DIR>/credentials/whatsapp/default/ 非空(baileys creds)
+  router.get("/channel-status", requireRepairAuth, (_req, res) => {
     try {
-      const frame = await wsHub.rpcGateway("channels.status", {});
-      const ac = (frame.payload?.channelAccounts) || {};
-      const bound = (arr) => Array.isArray(arr) && arr.some((a) => a?.linked === true);
-      res.json({
-        ok: !!frame.ok,
-        whatsapp: bound(ac.whatsapp),
-        wechat: bound(ac["openclaw-weixin"]),
-      });
+      const stateDir = process.env.OPENCLAW_STATE_DIR?.trim() || path.dirname(configFilePath());
+      let wechat = false;
+      try {
+        const p = path.join(stateDir, "openclaw-weixin", "accounts.json");
+        if (fs.existsSync(p)) {
+          const arr = JSON.parse(fs.readFileSync(p, "utf8"));
+          wechat = Array.isArray(arr) && arr.length > 0;
+        }
+      } catch { /* accounts.json missing/invalid → not bound */ }
+      let whatsapp = false;
+      try {
+        const d = path.join(stateDir, "credentials", "whatsapp", "default");
+        if (fs.existsSync(d)) whatsapp = fs.readdirSync(d).length > 0;
+      } catch { /* default dir missing → not bound */ }
+      res.json({ ok: true, whatsapp, wechat });
     } catch (err) {
-      res.status(502).json({ ok: false, error: String(err?.message || err) });
+      res.status(500).json({ ok: false, error: String(err?.message || err) });
     }
   });
 

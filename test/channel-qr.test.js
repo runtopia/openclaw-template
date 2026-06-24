@@ -60,3 +60,10 @@ test("tracker: 微信 payload 提取到 raw(非捕获组)", () => {
   assert.equal(s.status, "qr");
   assert.equal(s.raw, "wx@PAYLOAD123");
 });
+
+test("tracker: 无前置上下文行的字形块被丢弃(ctx=null)", () => {
+  const tr = createQrTracker();
+  for (const row of Array.from({ length: 25 }, () => "█▀▀▀▀▀█ ▄▀▄ █▀▀▀▀▀█")) tr.ingest(row);
+  tr.ingest("done");
+  assert.equal(tr.get("whatsapp").status, "waiting");
+});

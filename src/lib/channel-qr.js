@@ -4,11 +4,10 @@
 // 标记集中在 CHANNEL_PATTERNS,Phase 0 在真实容器里确认后只改这一处。
 
 const QR_GLYPHS = new Set(["█", "▀", "▄", "▐", "▌", "░", "▒", "▓", " "]);
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 export function stripAnsi(s) {
-  return String(s).replace(ANSI_RE, "");
+  // eslint-disable-next-line no-control-regex
+  return String(s).replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 export function isQrGlyphLine(line) {
@@ -47,6 +46,9 @@ export function createQrTracker(patterns = CHANNEL_PATTERNS) {
   let ctx = null; // 当前通道上下文(由最近一条上下文行设定)
   let buf = []; // 累积中的二维码字形行
 
+  // 已知假设:二维码字形块前必须先出现该通道的上下文行(contextRe),
+  // 否则 ctx 为 null,本块被丢弃。真实日志顺序在 Phase 0 验证后再决定是否
+  // 需要「延迟归属」机制;当前刻意保持简单(YAGNI)。
   function flush() {
     if (ctx && buf.length >= MIN_QR_ROWS) {
       state[ctx] = { ...state[ctx], status: "qr", qr: buf.join("\n"), updatedAt: Date.now() };
@@ -65,7 +67,7 @@ export function createQrTracker(patterns = CHANNEL_PATTERNS) {
     for (const [ch, p] of Object.entries(patterns)) {
       if (p.connectedRe.test(line)) {
         state[ch] = { status: "connected", qr: null, raw: null, updatedAt: Date.now() };
-        ctx = ch;
+        ctx = null; // 已连接,清除上下文,避免后续未归属字形块被误归此通道
         return;
       }
       const m = p.rawRe.exec(line);

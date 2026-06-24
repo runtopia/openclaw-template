@@ -110,13 +110,30 @@ export const CHANNEL_MANIFEST = [
     },
     needsPairingClear: false,
   },
-  // WeChat (openclaw-weixin) is intentionally NOT in this manifest.
-  // Its channel id "openclaw-weixin" is only known to OpenClaw after the
-  // @tencent-weixin/openclaw-weixin plugin loads. The CLI-based `config set
-  // channels.openclaw-weixin` command fails with "unknown channel id" because
-  // CLI commands don't load plugins from plugins.load.paths. WeChat has no
-  // env credentials to reconcile anyway (QR login happens at runtime).
-  // Plugin activation is handled by applyAutoConfig when WECHAT_ENABLED=1.
+  {
+    // WeChat = third-party @tencent-weixin/openclaw-weixin; channel id AND
+    // plugin id are both "openclaw-weixin". No env credentials — QR login
+    // happens at runtime; this entry just enables the channel + plugin so the
+    // gateway starts the channel (and prints the QR).
+    //
+    // NOTE: WeChat used to be excluded here because the OLD reconcile path ran
+    // `openclaw config set`, which fails with "unknown channel id" for a
+    // not-yet-loaded plugin channel. reconcileAllChannels now writes openclaw.json
+    // DIRECTLY via patchConfig (no CLI, no plugin-load requirement), so that
+    // limitation is gone. Excluding it meant WECHAT_ENABLED=1 had no effect on
+    // an already-configured instance (generateConfigDirect only runs on first
+    // config), so enabling WeChat post-deploy silently did nothing.
+    id: "openclaw-weixin",
+    kind: "qr",
+    pluginId: "openclaw-weixin",
+    envCheck(env) {
+      return truthy(env.WECHAT_ENABLED) || truthy(env.WEIXIN_ENABLED);
+    },
+    reconcileShape() {
+      return { enabled: true, dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL };
+    },
+    needsPairingClear: false,
+  },
 ];
 
 export function getActiveChannels(env = process.env) {

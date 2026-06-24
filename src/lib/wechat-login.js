@@ -14,11 +14,57 @@
 // refreshes the QR up to MAX refreshes, then exits). We clean up on exit.
 
 import childProcess from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // Single source of truth for the active login process + last seen state.
 let proc = null;
 let currentAccountId = null; // the accountId this proc is logging in for
-let state = { status: "idle", qrUrl: null, message: null, updatedAt: 0 };
+// preLoginAccountIds: snapshot of the wechat account index taken when a login
+// starts, used to diff out the *real* account id (ilink_bot_id) after a scan
+// connects. See resolveConnectedAccountId().
+let preLoginAccountIds = [];
+let state = { status: "idle", qrUrl: null, connectedAccountId: null, message: null, updatedAt: 0 };
+
+// The openclaw-weixin plugin stores logged-in accounts (normalized ilink_bot_id)
+// in an index file under STATE_DIR. The QR login is requested with --account
+// <empId>, but the plugin saves credentials under the WECHAT bot id, NOT the
+// requested account — so the binding must reference that real id, not empId.
+// (Verified against @tencent-weixin/openclaw-weixin src/auth/accounts.ts +
+// login-qr.ts: saveWeixinAccount(normalizeAccountId(ilink_bot_id)).)
+function weixinAccountIndexPath() {
+  const stateDir = process.env.OPENCLAW_STATE_DIR?.trim()
+    || path.join(os.homedir(), ".openclaw");
+  return path.join(stateDir, "openclaw-weixin", "accounts.json");
+}
+
+function readWeixinAccountIds() {
+  try {
+    const p = weixinAccountIndexPath();
+    if (!fs.existsSync(p)) return [];
+    const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+    return Array.isArray(parsed)
+      ? parsed.filter((id) => typeof id === "string" && id.trim() !== "")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+// After a scan connects, work out which account id just logged in:
+//   1. a NEW id not present in the pre-login snapshot (fresh account) → prefer
+//      the last new one;
+//   2. else, if the index holds exactly one account (re-login of the only
+//      account) → that one;
+//   3. else null → caller falls back to the requested accountId (empId).
+function resolveConnectedAccountId() {
+  const post = readWeixinAccountIds();
+  const fresh = post.filter((id) => !preLoginAccountIds.includes(id));
+  if (fresh.length > 0) return fresh[fresh.length - 1];
+  if (post.length === 1) return post[0];
+  return null;
+}
 
 // qrUrl line, e.g. https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=...&bot_type=3
 const QR_URL_RE = /https:\/\/liteapp\.weixin\.qq\.com\/q\/\S+/;
@@ -40,7 +86,8 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs, accountId }) {
   if (proc && currentAccountId === accountId) return getWechatLoginState();
   if (proc) { try { proc.kill(); } catch { /* already gone */ } proc = null; }
   currentAccountId = accountId ?? null;
-  state = { status: "starting", qrUrl: null, message: null, updatedAt: Date.now() };
+  preLoginAccountIds = readWeixinAccountIds();
+  state = { status: "starting", qrUrl: null, connectedAccountId: null, message: null, updatedAt: Date.now() };
 
   const baseArgs = ["channels", "login", "--channel", "openclaw-weixin"];
   if (accountId) baseArgs.push("--account", accountId);
@@ -70,7 +117,13 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs, accountId }) {
       return;
     }
     if (CONNECTED_RE.test(text)) {
-      setState({ status: "connected", message: text.trim().slice(0, 200) });
+      // The plugin writes its account index BEFORE printing the ✅ line, so by
+      // now the real account id (ilink_bot_id) is on disk — diff it out.
+      setState({
+        status: "connected",
+        connectedAccountId: resolveConnectedAccountId(),
+        message: text.trim().slice(0, 200),
+      });
       return;
     }
     if (NEED_VERIFY_RE.test(text)) {
@@ -107,5 +160,6 @@ export function stopWechatLogin() {
     proc = null;
   }
   currentAccountId = null;
-  state = { status: "idle", qrUrl: null, message: null, updatedAt: 0 };
+  preLoginAccountIds = [];
+  state = { status: "idle", qrUrl: null, connectedAccountId: null, message: null, updatedAt: 0 };
 }

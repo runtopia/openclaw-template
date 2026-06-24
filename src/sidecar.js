@@ -21,7 +21,7 @@ import express from "express";
 import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./lib/gateway.js";
-import { createWsHub } from "./lib/ws-hub.js";
+import { createGatewayRpc } from "./lib/gateway-rpc.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
 import { createSkillsRouter } from "./lib/routes/skills.js";
@@ -194,7 +194,7 @@ const gateway = createGatewayManager({
   isConfigured,
 });
 
-const wsHub = createWsHub({
+const gatewayRpc = createGatewayRpc({
   gatewayHost: GATEWAY_HOST,
   gatewayPort: GATEWAY_PORT,
   gatewayToken: GATEWAY_TOKEN,
@@ -404,7 +404,7 @@ const repairRouter = createRepairRouter({
   configFilePath: () => CONFIG_PATH,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
-  wsHub,
+  wsHub: gatewayRpc,
 });
 app.use("/repair", requireAuthApi);
 app.use("/repair", jsonParser);
@@ -431,6 +431,8 @@ const proxy = httpProxy.createProxyServer({
   target: GATEWAY_ORIGIN,
   xfwd: false,            // 关闭：不要加 X-Forwarded-*（见 stripForwardedHeaders 说明）
   changeOrigin: true,
+  ws: true,               // 反代 WebSocket：每个前端 client 直连 gateway（各自 connect 握手 + 订阅）
+                          // 不再用 ws-hub 多路复用——那会破坏 openclaw 的 per-client event 路由。
   // chat completions / responses 会触发完整 agent 推理（数十秒~数分钟），
   // 默认无 proxyTimeout 时上游慢响应会被提前断开 → proxy.on("error") → 502
   // "gateway unavailable"。放宽到 PROXY_TIMEOUT_MS（默认 10 分钟）。
@@ -457,6 +459,14 @@ function dropForwardedOnProxyReq(proxyReq) {
 }
 
 proxy.on("proxyReq", (proxyReq) => {
+  dropForwardedOnProxyReq(proxyReq);
+  proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
+});
+// WebSocket upgrade: inject the same Bearer token + strip forwarded headers so
+// the gateway treats the proxied client as a trusted local connection (and each
+// frontend client gets its own gateway connect handshake / subscriptions).
+proxy.on("proxyReqWs", (proxyReq) => {
   dropForwardedOnProxyReq(proxyReq);
   proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
@@ -517,7 +527,7 @@ const server = app.listen(PORT, () => {
   if (isConfigured()) {
     gateway.ensureGatewayRunning()
       .then(async () => {
-        wsHub.start();
+        gatewayRpc.start();
         console.log("[sidecar] gateway ready");
         await ensureWorkspaceFiles();
         if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
@@ -545,9 +555,12 @@ server.on("upgrade", (req, socket, head) => {
     socket.destroy();
     return;
   }
-  // Route gateway WS upgrades through the WS Hub
-  // Hub broadcasts event frames to all clients and routes res frames to the requester
-  wsHub.handleUpgrade(req, socket, head);
+  // Reverse-proxy the WS upgrade straight to the gateway. Each frontend client
+  // gets its own gateway connection (connect handshake + subscriptions), so
+  // per-client event routing works correctly. (Replaces the old ws-hub
+  // multiplexer, which merged all clients into one gateway connection and
+  // broadcast events — breaking openclaw's per-client subscription model.)
+  proxy.ws(req, socket, head);
 });
 
 // ── 优雅退出 ──────────────────────────────────────────────────────────────────
@@ -555,7 +568,7 @@ server.on("upgrade", (req, socket, head) => {
 function shutdown(signal) {
   console.log(`[sidecar] ${signal} received — shutting down`);
   oneclaw.stop();
-  wsHub.close();
+  gatewayRpc.close();
   gateway.stopGateway();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);

@@ -20,7 +20,7 @@ import express from "express";
 import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./lib/gateway.js";
-import { createWsHub } from "./lib/ws-hub.js";
+import { createGatewayRpc } from "./lib/gateway-rpc.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { autoConfigureFromEnv, hasAutoConfigEnvVars } from "./lib/auto-config.js";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./lib/channel-manifest.js";
@@ -143,8 +143,10 @@ const gateway = createGatewayManager({
   isConfigured,
 });
 
-// WebSocket Hub — multiplexes frontend clients over a single gateway WS connection
-const wsHub = createWsHub({
+// Gateway RPC client — wrapper's own single WS connection to the gateway (for
+// repair endpoints forwarding gateway RPCs like web.login). Frontend clients
+// connect directly via the WS reverse proxy, each with its own handshake.
+const wsHub = createGatewayRpc({
   gatewayHost: INTERNAL_GATEWAY_HOST,
   gatewayPort: INTERNAL_GATEWAY_PORT,
   gatewayToken: OPENCLAW_GATEWAY_TOKEN,
@@ -317,7 +319,12 @@ const tuiRouter = createTuiRouter({
 app.use("/tui", tuiRouter);
 
 // Gateway reverse proxy (catch-all)
-const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, xfwd: true, changeOrigin: true });
+const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, xfwd: true, changeOrigin: true, ws: true });
+// WebSocket upgrade: inject bearer so each frontend client connects to the
+// gateway with its own connect handshake + subscriptions (per-client routing).
+gatewayProxy.on("proxyReqWs", (proxyReq) => {
+  proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
+});
 gatewayProxy.on("error", (err) => console.error("[proxy]", err));
 // Rewrite Origin to the gateway's own host so gateway.controlUi.allowedOrigins
 // never has to know about the wrapper's external URL (localhost, *.up.railway.app,
@@ -466,9 +473,9 @@ server.on("upgrade", async (req, socket, head) => {
     return;
   }
 
-  // Route gateway WS upgrades through the WS Hub
-  // Hub broadcasts event frames to all clients and routes res frames to the requester
-  wsHub.handleUpgrade(req, socket, head);
+  // Reverse-proxy the WS upgrade straight to the gateway — each frontend client
+  // gets its own gateway connection (connect handshake + subscriptions).
+  gatewayProxy.ws(req, socket, head);
 });
 
 // ──────────────────────────────────────────────────────────────

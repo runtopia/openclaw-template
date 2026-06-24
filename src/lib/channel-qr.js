@@ -33,7 +33,7 @@ export const CHANNEL_PATTERNS = {
   "openclaw-weixin": {
     contextRe: /(weixin|wechat|微信)/i,
     connectedRe: /(weixin|wechat|微信).*(connected|logged[ _-]?in|ready|登录成功|扫码成功)/i,
-    rawRe: /(weixin|wechat|微信).*\bqr\b\s*[:=]\s*(\S+)/i,
+    rawRe: /(?:weixin|wechat|微信).*\bqr\b\s*[:=]\s*(\S+)/i,
   },
 };
 

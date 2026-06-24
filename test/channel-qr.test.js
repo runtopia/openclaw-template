@@ -52,3 +52,11 @@ test("tracker: 微信别名渠道 id 为 openclaw-weixin", () => {
   tr.ingest("done");
   assert.equal(tr.get("openclaw-weixin").status, "qr");
 });
+
+test("tracker: 微信 payload 提取到 raw(非捕获组)", () => {
+  const tr = createQrTracker();
+  tr.ingest("[微信] qr: wx@PAYLOAD123");
+  const s = tr.get("openclaw-weixin");
+  assert.equal(s.status, "qr");
+  assert.equal(s.raw, "wx@PAYLOAD123");
+});

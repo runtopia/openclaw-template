@@ -12,7 +12,7 @@
     "dev:server": "node --env-file-if-exists=.env src/server.js",
     "start": "node src/sidecar.js",
     "lint": "node -c src/sidecar.js && node -c src/server.js",
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^5.1.0",

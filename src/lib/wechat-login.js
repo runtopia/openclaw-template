@@ -17,6 +17,7 @@ import childProcess from "node:child_process";
 
 // Single source of truth for the active login process + last seen state.
 let proc = null;
+let currentAccountId = null; // the accountId this proc is logging in for
 let state = { status: "idle", qrUrl: null, message: null, updatedAt: 0 };
 
 // qrUrl line, e.g. https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=...&bot_type=3
@@ -33,11 +34,17 @@ function setState(patch) {
   state = { ...state, ...patch, updatedAt: Date.now() };
 }
 
-export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
-  if (proc) return getWechatLoginState(); // already running — idempotent
+export function startWechatLogin({ OPENCLAW_NODE, clawArgs, accountId }) {
+  // Idempotent only for the SAME account; switching employees (different
+  // accountId) kills the old login proc and starts a fresh one.
+  if (proc && currentAccountId === accountId) return getWechatLoginState();
+  if (proc) { try { proc.kill(); } catch { /* already gone */ } proc = null; }
+  currentAccountId = accountId ?? null;
   state = { status: "starting", qrUrl: null, message: null, updatedAt: Date.now() };
 
-  const args = clawArgs(["channels", "login", "--channel", "openclaw-weixin"]);
+  const baseArgs = ["channels", "login", "--channel", "openclaw-weixin"];
+  if (accountId) baseArgs.push("--account", accountId);
+  const args = clawArgs(baseArgs);
   try {
     proc = childProcess.spawn(OPENCLAW_NODE, args, {
       env: { ...process.env },
@@ -99,5 +106,6 @@ export function stopWechatLogin() {
     try { proc.kill(); } catch { /* already gone */ }
     proc = null;
   }
+  currentAccountId = null;
   state = { status: "idle", qrUrl: null, message: null, updatedAt: 0 };
 }

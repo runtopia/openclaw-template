@@ -172,7 +172,7 @@ export function createRepairRouter({
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "POST /bind-channel"],
     });
   });
   router.get("/status", requireRepairAuth, (req, res) => {
@@ -269,7 +269,10 @@ export function createRepairRouter({
 
   router.post("/whatsapp-login/start", requireRepairAuth, async (req, res) => {
     const force = req.body?.force === true;
-    await whatsappLoginRpc(res, "web.login.start", { force, timeoutMs: 30_000 });
+    const accountId = typeof req.body?.accountId === "string" && req.body.accountId.trim()
+      ? req.body.accountId.trim() : undefined;
+    // accountId = employee id → per-agent whatsapp account (multi-account).
+    await whatsappLoginRpc(res, "web.login.start", { force, timeoutMs: 30_000, ...(accountId ? { accountId } : {}) });
   });
 
   router.post("/whatsapp-login/wait", requireRepairAuth, async (req, res) => {
@@ -281,8 +284,10 @@ export function createRepairRouter({
   // WeChat has no web RPC; its QR only appears when running
   // `openclaw channels login --channel openclaw-weixin` (printed to stdout as
   // a URL). We spawn that process and parse its stdout for the qrUrl.
-  router.post("/wechat-login/start", requireRepairAuth, (_req, res) => {
-    const s = startWechatLogin({ OPENCLAW_NODE, clawArgs });
+  router.post("/wechat-login/start", requireRepairAuth, (req, res) => {
+    const accountId = typeof req.body?.accountId === "string" && req.body.accountId.trim()
+      ? req.body.accountId.trim() : undefined;
+    const s = startWechatLogin({ OPENCLAW_NODE, clawArgs, accountId });
     res.json({ ok: true, ...s });
   });
 
@@ -290,31 +295,55 @@ export function createRepairRouter({
     res.json({ ok: true, ...getWechatLoginState() });
   });
 
-  // GET /channel-status — 返回各 qr 通道是否已绑定(凭证已存)。
-  // 用凭证文件判断(持久状态),不用 channels.status 的 linked —— linked 反映
-  // 运行时连接(wechat 通道 starting 时 linked=false),即使凭证已绑也会误判 false。
-  //   wechat:  <STATE_DIR>/openclaw-weixin/accounts.json 非空(插件自管,lobster-coach
-  //            也用 listIndexedWeixinAccountIds 判断)
-  //   whatsapp: <STATE_DIR>/credentials/whatsapp/default/ 非空(baileys creds)
+  // GET /channel-status — 返回各 qr 通道的 per-agent 绑定(读 openclaw.json bindings)。
+  // bindings: [{agentId, match:{channel, accountId}}]。扫码绑定时 accountId=empId,
+  // agentId=该员工的 openclawAgentId。前端按当前员工 openclawAgentId 判断是否已绑。
+  // (之前用凭证文件判断 instance 级 bool,无法区分绑到哪个 agent。)
   router.get("/channel-status", requireRepairAuth, (_req, res) => {
     try {
-      const stateDir = process.env.OPENCLAW_STATE_DIR?.trim() || path.dirname(configFilePath());
-      let wechat = false;
+      let bindings = [];
       try {
-        const p = path.join(stateDir, "openclaw-weixin", "accounts.json");
-        if (fs.existsSync(p)) {
-          const arr = JSON.parse(fs.readFileSync(p, "utf8"));
-          wechat = Array.isArray(arr) && arr.length > 0;
+        const cfgPath = configFilePath();
+        if (fs.existsSync(cfgPath)) {
+          const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+          bindings = Array.isArray(cfg?.bindings) ? cfg.bindings : [];
         }
-      } catch { /* accounts.json missing/invalid → not bound */ }
-      let whatsapp = false;
-      try {
-        const d = path.join(stateDir, "credentials", "whatsapp", "default");
-        if (fs.existsSync(d)) whatsapp = fs.readdirSync(d).length > 0;
-      } catch { /* default dir missing → not bound */ }
-      res.json({ ok: true, whatsapp, wechat });
+      } catch { /* config unreadable → no bindings */ }
+      const pick = (ch) => bindings
+        .filter((b) => b?.match?.channel === ch)
+        .map((b) => ({ agentId: b.agentId ?? null, accountId: b.match?.accountId ?? null }));
+      res.json({
+        ok: true,
+        whatsapp: pick("whatsapp"),
+        wechat: pick("openclaw-weixin"),
+      });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err?.message || err) });
+    }
+  });
+
+  // POST /bind-channel — 扫码成功后把 channel account 绑到 agent(per-employee)。
+  //   body: {channel, accountId(=empId), agentId(=openclawAgentId)}
+  // patches openclaw.json:
+  //   bindings += {agentId, match:{channel, accountId}}(幂等:同 channel+accountId 替换)
+  //   channels.<channel>.accounts.<accountId> = {enabled:true}
+  router.post("/bind-channel", requireRepairAuth, (req, res) => {
+    const { channel, accountId, agentId } = req.body || {};
+    if (typeof channel !== "string" || typeof accountId !== "string" || typeof agentId !== "string") {
+      return res.status(400).json({ ok: false, error: "channel, accountId, agentId required" });
+    }
+    try {
+      patchConfig(configFilePath(), (cfg) => {
+        if (!Array.isArray(cfg.bindings)) cfg.bindings = [];
+        cfg.bindings = cfg.bindings.filter(
+          (b) => !(b?.match?.channel === channel && b?.match?.accountId === accountId)
+        );
+        cfg.bindings.push({ agentId, match: { channel, accountId } });
+        setIn(cfg, `channels.${channel}.accounts.${accountId}`, { enabled: true });
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err) });
     }
   });
 

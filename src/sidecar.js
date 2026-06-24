@@ -21,7 +21,6 @@ import express from "express";
 import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./lib/gateway.js";
-import { createWsHub } from "./lib/ws-hub.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
 import { createSkillsRouter } from "./lib/routes/skills.js";
@@ -192,13 +191,6 @@ const gateway = createGatewayManager({
   internalGatewayHost: GATEWAY_HOST,
   gatewayToken: GATEWAY_TOKEN,
   isConfigured,
-});
-
-const wsHub = createWsHub({
-  gatewayHost: GATEWAY_HOST,
-  gatewayPort: GATEWAY_PORT,
-  gatewayToken: GATEWAY_TOKEN,
-  basePath: "/openclaw",
 });
 
 // ── OneClaw 心跳上报 ──────────────────────────────────────────────────────────
@@ -404,7 +396,6 @@ const repairRouter = createRepairRouter({
   configFilePath: () => CONFIG_PATH,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
-  wsHub,
 });
 app.use("/repair", requireAuthApi);
 app.use("/repair", jsonParser);
@@ -429,7 +420,8 @@ app.get("/", (req, res) => {
 const GATEWAY_ORIGIN = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const proxy = httpProxy.createProxyServer({
   target: GATEWAY_ORIGIN,
-  xfwd: false,            // 关闭：不要加 X-Forwarded-*（见 stripForwardedHeaders 说明）
+  ws: true,
+  xfwd: false,            // 关键：不要加 X-Forwarded-*（见 stripForwardedHeaders 说明）
   changeOrigin: true,
   // chat completions / responses 会触发完整 agent 推理（数十秒~数分钟），
   // 默认无 proxyTimeout 时上游慢响应会被提前断开 → proxy.on("error") → 502
@@ -457,6 +449,11 @@ function dropForwardedOnProxyReq(proxyReq) {
 }
 
 proxy.on("proxyReq", (proxyReq) => {
+  dropForwardedOnProxyReq(proxyReq);
+  proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
+});
+proxy.on("proxyReqWs", (proxyReq) => {
   dropForwardedOnProxyReq(proxyReq);
   proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
@@ -517,7 +514,6 @@ const server = app.listen(PORT, () => {
   if (isConfigured()) {
     gateway.ensureGatewayRunning()
       .then(async () => {
-        wsHub.start();
         console.log("[sidecar] gateway ready");
         await ensureWorkspaceFiles();
         if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
@@ -535,19 +531,19 @@ server.headersTimeout = 65000;
 server.timeout = PROXY_TIMEOUT_MS;
 server.keepAliveTimeout = 75000;
 
-// WebSocket 升级：通过 WS Hub 转发到 openclaw gateway
+// WebSocket 升级转发到 openclaw
 // 浏览器同源 WebSocket 握手会自动带上 cookie，用它鉴权；
-// WS Hub 建立独立 WS 连接到 gateway（不再代理客户端的升级请求），因此
-// 入站的 X-Forwarded-* 头不会被转发到 gateway，无需在此剥离。
+// gateway 的鉴权由 proxyReqWs 注入的 Authorization 头完成（token 不进 URL）。
 server.on("upgrade", (req, socket, head) => {
   if (!isAuthed(req)) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     socket.destroy();
     return;
   }
-  // Route gateway WS upgrades through the WS Hub
-  // Hub broadcasts event frames to all clients and routes res frames to the requester
-  wsHub.handleUpgrade(req, socket, head);
+  // 剥离入站 X-Forwarded-* / Forwarded / X-Real-IP（Railway edge 注入），否则
+  // gateway 判 isLocalClient=false，Control UI 会被强制 device pairing。见上方 stripForwardedHeaders。
+  stripForwardedHeaders(req.headers);
+  proxy.ws(req, socket, head);
 });
 
 // ── 优雅退出 ──────────────────────────────────────────────────────────────────
@@ -555,7 +551,6 @@ server.on("upgrade", (req, socket, head) => {
 function shutdown(signal) {
   console.log(`[sidecar] ${signal} received — shutting down`);
   oneclaw.stop();
-  wsHub.close();
   gateway.stopGateway();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);

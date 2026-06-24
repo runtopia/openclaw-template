@@ -7,7 +7,7 @@
 //   4. Startup orchestration:
 //      a. If already configured: reconcile channels → ensure gateway running
 //      b. If not configured + AI keys present: auto-configure → start gateway
-//   5. Handle WebSocket upgrades (WS Hub multiplexing)
+//   5. Handle WebSocket upgrades (gateway pass-through)
 //   6. Graceful shutdown
 
 import childProcess from "node:child_process";
@@ -20,7 +20,6 @@ import express from "express";
 import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./lib/gateway.js";
-import { createWsHub } from "./lib/ws-hub.js";
 import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { autoConfigureFromEnv, hasAutoConfigEnvVars } from "./lib/auto-config.js";
 import { hasAnyChannelConfig, reconcileAllChannels } from "./lib/channel-manifest.js";
@@ -143,14 +142,6 @@ const gateway = createGatewayManager({
   isConfigured,
 });
 
-// WebSocket Hub — multiplexes frontend clients over a single gateway WS connection
-const wsHub = createWsHub({
-  gatewayHost: INTERNAL_GATEWAY_HOST,
-  gatewayPort: INTERNAL_GATEWAY_PORT,
-  gatewayToken: OPENCLAW_GATEWAY_TOKEN,
-  basePath: "/openclaw",
-});
-
 // OneClaw integration (heartbeat, events, personality, reminders)
 const oneclaw = createOneclawIntegration({
   apiUrl: ONECLAW_API_URL,
@@ -226,7 +217,6 @@ const setupRouter = createSetupRouter({
   TUI_IDLE_TIMEOUT_MS,
   TUI_MAX_SESSION_MS,
   onSetupComplete: refreshRepairAiKey,
-  wsHub,
 });
 app.use("/setup", setupRouter);
 
@@ -242,7 +232,6 @@ const repairRouter = createRepairRouter({
   configFilePath,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
-  wsHub,
 });
 app.use("/setup/api/repair", repairRouter);
 
@@ -317,7 +306,7 @@ const tuiRouter = createTuiRouter({
 app.use("/tui", tuiRouter);
 
 // Gateway reverse proxy (catch-all)
-const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, xfwd: true, changeOrigin: true });
+const gatewayProxy = httpProxy.createProxyServer({ target: gateway.GATEWAY_TARGET, ws: true, xfwd: true, changeOrigin: true });
 gatewayProxy.on("error", (err) => console.error("[proxy]", err));
 // Rewrite Origin to the gateway's own host so gateway.controlUi.allowedOrigins
 // never has to know about the wrapper's external URL (localhost, *.up.railway.app,
@@ -326,6 +315,10 @@ gatewayProxy.on("error", (err) => console.error("[proxy]", err));
 // cannot obtain it. So this Origin rewrite does not weaken security.
 const GATEWAY_ORIGIN = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}`;
 gatewayProxy.on("proxyReq", (proxyReq) => {
+  proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
+});
+gatewayProxy.on("proxyReqWs", (proxyReq) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
   proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
 });
@@ -404,7 +397,7 @@ const server = app.listen(PORT, async () => {
     if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
     await ensureWebSocketConfig();
     gateway.ensureGatewayRunning()
-      .then(() => { wsHub.start(); console.log("[wrapper] gateway started successfully at boot"); })
+      .then(() => console.log("[wrapper] gateway started successfully at boot"))
       .catch((err) => console.error(`[wrapper] failed to start gateway at boot: ${err.message}`));
     return;
   }
@@ -433,7 +426,7 @@ const server = app.listen(PORT, async () => {
           if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
           await ensureWebSocketConfig();
           gateway.ensureGatewayRunning()
-            .then(() => { wsHub.start(); console.log("[wrapper] gateway started successfully after auto-config"); })
+            .then(() => console.log("[wrapper] gateway started successfully after auto-config"))
             .catch((err) => console.error(`[wrapper] failed to start gateway after auto-config: ${err.message}`));
         }
       } catch (err) {
@@ -465,10 +458,7 @@ server.on("upgrade", async (req, socket, head) => {
     socket.destroy();
     return;
   }
-
-  // Route gateway WS upgrades through the WS Hub
-  // Hub broadcasts event frames to all clients and routes res frames to the requester
-  wsHub.handleUpgrade(req, socket, head);
+  gatewayProxy.ws(req, socket, head, { target: gateway.GATEWAY_TARGET });
 });
 
 // ──────────────────────────────────────────────────────────────
@@ -479,7 +469,6 @@ async function gracefulShutdown(signal) {
   console.log(`[wrapper] received ${signal}, shutting down`);
 
   oneclaw.stop();
-  wsHub.close();
   await oneclaw.sendEvent("instance_stopping", { signal });
 
   setupRouter.cleanup();

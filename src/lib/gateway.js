@@ -2,18 +2,15 @@
 
 import childProcess from "node:child_process";
 import fs from "node:fs";
-import { createQrTracker } from "./channel-qr.js";
 
 export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured }) {
   const GATEWAY_TARGET = `http://${internalGatewayHost}:${internalGatewayPort}`;
 
   const LOG_BUFFER_MAX = 500;
   const logBuffer = [];
-  const qrTracker = createQrTracker();
   function appendLog(line) {
     logBuffer.push(line);
     if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
-    try { qrTracker.ingest(line); } catch { /* 解析失败不影响日志 */ }
   }
 
   let gatewayProc = null;
@@ -178,6 +175,5 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     isGatewayReady: () => gatewayProc !== null && gatewayStarting === null,
     getGatewayProc: () => gatewayProc,
     getRecentLogs: (n = 100) => logBuffer.slice(-Math.min(n, LOG_BUFFER_MAX)),
-    getChannelQrState: (channel) => qrTracker.get(channel),
   };
 }

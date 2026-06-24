@@ -4,8 +4,6 @@ import { patchConfig, setIn } from "../openclaw-config.js";
 
 const SENSITIVE_KEYS = new Set(["apiKey", "token", "secret", "password", "key"]);
 
-const QR_CHANNEL_ALIAS = { whatsapp: "whatsapp", wechat: "openclaw-weixin" };
-
 function redactConfig(obj) {
   if (typeof obj !== "object" || obj === null) return obj;
   if (Array.isArray(obj)) return obj.map(redactConfig);
@@ -172,7 +170,7 @@ export function createRepairRouter({
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "GET /qr", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config"],
     });
   });
   router.get("/status", requireRepairAuth, (req, res) => {
@@ -234,30 +232,6 @@ export function createRepairRouter({
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
     }
-  });
-
-  // GET /qr?channel=whatsapp|wechat — 返回该 qr 通道最近的二维码状态
-  router.get("/qr", requireRepairAuth, (req, res) => {
-    const alias = String(req.query.channel || "");
-    const channelId = QR_CHANNEL_ALIAS[alias];
-    if (!channelId) {
-      return res.status(400).json({ ok: false, error: `unknown qr channel: ${alias}` });
-    }
-    // 配置里未启用 → disabled
-    let enabled = false;
-    try {
-      const cfgPath = configFilePath();
-      if (fs.existsSync(cfgPath)) {
-        const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
-        enabled = !!cfg?.channels?.[channelId]?.enabled;
-      }
-    } catch { /* 读配置失败按未启用处理 */ }
-    if (!enabled) {
-      return res.json({ ok: true, channel: alias, status: "disabled", qr: null, raw: null, updatedAt: 0 });
-    }
-    const st = gatewayManager.getChannelQrState(channelId)
-      || { status: "waiting", qr: null, raw: null, updatedAt: 0 };
-    res.json({ ok: true, channel: alias, status: st.status, qr: st.qr, raw: st.raw, updatedAt: st.updatedAt });
   });
 
   // GET /config (redacted)

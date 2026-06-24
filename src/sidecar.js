@@ -404,7 +404,7 @@ const repairRouter = createRepairRouter({
   configFilePath: () => CONFIG_PATH,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
-  wsHub: gatewayRpc,
+  gatewayRpc,
 });
 app.use("/repair", requireAuthApi);
 app.use("/repair", jsonParser);

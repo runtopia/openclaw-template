@@ -146,7 +146,7 @@ const gateway = createGatewayManager({
 // Gateway RPC client — wrapper's own single WS connection to the gateway (for
 // repair endpoints forwarding gateway RPCs like web.login). Frontend clients
 // connect directly via the WS reverse proxy, each with its own handshake.
-const wsHub = createGatewayRpc({
+const gatewayRpc = createGatewayRpc({
   gatewayHost: INTERNAL_GATEWAY_HOST,
   gatewayPort: INTERNAL_GATEWAY_PORT,
   gatewayToken: OPENCLAW_GATEWAY_TOKEN,
@@ -243,7 +243,7 @@ const repairRouter = createRepairRouter({
   configFilePath,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
-  wsHub,
+  gatewayRpc,
 });
 app.use("/setup/api/repair", repairRouter);
 
@@ -409,7 +409,7 @@ const server = app.listen(PORT, async () => {
     if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
     await ensureWebSocketConfig();
     gateway.ensureGatewayRunning()
-      .then(() => { wsHub.start(); console.log("[wrapper] gateway started successfully at boot"); })
+      .then(() => { gatewayRpc.start(); console.log("[wrapper] gateway started successfully at boot"); })
       .catch((err) => console.error(`[wrapper] failed to start gateway at boot: ${err.message}`));
     return;
   }
@@ -438,7 +438,7 @@ const server = app.listen(PORT, async () => {
           if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
           await ensureWebSocketConfig();
           gateway.ensureGatewayRunning()
-            .then(() => { wsHub.start(); console.log("[wrapper] gateway started successfully after auto-config"); })
+            .then(() => { gatewayRpc.start(); console.log("[wrapper] gateway started successfully after auto-config"); })
             .catch((err) => console.error(`[wrapper] failed to start gateway after auto-config: ${err.message}`));
         }
       } catch (err) {
@@ -484,7 +484,7 @@ async function gracefulShutdown(signal) {
   console.log(`[wrapper] received ${signal}, shutting down`);
 
   oneclaw.stop();
-  wsHub.close();
+  gatewayRpc.close();
   await oneclaw.sendEvent("instance_stopping", { signal });
 
   setupRouter.cleanup();

@@ -11,8 +11,12 @@
 # Railway healthcheck 打 /health，sidecar 存活即 200，不依赖 gateway。
 set -e
 
-STATE_DIR="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
-WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/data/workspace}"
+# 必须 export：sidecar.js 读 process.env.OPENCLAW_STATE_DIR，未导出则回退到
+# os.homedir()/.openclaw（容器临时层，非 /data volume），重新部署即丢数据。
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
+export OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/data/workspace}"
+STATE_DIR="$OPENCLAW_STATE_DIR"
+WORKSPACE_DIR="$OPENCLAW_WORKSPACE_DIR"
 
 # 兼容旧变量名
 if [ -z "$CLAWROUTERS_API_KEY" ] && [ -n "$CLAWROUTERS_KEY" ]; then

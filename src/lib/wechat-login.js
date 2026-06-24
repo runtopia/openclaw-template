@@ -80,7 +80,7 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs }) {
   return getState();
 }
 
-export function getState() {
+export function getWechatLoginState() {
   return { ...state };
 }
 

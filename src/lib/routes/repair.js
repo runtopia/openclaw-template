@@ -171,7 +171,7 @@ export function createRepairRouter({
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status"],
     });
   });
   router.get("/status", requireRepairAuth, (req, res) => {
@@ -287,6 +287,26 @@ export function createRepairRouter({
 
   router.get("/wechat-login", requireRepairAuth, (_req, res) => {
     res.json({ ok: true, ...getWechatLoginState() });
+  });
+
+  // GET /channel-status — 返回各 qr 通道是否已绑定(已扫码登录)。
+  // 用 gateway channels.status RPC 的 channelAccounts[].linked 判断:
+  // channelAccounts 非空不等于已绑定(enabled 通道有 default account 但 linked=false),
+  // 必须 linked=true 才算真绑定。
+  router.get("/channel-status", requireRepairAuth, async (_req, res) => {
+    if (!wsHub) return res.status(503).json({ ok: false, error: "ws hub unavailable" });
+    try {
+      const frame = await wsHub.rpcGateway("channels.status", {});
+      const ac = (frame.payload?.channelAccounts) || {};
+      const bound = (arr) => Array.isArray(arr) && arr.some((a) => a?.linked === true);
+      res.json({
+        ok: !!frame.ok,
+        whatsapp: bound(ac.whatsapp),
+        wechat: bound(ac["openclaw-weixin"]),
+      });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: String(err?.message || err) });
+    }
   });
 
   // POST /chat — SSE streaming with tool use

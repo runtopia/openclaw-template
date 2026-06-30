@@ -33,7 +33,7 @@ import { readDefaultProviderKey, readEnvProviderKey } from "./lib/repair-ai-key.
 import { createRequireSetupAuth } from "./lib/routes/setup.js";
 import { patchConfig } from "./lib/openclaw-config.js";
 import { patchClawroutersProviderBaseUrl } from "./lib/direct-config.js";
-import { cleanupStalePreinstalledExtensions } from "./lib/preinstalled-plugins.js";
+import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions } from "./lib/preinstalled-plugins.js";
 
 // ──────────────────────────────────────────────────────────────
 // Constants
@@ -175,6 +175,9 @@ const oneclaw = createOneclawIntegration({
 async function ensureWebSocketConfig() {
   if (!isConfigured()) return;
   patchConfig(configFilePath(), (cfg) => {
+    if (applyPreinstalledPluginInstallRecords(cfg)) {
+      console.log("[wrapper] patched preinstalled official plugin install records");
+    }
     if (patchClawroutersProviderBaseUrl(cfg, process.env)) {
       console.log("[wrapper] patched ClawRouters baseUrl from CLAWROUTERS_BASE_URL");
     }

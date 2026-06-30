@@ -29,7 +29,7 @@ import { readEnvProviderKey, readDefaultProviderKey } from "./lib/repair-ai-key.
 import { generateConfigDirect, patchClawroutersProviderBaseUrl } from "./lib/direct-config.js";
 import { patchConfig, setIn } from "./lib/openclaw-config.js";
 import { reconcileAllChannels } from "./lib/channel-manifest.js";
-import { cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./lib/preinstalled-plugins.js";
+import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./lib/preinstalled-plugins.js";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -147,6 +147,9 @@ function ensureConfig() {
       ]);
       const loadPaths = resolvePreinstalledPluginPaths();
       if (loadPaths.length > 0) setIn(cfg, "plugins.load.paths", loadPaths);
+      if (applyPreinstalledPluginInstallRecords(cfg)) {
+        console.log("[sidecar] patched preinstalled official plugin install records");
+      }
       if (patchClawroutersProviderBaseUrl(cfg, process.env)) {
         console.log("[sidecar] patched ClawRouters baseUrl from CLAWROUTERS_BASE_URL");
       }
@@ -163,6 +166,11 @@ function ensureConfig() {
     port: GATEWAY_PORT,
     publicPort: PORT,
     env: process.env,
+  });
+  patchConfig(CONFIG_PATH, (cfg) => {
+    if (applyPreinstalledPluginInstallRecords(cfg)) {
+      console.log("[sidecar] patched preinstalled official plugin install records");
+    }
   });
   console.log("[sidecar] openclaw.json ready");
 }

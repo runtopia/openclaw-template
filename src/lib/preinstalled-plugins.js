@@ -36,6 +36,13 @@ const PREINSTALLED_PACKAGES = [
   "@tencent-weixin/openclaw-weixin",
 ];
 
+const OFFICIAL_NPM_PLUGIN_INSTALLS = [
+  { pluginId: "slack", packageName: "@openclaw/slack" },
+  { pluginId: "discord", packageName: "@openclaw/discord" },
+  { pluginId: "feishu", packageName: "@openclaw/feishu" },
+  { pluginId: "whatsapp", packageName: "@openclaw/whatsapp" },
+];
+
 const PREINSTALLED_PLUGIN_IDS = [
   "clawrouters",
   "slack",
@@ -53,6 +60,49 @@ export function resolvePreinstalledPluginPaths(env = process.env) {
   return PREINSTALLED_PACKAGES
     .map((pkg) => path.join(base, ...pkg.split("/")))
     .filter((p) => fs.existsSync(p));
+}
+
+function readPackageVersion(packageDir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
+    return typeof pkg.version === "string" && pkg.version.trim() ? pkg.version.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildPreinstalledPluginInstallRecords(env = process.env) {
+  const base = path.join(env.OPENCLAW_PLUGINS_DIR?.trim() || DEFAULT_PLUGINS_DIR, "node_modules");
+  const installedAt = "1970-01-01T00:00:00.000Z";
+  const records = {};
+
+  for (const entry of OFFICIAL_NPM_PLUGIN_INSTALLS) {
+    const installPath = path.join(base, ...entry.packageName.split("/"));
+    if (!fs.existsSync(installPath)) continue;
+    const version = readPackageVersion(installPath);
+    records[entry.pluginId] = {
+      source: "npm",
+      spec: entry.packageName,
+      resolvedName: entry.packageName,
+      resolvedSpec: version ? `${entry.packageName}@${version}` : entry.packageName,
+      ...(version ? { version, resolvedVersion: version } : {}),
+      installPath,
+      installedAt,
+    };
+  }
+
+  return records;
+}
+
+export function applyPreinstalledPluginInstallRecords(cfg, env = process.env) {
+  const records = buildPreinstalledPluginInstallRecords(env);
+  if (Object.keys(records).length === 0) return false;
+  cfg.plugins ??= {};
+  cfg.plugins.installs = {
+    ...(cfg.plugins.installs || {}),
+    ...records,
+  };
+  return true;
 }
 
 export function cleanupStalePreinstalledExtensions(stateDir, env = process.env) {

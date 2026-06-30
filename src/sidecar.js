@@ -29,7 +29,7 @@ import { readEnvProviderKey, readDefaultProviderKey } from "./lib/repair-ai-key.
 import { generateConfigDirect, patchClawroutersProviderBaseUrl } from "./lib/direct-config.js";
 import { patchConfig, setIn } from "./lib/openclaw-config.js";
 import { reconcileAllChannels } from "./lib/channel-manifest.js";
-import { resolvePreinstalledPluginPaths } from "./lib/preinstalled-plugins.js";
+import { cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./lib/preinstalled-plugins.js";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -120,6 +120,7 @@ function ensureConfig() {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
   fs.mkdirSync(path.join(STATE_DIR, "credentials"), { recursive: true });
+  cleanupStalePreinstalledExtensions(STATE_DIR);
 
   if (!hasApiKeys()) {
     console.log("[sidecar] no API keys — skipping config generation");

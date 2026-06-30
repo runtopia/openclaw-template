@@ -36,6 +36,15 @@ const PREINSTALLED_PACKAGES = [
   "@tencent-weixin/openclaw-weixin",
 ];
 
+const PREINSTALLED_PLUGIN_IDS = [
+  "clawrouters",
+  "slack",
+  "discord",
+  "feishu",
+  "whatsapp",
+  "openclaw-weixin",
+];
+
 // Returns the package directories that actually exist on disk. On a non-Docker
 // dev box without the prebuilt /opt tree this returns [], and the caller simply
 // omits plugins.load.paths (falling back to OpenClaw's lazy install).
@@ -44,4 +53,19 @@ export function resolvePreinstalledPluginPaths(env = process.env) {
   return PREINSTALLED_PACKAGES
     .map((pkg) => path.join(base, ...pkg.split("/")))
     .filter((p) => fs.existsSync(p));
+}
+
+export function cleanupStalePreinstalledExtensions(stateDir, env = process.env) {
+  if (resolvePreinstalledPluginPaths(env).length === 0) return;
+  const extensionsDir = path.join(stateDir, "extensions");
+  for (const id of PREINSTALLED_PLUGIN_IDS) {
+    const stalePath = path.join(extensionsDir, id);
+    try {
+      if (!fs.existsSync(stalePath)) continue;
+      fs.rmSync(stalePath, { recursive: true, force: true });
+      console.log(`[plugins] removed stale volume extension ${stalePath}`);
+    } catch (err) {
+      console.warn(`[plugins] failed to remove stale volume extension ${stalePath}: ${err.message}`);
+    }
+  }
 }

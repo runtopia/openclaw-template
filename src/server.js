@@ -33,6 +33,7 @@ import { readDefaultProviderKey, readEnvProviderKey } from "./lib/repair-ai-key.
 import { createRequireSetupAuth } from "./lib/routes/setup.js";
 import { patchConfig } from "./lib/openclaw-config.js";
 import { patchClawroutersProviderBaseUrl } from "./lib/direct-config.js";
+import { cleanupStalePreinstalledExtensions } from "./lib/preinstalled-plugins.js";
 
 // ──────────────────────────────────────────────────────────────
 // Constants
@@ -394,6 +395,7 @@ const server = app.listen(PORT, async () => {
 
   const configured = isConfigured();
   console.log(`[wrapper] configured: ${configured}`);
+  cleanupStalePreinstalledExtensions(STATE_DIR);
 
   if (configured && hasAnyChannelConfig()) {
     // Re-deploy reconciliation: force channels into dmPolicy=open so users

@@ -51,6 +51,14 @@ function resolveConnectedAccountId() {
   return null;
 }
 
+function markConnected(message) {
+  setState({
+    status: "connected",
+    connectedAccountId: resolveConnectedAccountId(),
+    message: message?.trim()?.slice(0, 200) || "已将此 OpenClaw 连接到微信。",
+  });
+}
+
 // qrUrl line, e.g. https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=...&bot_type=3
 const QR_URL_RE = /https:\/\/liteapp\.weixin\.qq\.com\/q\/\S+/;
 // Scan-completed markers (channel.js prints "✅ 已连接..." on success).
@@ -104,11 +112,7 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs, accountId }) {
       return;
     }
     if (CONNECTED_RE.test(text)) {
-      setState({
-        status: "connected",
-        connectedAccountId: resolveConnectedAccountId(),
-        message: text.trim().slice(0, 200),
-      });
+      markConnected(text);
       return;
     }
     if (NEED_VERIFY_RE.test(text)) {
@@ -123,8 +127,15 @@ export function startWechatLogin({ OPENCLAW_NODE, clawArgs, accountId }) {
   proc.stderr.on("data", handleOut);
 
   proc.on("exit", (code) => {
-    // Only flip to done/error if not already connected.
-    setState({ status: state.status === "connected" ? "connected" : (code === 0 ? "done" : "error") });
+    // The weixin plugin's durable success signal is the account index it writes
+    // after QR confirmation. Some stdout paths only print a generic completion
+    // message, so treat a clean exit with a resolvable account as connected.
+    if (state.status !== "connected" && code === 0 && resolveConnectedAccountId()) {
+      markConnected(state.message || "已将此 OpenClaw 连接到微信。");
+    } else {
+      // Only flip to done/error if not already connected.
+      setState({ status: state.status === "connected" ? "connected" : (code === 0 ? "done" : "error") });
+    }
     proc = null;
   });
   proc.on("error", (err) => {

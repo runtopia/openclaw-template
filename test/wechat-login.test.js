@@ -63,3 +63,35 @@ test("wechat login returns real connected account id and does not restart connec
   assert.equal(second.status, "connected");
   assert.equal(second.connectedAccountId, "wx-real-id");
 });
+
+test("wechat login treats clean exit with saved weixin account as connected", async (t) => {
+  const oldStateDir = process.env.OPENCLAW_STATE_DIR;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-wechat-login-"));
+  t.after(() => {
+    stopWechatLogin();
+    if (oldStateDir === undefined) delete process.env.OPENCLAW_STATE_DIR;
+    else process.env.OPENCLAW_STATE_DIR = oldStateDir;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  process.env.OPENCLAW_STATE_DIR = tmp;
+  const script = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const dir = path.join(process.env.OPENCLAW_STATE_DIR, "openclaw-weixin");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "accounts.json"), JSON.stringify(["wx-from-clean-exit"]));
+    console.log("finished");
+  `;
+
+  startWechatLogin({
+    OPENCLAW_NODE: process.execPath,
+    clawArgs: () => ["-e", script],
+    accountId: "employee-id",
+  });
+
+  await waitFor(() => getWechatLoginState().status === "connected");
+
+  const connected = getWechatLoginState();
+  assert.equal(connected.connectedAccountId, "wx-from-clean-exit");
+});

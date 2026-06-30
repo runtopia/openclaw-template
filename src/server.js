@@ -31,6 +31,8 @@ import { createTuiRouter } from "./lib/routes/tui.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
 import { readDefaultProviderKey, readEnvProviderKey } from "./lib/repair-ai-key.js";
 import { createRequireSetupAuth } from "./lib/routes/setup.js";
+import { patchConfig } from "./lib/openclaw-config.js";
+import { patchClawroutersProviderBaseUrl } from "./lib/direct-config.js";
 
 // ──────────────────────────────────────────────────────────────
 // Constants
@@ -171,6 +173,11 @@ const oneclaw = createOneclawIntegration({
 
 async function ensureWebSocketConfig() {
   if (!isConfigured()) return;
+  patchConfig(configFilePath(), (cfg) => {
+    if (patchClawroutersProviderBaseUrl(cfg, process.env)) {
+      console.log("[wrapper] patched ClawRouters baseUrl from CLAWROUTERS_BASE_URL");
+    }
+  });
   ensureControlUiConfig({
     configPath: configFilePath(),
     port: process.env.PORT || PORT,

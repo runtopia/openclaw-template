@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildOnboardArgs, resolveAuth } from "../src/lib/auto-config.js";
-import { generateConfigDirect, resolveClawroutersApiBaseUrl } from "../src/lib/direct-config.js";
+import { generateConfigDirect, patchClawroutersProviderBaseUrl, resolveClawroutersApiBaseUrl } from "../src/lib/direct-config.js";
 import { readEnvProviderKey } from "../src/lib/repair-ai-key.js";
 
 test("CLAWROUTERS_BASE_URL origin is normalized to /api/v1", () => {
@@ -56,6 +56,30 @@ test("direct config and repair key use CLAWROUTERS_BASE_URL", () => {
   );
   assert.equal(
     readEnvProviderKey(env).baseUrl,
+    "https://clawrouters-dev.example.com/api/v1",
+  );
+});
+
+test("existing openclaw.json provider is patched from CLAWROUTERS_BASE_URL", () => {
+  const cfg = {
+    models: {
+      mode: "merge",
+      providers: {
+        clawrouters: {
+          baseUrl: "https://www.clawrouters.com/api/v1",
+          apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+        },
+      },
+    },
+  };
+
+  const patched = patchClawroutersProviderBaseUrl(cfg, {
+    CLAWROUTERS_BASE_URL: "https://clawrouters-dev.example.com",
+  });
+
+  assert.equal(patched, true);
+  assert.equal(
+    cfg.models.providers.clawrouters.baseUrl,
     "https://clawrouters-dev.example.com/api/v1",
   );
 });

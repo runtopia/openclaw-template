@@ -26,7 +26,7 @@ import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
 import { createSkillsRouter } from "./lib/routes/skills.js";
 import { readEnvProviderKey, readDefaultProviderKey } from "./lib/repair-ai-key.js";
-import { generateConfigDirect } from "./lib/direct-config.js";
+import { generateConfigDirect, patchClawroutersProviderBaseUrl } from "./lib/direct-config.js";
 import { patchConfig, setIn } from "./lib/openclaw-config.js";
 import { reconcileAllChannels } from "./lib/channel-manifest.js";
 import { resolvePreinstalledPluginPaths } from "./lib/preinstalled-plugins.js";
@@ -146,6 +146,9 @@ function ensureConfig() {
       ]);
       const loadPaths = resolvePreinstalledPluginPaths();
       if (loadPaths.length > 0) setIn(cfg, "plugins.load.paths", loadPaths);
+      if (patchClawroutersProviderBaseUrl(cfg, process.env)) {
+        console.log("[sidecar] patched ClawRouters baseUrl from CLAWROUTERS_BASE_URL");
+      }
     });
     reconcileAllChannels({ env: process.env, stateDir: STATE_DIR });
     return;

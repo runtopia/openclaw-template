@@ -18,6 +18,14 @@ export function resolveClawroutersApiBaseUrl(env = process.env) {
   return base.endsWith("/api/v1") ? base : `${base}/api/v1`;
 }
 
+export function patchClawroutersProviderBaseUrl(cfg, env = process.env) {
+  if (!env.CLAWROUTERS_BASE_URL?.trim()) return false;
+  const provider = cfg?.models?.providers?.clawrouters;
+  if (!provider) return false;
+  provider.baseUrl = resolveClawroutersApiBaseUrl(env);
+  return true;
+}
+
 // ── HTTP /v1/* 端点开关（env 注入，默认全关）──────────────────────────────────
 // 返回 gateway.http.endpoints 对象；两个开关都没开则返回 null（不写 http 字段）。
 export function buildHttpEndpoints(env = process.env) {

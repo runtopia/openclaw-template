@@ -5,7 +5,7 @@ import path from "node:path";
 import { ensureControlUiConfig } from "./control-ui-config.js";
 import { patchConfig, setIn } from "./openclaw-config.js";
 import { resolvePreinstalledPluginPaths } from "./preinstalled-plugins.js";
-import { generateConfigDirect, buildHttpEndpoints } from "./direct-config.js";
+import { generateConfigDirect, buildHttpEndpoints, resolveClawroutersApiBaseUrl } from "./direct-config.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();
@@ -92,7 +92,7 @@ export function resolveAuth(env) {
     return {
       authChoice: "custom-api-key",
       authSecret: (env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY).trim(),
-      customBaseUrl: "https://www.clawrouters.com/api/v1",
+      customBaseUrl: resolveClawroutersApiBaseUrl(env),
       customModelId: "auto",
       customProviderId: "clawrouters",
       customCompatibility: "openai",
@@ -135,10 +135,11 @@ function applyAutoConfig(ctx) {
     }
 
     if (clawRoutersKey) {
+      const clawroutersBaseUrl = resolveClawroutersApiBaseUrl(env);
       // Use SecretRef so the raw key is never written to openclaw.json.
       // CLAWROUTERS_KEY is normalized to CLAWROUTERS_API_KEY in start.sh.
       setIn(cfg, "models.providers.clawrouters", {
-        baseUrl: "https://www.clawrouters.com/api/v1",
+        baseUrl: clawroutersBaseUrl,
         apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
         api: "openai-completions",
         models: [

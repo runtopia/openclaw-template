@@ -12,6 +12,12 @@ function truthy(v) {
   return s === "1" || s === "true" || s === "yes" || s === "on";
 }
 
+export function resolveClawroutersApiBaseUrl(env = process.env) {
+  const raw = (env.CLAWROUTERS_BASE_URL || "https://www.clawrouters.com").trim();
+  const base = raw.replace(/\/+$/, "");
+  return base.endsWith("/api/v1") ? base : `${base}/api/v1`;
+}
+
 // ── HTTP /v1/* 端点开关（env 注入，默认全关）──────────────────────────────────
 // 返回 gateway.http.endpoints 对象；两个开关都没开则返回 null（不写 http 字段）。
 export function buildHttpEndpoints(env = process.env) {
@@ -30,9 +36,9 @@ export function buildHttpEndpoints(env = process.env) {
 // 模型列表不在此硬编码——clawrouters 插件加载后会自动注册可用模型；
 // 其他 provider 的模型由 openclaw 从 API 端点动态拉取（models.mode = "merge"）。
 
-function providerClawrouters() {
+function providerClawrouters(env = process.env) {
   return {
-    baseUrl: "https://www.clawrouters.com/api/v1",
+    baseUrl: resolveClawroutersApiBaseUrl(env),
     // SecretRef：key 从运行时环境变量读，不明文写入配置文件
     apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
     api: "openai-completions",
@@ -85,7 +91,7 @@ function providerDeepseek() {
 // 优先级：clawrouters > anthropic > openai > gemini > openrouter > deepseek
 function resolveProvider(env) {
   if ((env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim())
-    return { id: "clawrouters", primaryModel: "clawrouters/auto", build: providerClawrouters };
+    return { id: "clawrouters", primaryModel: "clawrouters/auto", build: () => providerClawrouters(env) };
   if (env.ANTHROPIC_API_KEY?.trim())
     return { id: "anthropic", primaryModel: "anthropic/claude-sonnet-4-6", build: providerAnthropic };
   if (env.OPENAI_API_KEY?.trim())

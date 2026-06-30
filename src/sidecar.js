@@ -405,6 +405,7 @@ const repairRouter = createRepairRouter({
   OPENCLAW_NODE,
   restartGateway: gateway.restartGateway,
   configFilePath: () => CONFIG_PATH,
+  stateDir: STATE_DIR,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
   gatewayRpc,

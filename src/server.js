@@ -248,6 +248,7 @@ const repairRouter = createRepairRouter({
   OPENCLAW_NODE,
   restartGateway: gateway.restartGateway,
   configFilePath,
+  stateDir: STATE_DIR,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
   gatewayRpc,

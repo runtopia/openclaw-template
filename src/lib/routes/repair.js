@@ -199,6 +199,7 @@ export function createRepairRouter({
   OPENCLAW_NODE,
   restartGateway,
   configFilePath,
+  stateDir,
   gatewayManager,
   getRepairAiKey,
   gatewayRpc,

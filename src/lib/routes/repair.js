@@ -21,6 +21,51 @@ function redactConfig(obj) {
   return out;
 }
 
+
+function inspectWhatsAppLoginState(stateDir) {
+  const credentialsDir = path.join(stateDir, "credentials");
+  const matches = [];
+  const stack = [credentialsDir];
+  const maxVisited = 300;
+  let visited = 0;
+
+  while (stack.length > 0 && visited < maxVisited) {
+    const current = stack.pop();
+    visited += 1;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      const lower = full.toLowerCase();
+      if (entry.isDirectory()) {
+        if (lower.includes("whatsapp") || lower.includes("baileys") || lower.includes("wa")) stack.push(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!lower.includes("whatsapp") && !lower.includes("baileys") && !lower.endsWith("creds.json")) continue;
+      if (!lower.endsWith(".json")) continue;
+
+      try {
+        const parsed = JSON.parse(fs.readFileSync(full, "utf8"));
+        const hasIdentity = !!(parsed?.me?.id || parsed?.creds?.me?.id || parsed?.registrationId || parsed?.noiseKey || parsed?.signedIdentityKey);
+        if (hasIdentity) matches.push(path.relative(credentialsDir, full));
+      } catch {
+        // Ignore unreadable or partial files while the plugin is still writing credentials.
+      }
+    }
+  }
+
+  return {
+    connected: matches.length > 0,
+    credentialFiles: matches,
+  };
+}
+
 const REPAIR_TOOLS = [
   {
     type: "function",
@@ -173,7 +218,7 @@ export function createRepairRouter({
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "GET /channel-bindings", "POST /bind-channel", "POST /unbind-channel"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "GET /whatsapp-login/status", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "GET /channel-bindings", "POST /bind-channel", "POST /unbind-channel"],
     });
   });
   router.get("/status", requireRepairAuth, (req, res) => {
@@ -279,6 +324,14 @@ export function createRepairRouter({
   router.post("/whatsapp-login/wait", requireRepairAuth, async (req, res) => {
     const currentQrDataUrl = typeof req.body?.currentQrDataUrl === "string" ? req.body.currentQrDataUrl : undefined;
     await whatsappLoginRpc(res, "web.login.wait", { timeoutMs: 30_000, ...(currentQrDataUrl ? { currentQrDataUrl } : {}) });
+  });
+
+  router.get("/whatsapp-login/status", requireRepairAuth, (_req, res) => {
+    try {
+      res.json({ ok: true, ...inspectWhatsAppLoginState(stateDir) });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err?.message || err) });
+    }
   });
 
   // ── WeChat QR login ──────────────────────────────────────────

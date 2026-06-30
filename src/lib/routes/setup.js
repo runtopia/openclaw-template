@@ -273,7 +273,7 @@ export function createSetupRouter({
       const dmPolicy = payload.discordDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "discord",
-        npmSpec: "@openclaw/discord",
+        npmSpec: "@openclaw/discord@2026.6.10",
         pluginId: "discord",
         config: {
           enabled: true,
@@ -286,7 +286,7 @@ export function createSetupRouter({
     if ((payload.slackBotToken?.trim() || payload.slackAppToken?.trim()) && supported("slack")) {
       plan.push({
         name: "slack",
-        npmSpec: "@openclaw/slack",
+        npmSpec: "@openclaw/slack@2026.6.10",
         pluginId: "slack",
         config: {
           enabled: true,
@@ -299,7 +299,7 @@ export function createSetupRouter({
       const dmPolicy = payload.feishuDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "feishu",
-        npmSpec: "@openclaw/feishu@2026.5.27",
+        npmSpec: "@openclaw/feishu@2026.6.10",
         pluginId: "feishu",
         config: {
           enabled: true,
@@ -314,7 +314,7 @@ export function createSetupRouter({
       const dmPolicy = payload.whatsappDmPolicy === "pairing" ? "pairing" : "open";
       plan.push({
         name: "whatsapp",
-        npmSpec: "@openclaw/whatsapp",
+        npmSpec: "@openclaw/whatsapp@2026.6.10",
         pluginId: "whatsapp",
         config: {
           enabled: true,
@@ -330,7 +330,7 @@ export function createSetupRouter({
       // via `openclaw channels login --channel openclaw-weixin`.
       plan.push({
         name: "openclaw-weixin",
-        npmSpec: "@tencent-weixin/openclaw-weixin",
+        npmSpec: "@tencent-weixin/openclaw-weixin@2.4.6",
         pluginId: "openclaw-weixin",
         config: {
           enabled: true,

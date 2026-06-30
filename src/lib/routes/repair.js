@@ -354,10 +354,11 @@ export function createRepairRouter({
   router.post("/unbind-channel", requireRepairAuth, (req, res) => {
     const { channel, accountId, agentId } = req.body || {};
     try {
+      let result;
       patchConfig(configFilePath(), (cfg) => {
-        removeChannelBinding(cfg, { channel, accountId, agentId });
+        result = removeChannelBinding(cfg, { channel, accountId, agentId });
       });
-      res.json({ ok: true });
+      res.json({ ok: true, result });
     } catch (err) {
       res.status(400).json({ ok: false, error: String(err?.message || err) });
     }

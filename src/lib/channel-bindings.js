@@ -57,15 +57,22 @@ export function applyChannelBinding(cfg, { channel, accountId, agentId }) {
 
 export function removeChannelBinding(cfg, { channel, accountId, agentId }) {
   assertBindableChannel(channel);
+  if (typeof accountId !== "string" || !accountId.trim()) throw new Error("accountId required");
+  if (typeof agentId !== "string" || !agentId.trim()) throw new Error("agentId required");
+
+  const result = { removed: false, channel, accountId, agentId };
+  if (!Array.isArray(cfg.bindings)) return result;
+
+  const matches = cfg.bindings.filter(
+    (b) => b?.match?.channel === channel && b?.match?.accountId === accountId && b?.agentId === agentId
+  );
+  if (matches.length === 0) return result;
+
+  cfg.bindings = cfg.bindings.filter(
+    (b) => !(b?.match?.channel === channel && b?.match?.accountId === accountId && b?.agentId === agentId)
+  );
   if (cfg.channels?.[channel]?.accounts && typeof cfg.channels[channel].accounts === "object") {
     delete cfg.channels[channel].accounts[accountId];
   }
-  if (Array.isArray(cfg.bindings)) {
-    cfg.bindings = cfg.bindings.filter((b) => {
-      const channelMatches = b?.match?.channel === channel;
-      const accountMatches = accountId ? b?.match?.accountId === accountId : true;
-      const agentMatches = agentId ? b?.agentId === agentId : true;
-      return !(channelMatches && accountMatches && agentMatches);
-    });
-  }
+  return { ...result, removed: true };
 }

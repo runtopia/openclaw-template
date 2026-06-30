@@ -181,10 +181,17 @@ export function setChannelConfig(channelId, cfgObj, ctx) {
     return;
   }
   patchConfig(configPath, (cfg) => {
-    setIn(cfg, `channels.${channelId}`, cfgObj);
+    const ch = CHANNEL_MANIFEST.find((c) => c.id === channelId);
+    if (ch?.kind === "qr") {
+      const existing = cfg.channels?.[channelId] && typeof cfg.channels[channelId] === "object"
+        ? cfg.channels[channelId]
+        : {};
+      setIn(cfg, `channels.${channelId}`, { ...existing, ...cfgObj });
+    } else {
+      setIn(cfg, `channels.${channelId}`, cfgObj);
+    }
     // Also enable the plugin entry if the channel has one. For channels already
     // written by generateConfigDirect() this is a no-op.
-    const ch = CHANNEL_MANIFEST.find((c) => c.id === channelId);
     if (ch?.pluginId) setIn(cfg, `plugins.entries.${ch.pluginId}`, { enabled: true });
   });
   console.log(`[reconcile] channels.${channelId} written directly to openclaw.json`);

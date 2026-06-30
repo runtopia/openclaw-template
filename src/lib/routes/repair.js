@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
+import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../channel-bindings.js";
 import { patchConfig, setIn } from "../openclaw-config.js";
 import { startWechatLogin, getWechatLoginState } from "../wechat-login.js";
 
@@ -172,7 +173,7 @@ export function createRepairRouter({
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "POST /bind-channel"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "GET /channel-bindings", "POST /bind-channel", "POST /unbind-channel"],
     });
   });
   router.get("/status", requireRepairAuth, (req, res) => {
@@ -322,6 +323,16 @@ export function createRepairRouter({
     }
   });
 
+  router.get("/channel-bindings", requireRepairAuth, (_req, res) => {
+    try {
+      const cfgPath = configFilePath();
+      const cfg = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, "utf8")) : {};
+      res.json(readChannelBindings(cfg));
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err?.message || err) });
+    }
+  });
+
   // POST /bind-channel — 扫码成功后把 channel account 绑到 agent(per-employee)。
   //   body: {channel, accountId(=empId), agentId(=openclawAgentId)}
   // patches openclaw.json:
@@ -329,21 +340,26 @@ export function createRepairRouter({
   //   channels.<channel>.accounts.<accountId> = {enabled:true}
   router.post("/bind-channel", requireRepairAuth, (req, res) => {
     const { channel, accountId, agentId } = req.body || {};
-    if (typeof channel !== "string" || typeof accountId !== "string" || typeof agentId !== "string") {
-      return res.status(400).json({ ok: false, error: "channel, accountId, agentId required" });
+    try {
+      let written;
+      patchConfig(configFilePath(), (cfg) => {
+        written = applyChannelBinding(cfg, { channel, accountId, agentId });
+      });
+      res.json({ ok: true, binding: written });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: String(err?.message || err) });
     }
+  });
+
+  router.post("/unbind-channel", requireRepairAuth, (req, res) => {
+    const { channel, accountId, agentId } = req.body || {};
     try {
       patchConfig(configFilePath(), (cfg) => {
-        if (!Array.isArray(cfg.bindings)) cfg.bindings = [];
-        cfg.bindings = cfg.bindings.filter(
-          (b) => !(b?.match?.channel === channel && b?.match?.accountId === accountId)
-        );
-        cfg.bindings.push({ agentId, match: { channel, accountId } });
-        setIn(cfg, `channels.${channel}.accounts.${accountId}`, { enabled: true });
+        removeChannelBinding(cfg, { channel, accountId, agentId });
       });
       res.json({ ok: true });
     } catch (err) {
-      res.status(500).json({ ok: false, error: String(err) });
+      res.status(400).json({ ok: false, error: String(err?.message || err) });
     }
   });
 

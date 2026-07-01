@@ -24,7 +24,7 @@ assert.deepEqual(cfg.agents.defaults.heartbeat, { every: "2h", target: "last" })
 assert.equal(cfg.agents.defaults.memorySearch.enabled, true);
 assert.deepEqual(cfg.agents.defaults.memorySearch.sources, ["memory", "sessions"]);
 assert.equal(cfg.agents.defaults.memorySearch.provider, "clawrouters");
-assert.equal(cfg.agents.defaults.memorySearch.model, "text-embedding-3-small");
+assert.equal(cfg.agents.defaults.memorySearch.model, "auto");
 assert.equal(cfg.agents.defaults.memorySearch.remote.baseUrl, "https://clawrouters-dev.example.com/api/v1");
 assert.deepEqual(cfg.agents.defaults.memorySearch.remote.apiKey, {
   source: "env",

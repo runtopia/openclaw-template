@@ -19,7 +19,7 @@ export function resolveClawroutersApiBaseUrl(env = process.env) {
 }
 
 const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" };
-const CLAWROUTERS_EMBEDDING_MODEL = "text-embedding-3-small";
+const CLAWROUTERS_EMBEDDING_MODEL = "auto";
 const DEFAULT_HEARTBEAT = { every: "2h", target: "last" };
 
 function hasClawroutersKey(env = process.env) {

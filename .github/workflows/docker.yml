@@ -44,8 +44,6 @@ jobs:
             type=semver,pattern={{version}}
             # main branch     →  image tag: latest
             type=raw,value=latest,enable={{is_default_branch}}
-            # every push      →  image tag: sha-abc1234  (exact build pin)
-            type=sha,format=short
 
       - name: Resolve IMAGE_VERSION
         id: ver

@@ -60,6 +60,7 @@ export function buildRuntimeChannelAccessPolicy(accessInput) {
 
   if (access.mode === "approval") {
     runtime.dmPolicy = "pairing";
+    runtime.allowFrom = [];
   } else if (access.mode === "allowlist") {
     runtime.dmPolicy = "allowlist";
     runtime.allowFrom = access.allowFrom;
@@ -70,6 +71,8 @@ export function buildRuntimeChannelAccessPolicy(accessInput) {
 
   if (access.groupMode === "disabled") {
     runtime.groupPolicy = "disabled";
+    runtime.groupAllowFrom = [];
+    runtime.groups = {};
   } else if (access.groupMode === "allowlist") {
     runtime.groupPolicy = "allowlist";
     runtime.groupAllowFrom = access.groupAllowFrom;

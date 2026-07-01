@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../channel-bindings.js";
 import { patchConfig, setIn } from "../openclaw-config.js";
+import { applyChannelPolicy, normalizeChannelAccessPolicy } from "../channel-access-policy.js";
 import { startWechatLogin, getWechatLoginState } from "../wechat-login.js";
 
 const SENSITIVE_KEYS = new Set(["apiKey", "token", "secret", "password", "key"]);
@@ -219,7 +220,7 @@ export function createRepairRouter({
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "GET /whatsapp-login/status", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "GET /channel-bindings", "POST /bind-channel", "POST /unbind-channel"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "GET /whatsapp-login/status", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "GET /channel-bindings", "POST /bind-channel", "POST /unbind-channel", "PATCH /channel-policy", "GET /channel-access-requests", "POST /channel-access-requests/:requestId/approve", "POST /channel-access-requests/:requestId/reject"],
     });
   });
   router.get("/status", requireRepairAuth, (req, res) => {
@@ -385,6 +386,73 @@ export function createRepairRouter({
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err?.message || err) });
     }
+  });
+
+  router.patch("/channel-policy", requireRepairAuth, (req, res) => {
+    const { channel, accountId, access } = req.body || {};
+    try {
+      let written;
+      patchConfig(configFilePath(), (cfg) => {
+        written = applyChannelPolicy(cfg, {
+          channel,
+          accountId,
+          access: normalizeChannelAccessPolicy(access),
+        });
+      });
+      res.json({ ok: true, channel, accountId: accountId ?? null, policy: written });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: String(err?.message || err) });
+    }
+  });
+
+  router.get("/channel-access-requests", requireRepairAuth, async (req, res) => {
+    const channel = typeof req.query.channel === "string" && req.query.channel.trim()
+      ? req.query.channel.trim()
+      : undefined;
+    try {
+      const args = ["pairing", "list"];
+      if (channel) args.push(channel);
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(args));
+      res.status(r.code === 0 ? 200 : 500).json({
+        ok: r.code === 0,
+        channel: channel ?? null,
+        requests: [],
+        output: r.output,
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err?.message || err) });
+    }
+  });
+
+  router.post("/channel-access-requests/:requestId/approve", requireRepairAuth, async (req, res) => {
+    const { channel, code } = req.body || {};
+    const pairingCode = typeof code === "string" && code.trim()
+      ? code.trim()
+      : String(req.params.requestId || "").trim();
+    if (!channel || !pairingCode) {
+      return res.status(400).json({ ok: false, error: "Missing channel or pairing code" });
+    }
+    try {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["pairing", "approve", String(channel), pairingCode]));
+      res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: r.output });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err?.message || err) });
+    }
+  });
+
+  router.post("/channel-access-requests/:requestId/reject", requireRepairAuth, async (req, res) => {
+    const { channel } = req.body || {};
+    const pairingCode = String(req.params.requestId || "").trim();
+    if (!channel || !pairingCode) {
+      return res.status(400).json({ ok: false, error: "Missing channel or pairing code" });
+    }
+    res.json({
+      ok: true,
+      rejected: true,
+      channel,
+      code: pairingCode,
+      note: "OpenClaw CLI does not currently expose a pairing reject command; request was left unapproved.",
+    });
   });
 
   // POST /bind-channel — 扫码成功后把 channel account 绑到 agent(per-employee)。

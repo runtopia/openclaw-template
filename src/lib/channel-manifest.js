@@ -19,6 +19,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { patchConfig, setIn } from "./openclaw-config.js";
+import { mergeChannelPolicy } from "./channel-access-policy.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();
@@ -186,9 +187,12 @@ export function setChannelConfig(channelId, cfgObj, ctx) {
       const existing = cfg.channels?.[channelId] && typeof cfg.channels[channelId] === "object"
         ? cfg.channels[channelId]
         : {};
-      setIn(cfg, `channels.${channelId}`, { ...existing, ...cfgObj });
+      setIn(cfg, `channels.${channelId}`, mergeChannelPolicy(existing, cfgObj));
     } else {
-      setIn(cfg, `channels.${channelId}`, cfgObj);
+      const existing = cfg.channels?.[channelId] && typeof cfg.channels[channelId] === "object"
+        ? cfg.channels[channelId]
+        : {};
+      setIn(cfg, `channels.${channelId}`, mergeChannelPolicy(existing, cfgObj));
     }
     // Also enable the plugin entry if the channel has one. For channels already
     // written by generateConfigDirect() this is a no-op.
@@ -198,7 +202,7 @@ export function setChannelConfig(channelId, cfgObj, ctx) {
 }
 
 function reconcileChannel(ch, ctx) {
-  console.log(`[reconcile] forcing channels.${ch.id} → dmPolicy=open, allowFrom=["*"]`);
+  console.log(`[reconcile] refreshing channels.${ch.id} while preserving existing access policy`);
   if (ch.needsPairingClear) clearPairingStore(ch.id, ctx.stateDir);
   const shape = ch.reconcileShape(ctx.env || process.env);
   setChannelConfig(ch.id, shape, ctx);

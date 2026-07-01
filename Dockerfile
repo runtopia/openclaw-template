@@ -54,8 +54,10 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v4
+ARG CACHEBUST_PLUGINS=v5
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
+WORKDIR /app
+COPY scripts ./scripts
 RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && cd ${OPENCLAW_PLUGINS_DIR} \
   && npm init -y >/dev/null 2>&1 \
@@ -66,7 +68,7 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
        @openclaw/feishu@2026.6.10 \
        @openclaw/whatsapp@2026.6.10 \
        @tencent-weixin/openclaw-weixin@2.4.6 \
-  && node -e "const fs=require('fs'); const root=process.env.OPENCLAW_PLUGINS_DIR + '/node_modules/@tencent-weixin/openclaw-weixin'; const files=['dist/src/messaging/process-message.js','src/messaging/process-message.ts']; for (const rel of files) { const p=root + '/' + rel; let s=fs.readFileSync(p,'utf8'); const before='list.length === 0 || list.includes(id)'; if (!s.includes(before)) throw new Error('weixin pairing patch target not found: ' + rel); s=s.replaceAll(before, 'list.includes(id)'); fs.writeFileSync(p,s); }" \
+  && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 
 WORKDIR /app

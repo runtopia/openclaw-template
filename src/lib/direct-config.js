@@ -256,11 +256,25 @@ export function generateConfigDirect(opts) {
     plugins.entries.feishu = { enabled: true };
   }
   if (truthy(env.WHATSAPP_ENABLED)) {
-    channels.whatsapp = { enabled: true, dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL };
+    channels.whatsapp = {
+      enabled: true,
+      dmPolicy: "pairing",
+      allowFrom: [],
+      groupPolicy: "disabled",
+      groupAllowFrom: [],
+      groups: {},
+    };
     plugins.entries.whatsapp = { enabled: true };
   }
   if (truthy(env.WECHAT_ENABLED) || truthy(env.WEIXIN_ENABLED)) {
-    channels["openclaw-weixin"] = { enabled: true, dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL };
+    channels["openclaw-weixin"] = {
+      enabled: true,
+      dmPolicy: "pairing",
+      allowFrom: [],
+      groupPolicy: "disabled",
+      groupAllowFrom: [],
+      groups: {},
+    };
   }
 
   // ── Session ───────────────────────────────────────────────────

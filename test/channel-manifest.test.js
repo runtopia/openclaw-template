@@ -12,6 +12,9 @@ test("WECHAT_ENABLED=1 激活 openclaw-weixin 通道", () => {
   assert.equal(wechat.pluginId, "openclaw-weixin");
   const shape = wechat.reconcileShape({ WECHAT_ENABLED: "1" });
   assert.equal(shape.enabled, true);
+  assert.equal(shape.dmPolicy, "pairing");
+  assert.deepEqual(shape.allowFrom, []);
+  assert.equal(shape.groupPolicy, "disabled");
 });
 
 test("WEIXIN_ENABLED 别名同样激活 openclaw-weixin", () => {
@@ -26,5 +29,11 @@ test("未设微信环境变量时不激活", () => {
 
 test("whatsapp 仍可用(回归)", () => {
   const active = getActiveChannels({ WHATSAPP_ENABLED: "1" });
-  assert.ok(active.some((c) => c.id === "whatsapp"));
+  const whatsapp = active.find((c) => c.id === "whatsapp");
+  assert.ok(whatsapp);
+  const shape = whatsapp.reconcileShape({ WHATSAPP_ENABLED: "1" });
+  assert.equal(shape.enabled, true);
+  assert.equal(shape.dmPolicy, "pairing");
+  assert.deepEqual(shape.allowFrom, []);
+  assert.equal(shape.groupPolicy, "disabled");
 });

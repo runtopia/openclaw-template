@@ -27,7 +27,15 @@ function truthy(v) {
 }
 
 const DM_OPEN = "open";
+const DM_PAIRING = "pairing";
 const ALLOW_ALL = ["*"];
+const APPROVAL_ONLY = {
+  dmPolicy: DM_PAIRING,
+  allowFrom: [],
+  groupPolicy: "disabled",
+  groupAllowFrom: [],
+  groups: {},
+};
 
 export const CHANNEL_MANIFEST = [
   {
@@ -107,7 +115,7 @@ export const CHANNEL_MANIFEST = [
       return truthy(env.WHATSAPP_ENABLED);
     },
     reconcileShape() {
-      return { enabled: true, dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL };
+      return { enabled: true, ...APPROVAL_ONLY };
     },
     needsPairingClear: false,
   },
@@ -131,7 +139,7 @@ export const CHANNEL_MANIFEST = [
       return truthy(env.WECHAT_ENABLED) || truthy(env.WEIXIN_ENABLED);
     },
     reconcileShape() {
-      return { enabled: true, dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL };
+      return { enabled: true, ...APPROVAL_ONLY };
     },
     needsPairingClear: false,
   },

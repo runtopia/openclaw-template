@@ -18,12 +18,97 @@ export function resolveClawroutersApiBaseUrl(env = process.env) {
   return base.endsWith("/api/v1") ? base : `${base}/api/v1`;
 }
 
-export function patchClawroutersProviderBaseUrl(cfg, env = process.env) {
-  if (!env.CLAWROUTERS_BASE_URL?.trim()) return false;
-  const provider = cfg?.models?.providers?.clawrouters;
-  if (!provider) return false;
-  provider.baseUrl = resolveClawroutersApiBaseUrl(env);
+const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" };
+const CLAWROUTERS_EMBEDDING_MODEL = "text-embedding-3-small";
+const DEFAULT_HEARTBEAT = { every: "2h", target: "last" };
+
+function hasClawroutersKey(env = process.env) {
+  return Boolean((env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim());
+}
+
+function jsonEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function ensureObject(parent, key) {
+  if (!parent[key] || typeof parent[key] !== "object" || Array.isArray(parent[key])) {
+    parent[key] = {};
+  }
+  return parent[key];
+}
+
+function setJsonValue(parent, key, value) {
+  if (jsonEqual(parent[key], value)) return false;
+  parent[key] = value;
   return true;
+}
+
+export function buildClawroutersMemorySearch(env = process.env) {
+  return {
+    enabled: true,
+    sources: ["memory", "sessions"],
+    provider: "clawrouters",
+    model: CLAWROUTERS_EMBEDDING_MODEL,
+    remote: {
+      // OpenClaw appends /embeddings internally, so keep this at the /api/v1 base.
+      baseUrl: resolveClawroutersApiBaseUrl(env),
+      apiKey: CLAWROUTERS_API_KEY_REF,
+    },
+  };
+}
+
+function applyClawroutersMemorySearch(defaults, env) {
+  const memorySearch = ensureObject(defaults, "memorySearch");
+  const desired = buildClawroutersMemorySearch(env);
+  let changed = false;
+  changed = setJsonValue(memorySearch, "enabled", desired.enabled) || changed;
+  changed = setJsonValue(memorySearch, "sources", desired.sources) || changed;
+  changed = setJsonValue(memorySearch, "provider", desired.provider) || changed;
+  changed = setJsonValue(memorySearch, "model", desired.model) || changed;
+  const remote = ensureObject(memorySearch, "remote");
+  changed = setJsonValue(remote, "baseUrl", desired.remote.baseUrl) || changed;
+  changed = setJsonValue(remote, "apiKey", desired.remote.apiKey) || changed;
+  return changed;
+}
+
+export function applyRuntimeDefaults(cfg, env = process.env) {
+  if (!cfg || typeof cfg !== "object") return false;
+  let changed = false;
+
+  const agents = ensureObject(cfg, "agents");
+  const defaults = ensureObject(agents, "defaults");
+  changed = setJsonValue(defaults, "heartbeat", DEFAULT_HEARTBEAT) || changed;
+
+  const hasKey = hasClawroutersKey(env);
+  const provider = cfg?.models?.providers?.clawrouters;
+  const memorySearch = cfg?.agents?.defaults?.memorySearch;
+  const usesClawroutersMemory = memorySearch?.provider === "clawrouters";
+
+  if (hasKey) {
+    const models = ensureObject(cfg, "models");
+    if (!models.mode) {
+      models.mode = "merge";
+      changed = true;
+    }
+    const providers = ensureObject(models, "providers");
+    changed = setJsonValue(providers, "clawrouters", providerClawrouters(env)) || changed;
+  } else if (env.CLAWROUTERS_BASE_URL?.trim() && provider) {
+    const nextBaseUrl = resolveClawroutersApiBaseUrl(env);
+    if (provider.baseUrl !== nextBaseUrl) {
+      provider.baseUrl = nextBaseUrl;
+      changed = true;
+    }
+  }
+
+  if (hasKey || usesClawroutersMemory) {
+    changed = applyClawroutersMemorySearch(defaults, env) || changed;
+  }
+
+  return changed;
+}
+
+export function patchClawroutersProviderBaseUrl(cfg, env = process.env) {
+  return applyRuntimeDefaults(cfg, env);
 }
 
 // ── HTTP /v1/* 端点开关（env 注入，默认全关）──────────────────────────────────
@@ -48,7 +133,7 @@ function providerClawrouters(env = process.env) {
   return {
     baseUrl: resolveClawroutersApiBaseUrl(env),
     // SecretRef：key 从运行时环境变量读，不明文写入配置文件
-    apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+    apiKey: CLAWROUTERS_API_KEY_REF,
     api: "openai-completions",
     // 仅声明 auto 入口点——插件激活后会补充完整模型列表
     models: [
@@ -187,7 +272,7 @@ export function generateConfigDirect(opts) {
     workspace: workspaceDir,
     model: { primary: env.DEFAULT_MODEL?.trim() || provider?.primaryModel || "" },
     // heartbeat：2 小时发一次，保持连接活跃（官方文档 agents.defaults.heartbeat）
-    heartbeat: { every: "2h", target: "last" },
+    heartbeat: DEFAULT_HEARTBEAT,
     // 上下文压缩：session 较长时自动压缩早期历史，减少 token 消耗
     // （官方 /compact 功能的自动触发阈值）
     bootstrapMaxChars: 20000,
@@ -200,6 +285,7 @@ export function generateConfigDirect(opts) {
     agentDefaults.imageGenerationModel = { primary: "clawrouters-image/auto" };
     agentDefaults.videoGenerationModel = { primary: "clawrouters-video/auto", timeoutMs: 600000 };
     agentDefaults.mediaGenerationAutoProviderFallback = false;
+    agentDefaults.memorySearch = buildClawroutersMemorySearch(env);
   }
 
   // ── Plugins ───────────────────────────────────────────────────

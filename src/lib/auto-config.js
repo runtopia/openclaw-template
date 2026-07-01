@@ -5,7 +5,7 @@ import path from "node:path";
 import { ensureControlUiConfig } from "./control-ui-config.js";
 import { patchConfig, setIn } from "./openclaw-config.js";
 import { resolvePreinstalledPluginPaths } from "./preinstalled-plugins.js";
-import { generateConfigDirect, buildHttpEndpoints, resolveClawroutersApiBaseUrl } from "./direct-config.js";
+import { applyRuntimeDefaults, generateConfigDirect, buildHttpEndpoints, resolveClawroutersApiBaseUrl } from "./direct-config.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();
@@ -155,6 +155,10 @@ function applyAutoConfig(ctx) {
       for (const skillKey of ["openai-image-gen", "nano-banana-pro"]) {
         setIn(cfg, `skills.entries.${skillKey}`, { enabled: false });
       }
+    }
+
+    if (applyRuntimeDefaults(cfg, env)) {
+      console.log("[auto-config] patched runtime defaults");
     }
 
     // WeChat: just enable the plugin. The channel id "openclaw-weixin" is only

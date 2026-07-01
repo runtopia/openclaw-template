@@ -32,7 +32,7 @@ import { createRepairRouter } from "./lib/routes/repair.js";
 import { readDefaultProviderKey, readEnvProviderKey } from "./lib/repair-ai-key.js";
 import { createRequireSetupAuth } from "./lib/routes/setup.js";
 import { patchConfig } from "./lib/openclaw-config.js";
-import { patchClawroutersProviderBaseUrl } from "./lib/direct-config.js";
+import { applyRuntimeDefaults } from "./lib/direct-config.js";
 import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions } from "./lib/preinstalled-plugins.js";
 
 // ──────────────────────────────────────────────────────────────
@@ -178,8 +178,8 @@ async function ensureWebSocketConfig() {
     if (applyPreinstalledPluginInstallRecords(cfg)) {
       console.log("[wrapper] patched preinstalled official plugin install records");
     }
-    if (patchClawroutersProviderBaseUrl(cfg, process.env)) {
-      console.log("[wrapper] patched ClawRouters baseUrl from CLAWROUTERS_BASE_URL");
+    if (applyRuntimeDefaults(cfg, process.env)) {
+      console.log("[wrapper] patched runtime defaults");
     }
   });
   ensureControlUiConfig({

@@ -74,7 +74,7 @@ if (isConfigured()) {
   const { patchConfig, setIn } = await import("./lib/openclaw-config.js");
   const { reconcileAllChannels } = await import("./lib/channel-manifest.js");
   const { resolvePreinstalledPluginPaths } = await import("./lib/preinstalled-plugins.js");
-  const { patchClawroutersProviderBaseUrl } = await import("./lib/direct-config.js");
+  const { applyRuntimeDefaults } = await import("./lib/direct-config.js");
 
   patchConfig(CONFIG_PATH, (cfg) => {
     setIn(cfg, "gateway.auth.token", gatewayToken);
@@ -82,8 +82,8 @@ if (isConfigured()) {
     setIn(cfg, "gateway.bind", "lan");
     const loadPaths = resolvePreinstalledPluginPaths();
     if (loadPaths.length > 0) setIn(cfg, "plugins.load.paths", loadPaths);
-    if (patchClawroutersProviderBaseUrl(cfg, process.env)) {
-      console.log("[init-config] patched ClawRouters baseUrl from CLAWROUTERS_BASE_URL");
+    if (applyRuntimeDefaults(cfg, process.env)) {
+      console.log("[init-config] patched runtime defaults");
     }
   });
 

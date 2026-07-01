@@ -4,7 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildOnboardArgs, resolveAuth } from "../src/lib/auto-config.js";
-import { generateConfigDirect, patchClawroutersProviderBaseUrl, resolveClawroutersApiBaseUrl } from "../src/lib/direct-config.js";
+import {
+  applyRuntimeDefaults,
+  generateConfigDirect,
+  patchClawroutersProviderBaseUrl,
+  resolveClawroutersApiBaseUrl,
+} from "../src/lib/direct-config.js";
 import { readEnvProviderKey } from "../src/lib/repair-ai-key.js";
 
 test("CLAWROUTERS_BASE_URL origin is normalized to /api/v1", () => {
@@ -58,9 +63,20 @@ test("direct config and repair key use CLAWROUTERS_BASE_URL", () => {
     readEnvProviderKey(env).baseUrl,
     "https://clawrouters-dev.example.com/api/v1",
   );
+  assert.deepEqual(cfg.agents.defaults.heartbeat, { every: "2h", target: "last" });
+  assert.deepEqual(cfg.agents.defaults.memorySearch, {
+    enabled: true,
+    sources: ["memory", "sessions"],
+    provider: "clawrouters",
+    model: "text-embedding-3-small",
+    remote: {
+      baseUrl: "https://clawrouters-dev.example.com/api/v1",
+      apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+    },
+  });
 });
 
-test("existing openclaw.json provider is patched from CLAWROUTERS_BASE_URL", () => {
+test("existing openclaw.json runtime defaults are patched from CLAWROUTERS_BASE_URL", () => {
   const cfg = {
     models: {
       mode: "merge",
@@ -68,6 +84,56 @@ test("existing openclaw.json provider is patched from CLAWROUTERS_BASE_URL", () 
         clawrouters: {
           baseUrl: "https://www.clawrouters.com/api/v1",
           apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+        },
+      },
+    },
+    agents: { defaults: {} },
+  };
+
+  const patched = applyRuntimeDefaults(cfg, {
+    CLAWROUTERS_API_KEY: "cr_test",
+    CLAWROUTERS_BASE_URL: "https://clawrouters-dev.example.com",
+  });
+
+  assert.equal(patched, true);
+  assert.equal(
+    cfg.models.providers.clawrouters.baseUrl,
+    "https://clawrouters-dev.example.com/api/v1",
+  );
+  assert.deepEqual(cfg.agents.defaults.heartbeat, { every: "2h", target: "last" });
+  assert.deepEqual(cfg.agents.defaults.memorySearch, {
+    enabled: true,
+    sources: ["memory", "sessions"],
+    provider: "clawrouters",
+    model: "text-embedding-3-small",
+    remote: {
+      baseUrl: "https://clawrouters-dev.example.com/api/v1",
+      apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+    },
+  });
+});
+
+test("legacy ClawRouters base URL patcher updates memory search remote base URL", () => {
+  const cfg = {
+    models: {
+      providers: {
+        clawrouters: {
+          baseUrl: "https://www.clawrouters.com/api/v1",
+          apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+        },
+      },
+    },
+    agents: {
+      defaults: {
+        memorySearch: {
+          enabled: true,
+          sources: ["memory", "sessions"],
+          provider: "clawrouters",
+          model: "text-embedding-3-small",
+          remote: {
+            baseUrl: "https://www.clawrouters.com/api/v1",
+            apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+          },
         },
       },
     },
@@ -79,7 +145,7 @@ test("existing openclaw.json provider is patched from CLAWROUTERS_BASE_URL", () 
 
   assert.equal(patched, true);
   assert.equal(
-    cfg.models.providers.clawrouters.baseUrl,
+    cfg.agents.defaults.memorySearch.remote.baseUrl,
     "https://clawrouters-dev.example.com/api/v1",
   );
 });

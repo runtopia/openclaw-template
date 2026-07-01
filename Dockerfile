@@ -30,7 +30,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Pin OpenClaw core.
-ARG OPENCLAW_VERSION=2026.6.10
+ARG OPENCLAW_VERSION=2026.6.11
 RUN npm install -g openclaw@${OPENCLAW_VERSION}
 
 # Pre-install plugins OUTSIDE the /data volume, into a fixed image path.
@@ -44,7 +44,7 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 #   it via `plugins.load.paths`. The discovery code (discoverFromPath) accepts
 #   any path and resolves each plugin's deps through the adjacent node_modules,
 #   so this needs zero runtime copy and zero runtime npm install.
-#   Channels (verified against openclaw 2026.6.10 source):
+#   Channels (verified against openclaw 2026.6.11 source):
 #     - telegram is BUILT INTO openclaw core (dist/extensions/telegram) — no
 #       plugin to install here.
 #     - slack / discord / feishu / whatsapp are official standalone packages.
@@ -54,7 +54,7 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v5
+ARG CACHEBUST_PLUGINS=v6
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts ./scripts
@@ -63,10 +63,10 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && npm init -y >/dev/null 2>&1 \
   && npm install --omit=dev --no-audit --no-fund \
        github:runtopia/clawrouters-plugin \
-       @openclaw/slack@2026.6.10 \
-       @openclaw/discord@2026.6.10 \
-       @openclaw/feishu@2026.6.10 \
-       @openclaw/whatsapp@2026.6.10 \
+       @openclaw/slack@2026.6.11 \
+       @openclaw/discord@2026.6.11 \
+       @openclaw/feishu@2026.6.11 \
+       @openclaw/whatsapp@2026.6.11 \
        @tencent-weixin/openclaw-weixin@2.4.6 \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}

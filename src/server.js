@@ -422,7 +422,7 @@ const server = app.listen(PORT, async () => {
     if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
     await ensureWebSocketConfig();
     gateway.ensureGatewayRunning()
-      .then(() => { gatewayRpc.start(); console.log("[wrapper] gateway started successfully at boot"); })
+      .then(async () => { gatewayRpc.start(); console.log("[wrapper] gateway started successfully at boot"); await oneclaw.sendHeartbeat(); })
       .catch((err) => console.error(`[wrapper] failed to start gateway at boot: ${err.message}`));
     return;
   }
@@ -451,7 +451,7 @@ const server = app.listen(PORT, async () => {
           if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
           await ensureWebSocketConfig();
           gateway.ensureGatewayRunning()
-            .then(() => { gatewayRpc.start(); console.log("[wrapper] gateway started successfully after auto-config"); })
+            .then(async () => { gatewayRpc.start(); console.log("[wrapper] gateway started successfully after auto-config"); await oneclaw.sendHeartbeat(); })
             .catch((err) => console.error(`[wrapper] failed to start gateway after auto-config: ${err.message}`));
         }
       } catch (err) {

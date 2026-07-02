@@ -14,6 +14,7 @@ export function createOneclawIntegration({
     return {
       start() {},
       stop() {},
+      sendHeartbeat() {},
       sendEvent() {},
       trackMessage() {},
       getCachedPersonality() { return null; },
@@ -241,5 +242,5 @@ export function createOneclawIntegration({
     if (remindersInterval) { clearInterval(remindersInterval); remindersInterval = null; }
   }
 
-  return { start, stop, sendEvent, trackMessage, fetchPersonality, applyPersonality, applyTemplateFromEnv, getCachedPersonality: () => cachedPersonality };
+  return { start, stop, sendHeartbeat, sendEvent, trackMessage, fetchPersonality, applyPersonality, applyTemplateFromEnv, getCachedPersonality: () => cachedPersonality };
 }

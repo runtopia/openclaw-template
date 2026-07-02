@@ -541,6 +541,7 @@ const server = app.listen(PORT, () => {
       .then(async () => {
         gatewayRpc.start();
         console.log("[sidecar] gateway ready");
+        await oneclaw.sendHeartbeat();
         await ensureWorkspaceFiles();
         if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
       })

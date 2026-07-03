@@ -16,6 +16,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
   let gatewayProc = null;
   let gatewayStarting = null;
   let gatewayRestarting = null;
+  let gatewayHttpReadyWithoutProc = false;
   let intentionalStop = false;   // true 表示本次退出是主动 stop/restart，exit handler 不自愈
   let consecutiveCrashes = 0;    // 连续意外崩溃次数：用于退避，到达上限后暂停自动重启
   let crashRestartTimer = null;  // pending 的自愈定时器句柄
@@ -52,6 +53,15 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     return false;
   }
 
+  async function isGatewayHttpReachable() {
+    try {
+      const res = await fetch(`${GATEWAY_TARGET}/openclaw`, { method: "GET" });
+      return !!res;
+    } catch {
+      return false;
+    }
+  }
+
   function ensureConfigToken() {
     const configPath = `${stateDir}/openclaw.json`;
     if (!fs.existsSync(configPath)) return;
@@ -71,6 +81,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
   async function startGateway() {
     if (gatewayProc) return;
     if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
+    gatewayHttpReadyWithoutProc = false;
     fs.mkdirSync(stateDir, { recursive: true });
     fs.mkdirSync(workspaceDir, { recursive: true });
     ensureConfigToken();
@@ -80,10 +91,11 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
       "--port", String(internalGatewayPort),
       "--auth", "token", "--token", gatewayToken,
     ];
-    gatewayProc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
+    const proc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, OPENCLAW_STATE_DIR: stateDir, OPENCLAW_WORKSPACE_DIR: workspaceDir },
     });
+    gatewayProc = proc;
     intentionalStop = false; // 新进程已启动，清除上一轮可能残留的主动停止标记
     function handleOutput(chunk) {
       const lines = chunk.toString().split("\n");
@@ -91,35 +103,45 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
         if (line) { appendLog(line); process.stdout.write(line + "\n"); }
       }
     }
-    gatewayProc.stdout.on("data", handleOutput);
-    gatewayProc.stderr.on("data", handleOutput);
+    proc.stdout.on("data", handleOutput);
+    proc.stderr.on("data", handleOutput);
     const safeArgs = args.map((arg, i) => args[i - 1] === "--token" ? "[REDACTED]" : arg);
     console.log(`[gateway] starting: ${OPENCLAW_NODE} ${clawArgs(safeArgs).join(" ")}`);
 
-    gatewayProc.on("error", (err) => { console.error(`[gateway] spawn error: ${String(err)}`); gatewayProc = null; });
-    gatewayProc.on("exit", (code, signal) => {
+    proc.on("error", (err) => { console.error(`[gateway] spawn error: ${String(err)}`); if (gatewayProc === proc) gatewayProc = null; });
+    proc.on("exit", (code, signal) => {
       console.error(`[gateway] exited code=${code} signal=${signal}`);
-      gatewayProc = null;
+      if (gatewayProc === proc) gatewayProc = null;
       const wasIntentional = intentionalStop;
       intentionalStop = false;
       if (wasIntentional || !isConfigured()) return; // 主动停止或未配置，不自愈
-      consecutiveCrashes++;
-      if (consecutiveCrashes > MAX_CRASH_RESTARTS) {
-        console.error(`[gateway] crashed ${consecutiveCrashes}x; auto-restart paused until next request`);
-        return;
-      }
-      const delay = Math.min(1000 * 2 ** (consecutiveCrashes - 1), 30_000);
-      console.log(`[gateway] unexpected exit — auto-restarting in ${delay}ms (crash #${consecutiveCrashes})`);
-      crashRestartTimer = setTimeout(() => {
-        crashRestartTimer = null;
-        ensureGatewayRunning().catch((err) => console.error(`[gateway] auto-restart failed: ${err.message}`));
-      }, delay);
+      isGatewayHttpReachable().then((reachable) => {
+        if (reachable) {
+          gatewayHttpReadyWithoutProc = true;
+          consecutiveCrashes = 0;
+          console.log("[gateway] runner exited but gateway HTTP is still reachable; adopting existing gateway");
+          return;
+        }
+        consecutiveCrashes++;
+        if (consecutiveCrashes > MAX_CRASH_RESTARTS) {
+          console.error(`[gateway] crashed ${consecutiveCrashes}x; auto-restart paused until next request`);
+          return;
+        }
+        const delay = Math.min(1000 * 2 ** (consecutiveCrashes - 1), 30_000);
+        console.log(`[gateway] unexpected exit — auto-restarting in ${delay}ms (crash #${consecutiveCrashes})`);
+        crashRestartTimer = setTimeout(() => {
+          crashRestartTimer = null;
+          ensureGatewayRunning().catch((err) => console.error(`[gateway] auto-restart failed: ${err.message}`));
+        }, delay);
+      });
     });
   }
 
   async function ensureGatewayRunning() {
     if (!isConfigured()) return { ok: false, reason: "not configured" };
     if (gatewayProc) return { ok: true };
+    if (gatewayHttpReadyWithoutProc && await isGatewayHttpReachable()) return { ok: true };
+    gatewayHttpReadyWithoutProc = false;
     if (!gatewayStarting) {
       gatewayStarting = (async () => {
         await startGateway();
@@ -179,6 +201,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
 
   function stopGateway() {
     intentionalStop = true; // 主动停止，禁止自愈
+    gatewayHttpReadyWithoutProc = false;
     if (crashRestartTimer) { clearTimeout(crashRestartTimer); crashRestartTimer = null; }
     if (gatewayProc) { try { gatewayProc.kill("SIGTERM"); } catch {} gatewayProc = null; }
   }
@@ -191,7 +214,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     stopGateway,
     isGatewayStarting: () => gatewayStarting !== null,
     isGatewayProcessReady: () => gatewayProc !== null && gatewayStarting === null,
-    isGatewayReady: () => gatewayProc !== null && gatewayStarting === null,
+    isGatewayReady: () => (gatewayProc !== null || gatewayHttpReadyWithoutProc) && gatewayStarting === null,
     getGatewayProc: () => gatewayProc,
     getRecentLogs: (n = 100) => logBuffer.slice(-Math.min(n, LOG_BUFFER_MAX)),
   };

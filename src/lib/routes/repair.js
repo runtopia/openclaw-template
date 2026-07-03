@@ -171,8 +171,10 @@ async function executeTool(name, args, ctx) {
       return `exit=${r.code}\n${r.output}`;
     }
     case "restart_gateway":
-      await restartGateway({ waitReady: false });
-      gatewayRpc?.restart();
+      {
+        const result = await restartGateway({ waitReady: false });
+        if (!result?.coalesced) gatewayRpc?.restart();
+      }
       return "已触发 gateway 重启，正在后台启动（不等待就绪）。请随后调用 get_status 查看是否就绪、read_logs 查看启动日志后再下结论，不要假设它已经起来。";
     case "patch_config": {
       patchConfig(configFilePath(), (cfg) => setIn(cfg, args.path, args.value));
@@ -258,9 +260,9 @@ export function createRepairRouter({
   // POST /restart
   router.post("/restart", requireRepairAuth, async (_req, res) => {
     try {
-      await restartGateway({ waitReady: false });
-      gatewayRpc?.restart();
-      res.json({ ok: true, pending: true });
+      const result = await restartGateway({ waitReady: false });
+      if (!result?.coalesced) gatewayRpc?.restart();
+      res.json({ ok: true, pending: true, coalesced: !!result?.coalesced });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
     }

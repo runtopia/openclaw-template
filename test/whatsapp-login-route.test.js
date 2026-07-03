@@ -115,3 +115,42 @@ test("whatsapp login waits for gateway rpc and returns qr when startup finishes 
   assert.equal(data.connected, false);
   assert.equal(data.qrDataUrl, "data:image/png;base64,abc");
 });
+
+test("repair restart does not restart gateway rpc again when gateway restart is coalesced", async (t) => {
+  const app = express();
+  app.use(express.json());
+  let rpcRestartCalls = 0;
+  app.use("/repair", createRepairRouter({
+    requireSetupAuth: (_req, _res, next) => next(),
+    instanceSecret: undefined,
+    runCmd: async () => ({ code: 0, output: "" }),
+    clawArgs: (args) => args,
+    OPENCLAW_NODE: "node",
+    restartGateway: async () => ({ ok: true, pending: true, coalesced: true }),
+    configFilePath: () => "/tmp/missing-openclaw.json",
+    stateDir: "/tmp",
+    gatewayManager: {
+      isGatewayReady: () => false,
+      isGatewayStarting: () => true,
+      ensureGatewayRunning: async () => ({ ok: true }),
+      getRecentLogs: () => [],
+    },
+    getRepairAiKey: () => null,
+    gatewayRpc: {
+      restart() {
+        rpcRestartCalls += 1;
+      },
+    },
+  }));
+
+  const server = await listen(app);
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const res = await fetch(`http://127.0.0.1:${port}/repair/restart`, { method: "POST" });
+  const data = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(data.ok, true);
+  assert.equal(rpcRestartCalls, 0);
+});

@@ -15,6 +15,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
 
   let gatewayProc = null;
   let gatewayStarting = null;
+  let gatewayRestarting = null;
   let intentionalStop = false;   // true 表示本次退出是主动 stop/restart，exit handler 不自愈
   let consecutiveCrashes = 0;    // 连续意外崩溃次数：用于退避，到达上限后暂停自动重启
   let crashRestartTimer = null;  // pending 的自愈定时器句柄
@@ -132,34 +133,48 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
   }
 
   async function restartGateway({ waitReady = true } = {}) {
-    if (crashRestartTimer) { clearTimeout(crashRestartTimer); crashRestartTimer = null; }
-    if (gatewayProc) {
-      const proc = gatewayProc;
-      intentionalStop = true; // 主动重启：exit handler 跳过自愈，由本函数负责拉起
-      gatewayProc = null; // 先清引用，防止 exit handler 重复触发
-      await new Promise((resolve) => {
-        // SIGKILL 兜底：5s 后若仍未退出则强杀
-        const forceKill = setTimeout(() => {
-          try { proc.kill("SIGKILL"); } catch {}
-          resolve();
-        }, 5000);
-        proc.once("exit", () => {
-          clearTimeout(forceKill);
-          resolve();
-        });
-        try { proc.kill("SIGTERM"); } catch { clearTimeout(forceKill); resolve(); }
-      });
+    if (gatewayRestarting) {
+      if (!waitReady) return { ok: true, pending: true, coalesced: true };
+      await gatewayRestarting;
+      return { ok: true, coalesced: true };
     }
+    if (gatewayStarting) {
+      if (!waitReady) return { ok: true, pending: true, coalesced: true };
+      await gatewayStarting;
+      return { ok: true, coalesced: true };
+    }
+    gatewayRestarting = (async () => {
+      if (crashRestartTimer) { clearTimeout(crashRestartTimer); crashRestartTimer = null; }
+      if (gatewayProc) {
+        const proc = gatewayProc;
+        intentionalStop = true; // 主动重启：exit handler 跳过自愈，由本函数负责拉起
+        gatewayProc = null; // 先清引用，防止 exit handler 重复触发
+        await new Promise((resolve) => {
+          // SIGKILL 兜底：5s 后若仍未退出则强杀
+          const forceKill = setTimeout(() => {
+            try { proc.kill("SIGKILL"); } catch {}
+            resolve();
+          }, 5000);
+          proc.once("exit", () => {
+            clearTimeout(forceKill);
+            resolve();
+          });
+          try { proc.kill("SIGTERM"); } catch { clearTimeout(forceKill); resolve(); }
+        });
+      }
+      return ensureGatewayRunning();
+    })().finally(() => { gatewayRestarting = null; });
+
     if (!waitReady) {
       // 触发后台启动但不等待就绪。修复助手必须立即拿回控制权——否则当
       // gateway 起不来时（正是用户求助修复助手的场景），这里会阻塞最长
       // 60s 再抛错，把聊天卡死并以错误中断。调用方随后用 isGatewayReady /
       // getRecentLogs（即 AI 的 get_status / read_logs 工具）观察新进程。
-      ensureGatewayRunning().catch((err) =>
+      gatewayRestarting.catch((err) =>
         console.error(`[gateway] background restart did not become ready: ${err.message}`));
       return { ok: true, pending: true };
     }
-    return ensureGatewayRunning();
+    return gatewayRestarting;
   }
 
   function stopGateway() {

@@ -1,4 +1,4 @@
-// sidecar.js — PID 1 进程
+// index.js — PID 1 进程
 //
 // 职责：
 //   1. 启动时通过 env 变量写好 openclaw.json（纯 env 驱动，无 setup 向导）
@@ -18,7 +18,6 @@ import os from "node:os";
 import path from "node:path";
 
 import express from "express";
-import httpProxy from "http-proxy";
 
 import { createGatewayManager } from "./gateway/manager.js";
 import { createGatewayRpc } from "./gateway/rpc.js";
@@ -30,11 +29,13 @@ import { applyRuntimeDefaults, generateConfigDirect } from "./config/generate.js
 import { patchConfig, setIn } from "./config/edit.js";
 import { reconcileAllChannels } from "./channels/manifest.js";
 import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./config/plugins.js";
+import { createAuth } from "./proxy/auth.js";
+import { createReverseProxy } from "./proxy/reverse-proxy.js";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
 const PORT = Number(process.env.PORT ?? 8080);                           // 对外端口（Railway $PORT）
-const GATEWAY_PORT = Number(process.env.INTERNAL_GATEWAY_PORT ?? 18789); // openclaw 내部端口
+const GATEWAY_PORT = Number(process.env.INTERNAL_GATEWAY_PORT ?? 18789); // openclaw 내부端口
 const GATEWAY_HOST = "127.0.0.1";
 // 反代到 gateway 的超时（毫秒）。chat/responses 跑完整 agent 推理可能耗时数分钟，
 // 默认 10 分钟，可用 PROXY_TIMEOUT_MS 调整。
@@ -77,6 +78,22 @@ function resolveGatewayToken() {
 
 const GATEWAY_TOKEN = resolveGatewayToken();
 process.env.OPENCLAW_GATEWAY_TOKEN = GATEWAY_TOKEN;
+
+// ── 鉴权 + 反向代理模块 ───────────────────────────────────────────────────────
+
+const { isAuthed, requireAuthPage, requireAuthApi, signSession, AUTH_COOKIE } = createAuth({
+  SETUP_PASSWORD,
+  ONECLAW_INSTANCE_SECRET,
+  GATEWAY_TOKEN,
+  PORT,
+});
+
+const { proxy, stripForwardedHeaders } = createReverseProxy({
+  GATEWAY_HOST,
+  GATEWAY_PORT,
+  GATEWAY_TOKEN,
+  PROXY_TIMEOUT_MS,
+});
 
 // ── 辅助 ──────────────────────────────────────────────────────────────────────
 
@@ -240,82 +257,6 @@ app.disable("x-powered-by");
 // json 解析只挂在真正读取 req.body 的路由上（见下方 /setup、/repair、/skills）。
 const jsonParser = express.json({ limit: "1mb" });
 
-// ── 认证：cookie 会话 + Bearer(ONECLAW_INSTANCE_SECRET) ─────────────────────────
-//
-// 为什么不用 Basic Auth：浏览器对 401+WWW-Authenticate 会弹原生登录框，而
-// Control UI 是 SPA，它的 fetch/XHR/WebSocket 子请求不带 Basic 凭据 → 反复弹窗。
-// 改用签名 cookie：登录一次种 cookie，之后所有同源请求（含 WebSocket）自动携带，
-// 未登录则 302 跳 /login 页面（不弹窗）。
-// 自动化/修复助手可用 Authorization: Bearer <ONECLAW_INSTANCE_SECRET> 访问。
-
-const AUTH_COOKIE = "ocsess";
-const COOKIE_SECRET = crypto.createHash("sha256")
-  .update(`${SETUP_PASSWORD || ""}:${GATEWAY_TOKEN}`).digest("hex");
-
-function signSession() {
-  const payload = String(Date.now());
-  const sig = crypto.createHmac("sha256", COOKIE_SECRET).update(payload).digest("hex");
-  return `${payload}.${sig}`;
-}
-function verifySession(value) {
-  if (!value || !value.includes(".")) return false;
-  const idx = value.lastIndexOf(".");
-  const payload = value.slice(0, idx);
-  const sig = value.slice(idx + 1);
-  const expected = crypto.createHmac("sha256", COOKIE_SECRET).update(payload).digest("hex");
-  try {
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-  } catch { return false; }
-}
-function parseCookies(req) {
-  const out = {};
-  for (const part of (req.headers.cookie || "").split(";")) {
-    const i = part.indexOf("=");
-    if (i > -1) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
-  }
-  return out;
-}
-function bearerMatchesSecret(req) {
-  if (!ONECLAW_INSTANCE_SECRET) return false;
-  const auth = req.headers.authorization || "";
-  if (!auth.startsWith("Bearer ")) return false;
-  const tok = auth.slice(7).trim();
-  try {
-    return tok.length > 0 && crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(ONECLAW_INSTANCE_SECRET));
-  } catch { return false; }
-}
-// URL query 里的 ?token=<GATEWAY_TOKEN> 也是有效凭据。
-// 浏览器 WebSocket 握手无法自定义 Authorization 头，且跨站/自写客户端不带 cookie，
-// 此时 URL query token 是唯一可行的鉴权通道（Control UI 前端本就把 token 放进 WS URL）。
-// token 即 gateway 的有效凭据，强度等价于 Bearer secret。
-function queryTokenMatchesGateway(req) {
-  let tok = "";
-  try {
-    tok = new URL(req.url, "http://internal").searchParams.get("token") || "";
-  } catch { return false; }
-  if (!tok || !GATEWAY_TOKEN) return false;
-  try {
-    return crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(GATEWAY_TOKEN));
-  } catch { return false; }
-}
-function isAuthed(req) {
-  // 本地开发：未设密码也未设 secret → 放行
-  if (!SETUP_PASSWORD && !ONECLAW_INSTANCE_SECRET) return true;
-  if (bearerMatchesSecret(req)) return true;
-  if (queryTokenMatchesGateway(req)) return true;
-  return verifySession(parseCookies(req)[AUTH_COOKIE]);
-}
-// 页面请求：未登录 302 跳 /login（不弹窗）
-function requireAuthPage(req, res, next) {
-  if (isAuthed(req)) return next();
-  return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
-}
-// API 请求：未登录返回 401 JSON（不带 WWW-Authenticate，不弹窗）
-function requireAuthApi(req, res, next) {
-  if (isAuthed(req)) return next();
-  return res.status(401).json({ ok: false, error: "unauthorized" });
-}
-
 // ── 路由 ──────────────────────────────────────────────────────────────────────
 
 // 健康检查（无需认证）——即使 openclaw 挂了也返回 200
@@ -374,59 +315,6 @@ app.get("/", (req, res) => {
 });
 
 // ── 反向代理到 openclaw gateway ───────────────────────────────────────────────
-// gateway 鉴权通过注入 Authorization: Bearer 头完成（token 永不进 URL）。
-// Origin 改写成 gateway 自身地址，满足 gateway.controlUi.allowedOrigins 校验。
-// 这是经过验证的方式（参考原 server.js + CLAUDE.md quirk #6）。
-const GATEWAY_ORIGIN = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
-const proxy = httpProxy.createProxyServer({
-  target: GATEWAY_ORIGIN,
-  ws: true,
-  xfwd: false,            // 关键：不要加 X-Forwarded-*（见 stripForwardedHeaders 说明）
-  changeOrigin: true,
-  // chat completions / responses 会触发完整 agent 推理（数十秒~数分钟），
-  // 默认无 proxyTimeout 时上游慢响应会被提前断开 → proxy.on("error") → 502
-  // "gateway unavailable"。放宽到 PROXY_TIMEOUT_MS（默认 10 分钟）。
-  proxyTimeout: PROXY_TIMEOUT_MS,
-  timeout: PROXY_TIMEOUT_MS,
-});
-
-// gateway 的 isLocalDirectRequest() 只要看到任何 X-Forwarded-* / Forwarded / X-Real-IP
-// 头，就判定 isLocalClient=false，进而拒绝 Control UI 的 allowInsecureAuth +
-// dangerouslyDisableDeviceAuth bypass，强制 device pairing（浏览器报 "pairing required:
-// device is not approved yet"）。自写 WS 客户端只用受限 scope、不申请 operator，所以不受影响。
-// sidecar 是 gateway（bind=loopback）唯一的可信前置代理，且已在本层做 cookie/token 鉴权，
-// 因此剥离这些转发头、让 gateway 把连接视为本地直连，是安全且必要的。
-const FORWARDED_HEADERS = ["forwarded", "x-real-ip", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port"];
-function stripForwardedHeaders(headers) {
-  if (!headers) return;
-  for (const key of Object.keys(headers)) {
-    const k = key.toLowerCase();
-    if (k === "forwarded" || k === "x-real-ip" || k.startsWith("x-forwarded-")) delete headers[key];
-  }
-}
-function dropForwardedOnProxyReq(proxyReq) {
-  for (const h of FORWARDED_HEADERS) proxyReq.removeHeader(h);
-}
-
-proxy.on("proxyReq", (proxyReq) => {
-  dropForwardedOnProxyReq(proxyReq);
-  proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
-  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
-});
-// WebSocket upgrade: inject the same Bearer token + strip forwarded headers so
-// the gateway treats the proxied client as a trusted local connection (and each
-// frontend client gets its own gateway connect handshake / subscriptions).
-proxy.on("proxyReqWs", (proxyReq) => {
-  dropForwardedOnProxyReq(proxyReq);
-  proxyReq.setHeader("Authorization", `Bearer ${GATEWAY_TOKEN}`);
-  proxyReq.setHeader("Origin", GATEWAY_ORIGIN);
-});
-proxy.on("error", (err, _req, res) => {
-  console.error("[proxy]", err.message);
-  if (res && !res.headersSent && typeof res.writeHead === "function") {
-    res.writeHead(502).end("gateway unavailable");
-  }
-});
 
 app.use((req, res) => {
   // /openclaw* 需要登录会话（cookie）或 Bearer secret，未登录跳 /login

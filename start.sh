@@ -28,9 +28,9 @@ if [ "$(id -u)" = "0" ]; then
   chown -R openclaw:openclaw /data
   mkdir -p "$STATE_DIR" "$WORKSPACE_DIR"
   chown -R openclaw:openclaw "$STATE_DIR" "$WORKSPACE_DIR"
-  exec gosu openclaw node /app/src/sidecar.js
+  exec gosu openclaw node /app/src/index.js
 fi
 
 # 本地开发（非 root）
 mkdir -p "$STATE_DIR" "$WORKSPACE_DIR"
-exec node src/sidecar.js
+exec node src/index.js

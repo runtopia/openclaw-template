@@ -2,16 +2,16 @@
 # OpenClaw startup script.
 #
 # 架构：
-#   PID 1: node src/sidecar.js
-#     ├─ 启动时写好 openclaw.json（幂等）
+#   PID 1: node src/index.js
+#     ├─ 启动时写好 openclaw.json（幂等，env 驱动，无 setup 向导）
 #     ├─ spawn openclaw gateway run（子进程，内部端口 18789）
 #     ├─ 对外监听 $PORT，/health + /repair/* + 反代其他请求到 gateway
 #     └─ gateway 崩溃自愈；修复助手不受影响
 #
-# Railway healthcheck 打 /health，sidecar 存活即 200，不依赖 gateway。
+# Railway healthcheck 打 /health，wrapper 存活即 200，不依赖 gateway。
 set -e
 
-# 必须 export：sidecar.js 读 process.env.OPENCLAW_STATE_DIR，未导出则回退到
+# 必须 export：index.js 读 process.env.OPENCLAW_STATE_DIR，未导出则回退到
 # os.homedir()/.openclaw（容器临时层，非 /data volume），重新部署即丢数据。
 export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
 export OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/data/workspace}"

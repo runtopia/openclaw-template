@@ -1,111 +1,33 @@
-// Direct openclaw.json generator — zero-subprocess alternative to `openclaw onboard`.
+// Unified openclaw.json config generator — zero-subprocess alternative to
+// `openclaw onboard`.
 //
 // 完全在进程内生成配置，不调用任何 CLI 子进程（原 onboard 耗时 30-60s）。
 // 配置结构遵循官方文档最佳实践：docs.openclaw.ai
+//
+// Also re-exports the shared helpers from runtime-defaults.js so callers
+// that previously imported from direct-config.js or auto-config.js can
+// switch to this single entry point.
 
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePreinstalledPluginPaths } from "../config/plugins.js";
+import { resolvePreinstalledPluginPaths } from "./plugins.js";
+import {
+  resolveClawroutersApiBaseUrl,
+  buildClawroutersMemorySearch,
+  applyRuntimeDefaults,
+} from "./runtime-defaults.js";
+
+// Re-export the runtime-defaults public API so the combined public surface
+// of this module is unchanged relative to the old direct-config.js.
+export { resolveClawroutersApiBaseUrl, buildClawroutersMemorySearch, applyRuntimeDefaults };
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();
   return s === "1" || s === "true" || s === "yes" || s === "on";
 }
 
-export function resolveClawroutersApiBaseUrl(env = process.env) {
-  const raw = (env.CLAWROUTERS_BASE_URL || "https://www.clawrouters.com").trim();
-  const base = raw.replace(/\/+$/, "");
-  return base.endsWith("/api/v1") ? base : `${base}/api/v1`;
-}
-
 const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" };
-const CLAWROUTERS_EMBEDDING_MODEL = "auto";
 const DEFAULT_HEARTBEAT = { every: "2h", target: "last" };
-
-function hasClawroutersKey(env = process.env) {
-  return Boolean((env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim());
-}
-
-function jsonEqual(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function ensureObject(parent, key) {
-  if (!parent[key] || typeof parent[key] !== "object" || Array.isArray(parent[key])) {
-    parent[key] = {};
-  }
-  return parent[key];
-}
-
-function setJsonValue(parent, key, value) {
-  if (jsonEqual(parent[key], value)) return false;
-  parent[key] = value;
-  return true;
-}
-
-export function buildClawroutersMemorySearch(env = process.env) {
-  return {
-    enabled: true,
-    sources: ["memory", "sessions"],
-    provider: "clawrouters",
-    model: CLAWROUTERS_EMBEDDING_MODEL,
-    remote: {
-      // OpenClaw appends /embeddings internally, so keep this at the /api/v1 base.
-      baseUrl: resolveClawroutersApiBaseUrl(env),
-      apiKey: CLAWROUTERS_API_KEY_REF,
-    },
-  };
-}
-
-function applyClawroutersMemorySearch(defaults, env) {
-  const memorySearch = ensureObject(defaults, "memorySearch");
-  const desired = buildClawroutersMemorySearch(env);
-  let changed = false;
-  changed = setJsonValue(memorySearch, "enabled", desired.enabled) || changed;
-  changed = setJsonValue(memorySearch, "sources", desired.sources) || changed;
-  changed = setJsonValue(memorySearch, "provider", desired.provider) || changed;
-  changed = setJsonValue(memorySearch, "model", desired.model) || changed;
-  const remote = ensureObject(memorySearch, "remote");
-  changed = setJsonValue(remote, "baseUrl", desired.remote.baseUrl) || changed;
-  changed = setJsonValue(remote, "apiKey", desired.remote.apiKey) || changed;
-  return changed;
-}
-
-export function applyRuntimeDefaults(cfg, env = process.env) {
-  if (!cfg || typeof cfg !== "object") return false;
-  let changed = false;
-
-  const agents = ensureObject(cfg, "agents");
-  const defaults = ensureObject(agents, "defaults");
-  changed = setJsonValue(defaults, "heartbeat", DEFAULT_HEARTBEAT) || changed;
-
-  const hasKey = hasClawroutersKey(env);
-  const provider = cfg?.models?.providers?.clawrouters;
-  const memorySearch = cfg?.agents?.defaults?.memorySearch;
-  const usesClawroutersMemory = memorySearch?.provider === "clawrouters";
-
-  if (hasKey) {
-    const models = ensureObject(cfg, "models");
-    if (!models.mode) {
-      models.mode = "merge";
-      changed = true;
-    }
-    const providers = ensureObject(models, "providers");
-    changed = setJsonValue(providers, "clawrouters", providerClawrouters(env)) || changed;
-  } else if (env.CLAWROUTERS_BASE_URL?.trim() && provider) {
-    const nextBaseUrl = resolveClawroutersApiBaseUrl(env);
-    if (provider.baseUrl !== nextBaseUrl) {
-      provider.baseUrl = nextBaseUrl;
-      changed = true;
-    }
-  }
-
-  if (hasKey || usesClawroutersMemory) {
-    changed = applyClawroutersMemorySearch(defaults, env) || changed;
-  }
-
-  return changed;
-}
 
 export function patchClawroutersProviderBaseUrl(cfg, env = process.env) {
   return applyRuntimeDefaults(cfg, env);
@@ -376,6 +298,100 @@ export function generateConfigDirect(opts) {
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
-  console.log(`[direct-config] openclaw.json written (provider=${provider?.id ?? "none"})`);
+  console.log(`[generate] openclaw.json written (provider=${provider?.id ?? "none"})`);
   return cfg;
+}
+
+// ── Auth / onboard helpers (migrated from auto-config.js) ────────────────────
+// These were used by the setup-wizard path; kept here so the test suite and
+// any future callers have a single config import.
+
+export function hasAutoConfigEnvVars(env = process.env) {
+  const keys = [
+    env.ANTHROPIC_API_KEY,
+    env.OPENAI_API_KEY,
+    env.GOOGLE_GENERATIVE_AI_API_KEY,
+    env.DEEPSEEK_API_KEY,
+    env.OPENROUTER_API_KEY,
+    env.CLAWROUTERS_KEY,
+    env.CLAWROUTERS_API_KEY,
+  ];
+  return keys.some((k) => !!k?.trim());
+}
+
+export function buildOnboardArgs(payload) {
+  const args = [
+    "onboard", "--non-interactive", "--accept-risk", "--json",
+    "--no-install-daemon", "--skip-health", "--skip-skills", "--skip-channels",
+    "--workspace", payload.workspaceDir,
+    "--gateway-bind", "loopback",
+    "--gateway-port", String(payload.internalGatewayPort),
+    "--gateway-auth", "token",
+    "--gateway-token", payload.gatewayToken,
+    "--flow", payload.flow || "quickstart",
+  ];
+
+  if (!payload.authChoice) return args;
+
+  if (payload.authChoice === "custom-api-key") {
+    // 走 OpenClaw 原生 custom-api-key 路径，避免 openai-api-key 兜底导致
+    // onboard 把 default model 设成 openai/gpt-5.5 -> 强制安装 @openclaw/codex。
+    args.push("--auth-choice", "custom-api-key");
+    if (payload.customBaseUrl) args.push("--custom-base-url", payload.customBaseUrl);
+    const secret = (payload.authSecret || "").trim();
+    if (secret) args.push("--custom-api-key", secret);
+    args.push("--custom-compatibility", payload.customCompatibility || "openai");
+    if (payload.customModelId) args.push("--custom-model-id", payload.customModelId);
+    if (payload.customProviderId) args.push("--custom-provider-id", payload.customProviderId);
+    args.push(payload.customVision ? "--custom-image-input" : "--custom-text-input");
+    return args;
+  }
+
+  args.push("--auth-choice", payload.authChoice);
+  const secret = (payload.authSecret || "").trim();
+  const map = {
+    "openai-api-key": "--openai-api-key",
+    apiKey: "--anthropic-api-key",
+    "openrouter-api-key": "--openrouter-api-key",
+    "ai-gateway-api-key": "--ai-gateway-api-key",
+    "moonshot-api-key": "--moonshot-api-key",
+    "kimi-code-api-key": "--kimi-code-api-key",
+    "gemini-api-key": "--gemini-api-key",
+    "zai-api-key": "--zai-api-key",
+    "minimax-api": "--minimax-api-key",
+    "minimax-api-lightning": "--minimax-api-key",
+    "synthetic-api-key": "--synthetic-api-key",
+    "opencode-zen": "--opencode-zen-api-key",
+  };
+  const flag = map[payload.authChoice];
+  if (flag && secret) args.push(flag, secret);
+  if (payload.authChoice === "token" && secret) {
+    args.push("--token-provider", "anthropic", "--token", secret);
+  }
+  return args;
+}
+
+export function resolveAuth(env) {
+  if (env.ANTHROPIC_API_KEY?.trim())
+    return { authChoice: "apiKey", authSecret: env.ANTHROPIC_API_KEY.trim() };
+  if (env.OPENAI_API_KEY?.trim())
+    return { authChoice: "openai-api-key", authSecret: env.OPENAI_API_KEY.trim() };
+  if (env.GOOGLE_GENERATIVE_AI_API_KEY?.trim())
+    return { authChoice: "gemini-api-key", authSecret: env.GOOGLE_GENERATIVE_AI_API_KEY.trim() };
+  if (env.DEEPSEEK_API_KEY?.trim())
+    return { authChoice: "openai-api-key", authSecret: env.DEEPSEEK_API_KEY.trim() };
+  if (env.OPENROUTER_API_KEY?.trim())
+    return { authChoice: "openrouter-api-key", authSecret: env.OPENROUTER_API_KEY.trim() };
+  if ((env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim()) {
+    return {
+      authChoice: "custom-api-key",
+      authSecret: (env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY).trim(),
+      customBaseUrl: resolveClawroutersApiBaseUrl(env),
+      customModelId: "auto",
+      customProviderId: "clawrouters",
+      customCompatibility: "openai",
+      customVision: true,
+    };
+  }
+  return {};
 }

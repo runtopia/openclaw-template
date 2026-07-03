@@ -26,7 +26,7 @@ import { createOneclawIntegration } from "./integration/oneclaw.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
 import { createSkillsRouter } from "./skills/router.js";
 import { readEnvProviderKey, readDefaultProviderKey } from "./repair/ai-key.js";
-import { applyRuntimeDefaults, generateConfigDirect } from "./lib/direct-config.js";
+import { applyRuntimeDefaults, generateConfigDirect } from "./config/generate.js";
 import { patchConfig, setIn } from "./config/edit.js";
 import { reconcileAllChannels } from "./channels/manifest.js";
 import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./config/plugins.js";

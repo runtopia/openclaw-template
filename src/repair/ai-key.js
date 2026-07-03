@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { resolveClawroutersApiBaseUrl } from "../lib/direct-config.js";
+import { resolveClawroutersApiBaseUrl } from "../config/generate.js";
 
 // 标准 provider 的 env key 和 baseUrl 映射
 const PROVIDER_ENV_MAP = {

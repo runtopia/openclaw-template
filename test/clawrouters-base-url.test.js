@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildOnboardArgs, resolveAuth } from "../src/lib/auto-config.js";
 import {
+  buildOnboardArgs,
+  resolveAuth,
   applyRuntimeDefaults,
   generateConfigDirect,
   patchClawroutersProviderBaseUrl,
   resolveClawroutersApiBaseUrl,
-} from "../src/lib/direct-config.js";
+} from "../src/config/generate.js";
 import { readEnvProviderKey } from "../src/repair/ai-key.js";
 
 test("CLAWROUTERS_BASE_URL origin is normalized to /api/v1", () => {

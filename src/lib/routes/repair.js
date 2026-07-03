@@ -303,9 +303,32 @@ export function createRepairRouter({
   // dashboard can fetch it via plain HTTP.
   //   POST /whatsapp-login/start → { qrDataUrl, connected, message }
   //   POST /whatsapp-login/wait  → { qrDataUrl, connected, message }  (pass currentQrDataUrl in body)
+  function sendWhatsAppLoginPreparing(res, message = "WhatsApp gateway is starting. Retrying shortly.") {
+    return res.status(202).json({ ok: true, qrDataUrl: null, connected: false, message });
+  }
+
+  function startGatewayInBackground() {
+    gatewayManager?.ensureGatewayRunning?.()
+      .then(() => gatewayRpc?.start?.())
+      .catch((err) => console.error(`[whatsapp-login] gateway warmup failed: ${err?.message || err}`));
+  }
+
   async function whatsappLoginRpc(res, method, params) {
     if (!gatewayRpc) return res.status(503).json({ ok: false, error: "gateway rpc unavailable" });
     try {
+      if (gatewayManager && !gatewayManager.isGatewayReady?.()) {
+        startGatewayInBackground();
+        return sendWhatsAppLoginPreparing(res);
+      }
+      gatewayRpc.start?.();
+      if (typeof gatewayRpc.waitUntilConnected === "function") {
+        try {
+          await gatewayRpc.waitUntilConnected(3_000);
+        } catch {
+          startGatewayInBackground();
+          return sendWhatsAppLoginPreparing(res);
+        }
+      }
       const frame = await gatewayRpc.rpcGateway(method, params);
       // frame: { ok, payload: { qrDataUrl?, connected?, message? } }
       const p = frame.payload || {};

@@ -30,6 +30,17 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
   let reconnectAttempt = 0;
   let reconnectTimer = null;
   let intentionalClose = false;
+  const connectWaiters = new Set();
+
+  function resolveConnectWaiters() {
+    for (const waiter of connectWaiters) waiter.resolve();
+    connectWaiters.clear();
+  }
+
+  function rejectConnectWaiters(err) {
+    for (const waiter of connectWaiters) waiter.reject(err);
+    connectWaiters.clear();
+  }
 
   function connectToGateway() {
     if (gatewayWs) {
@@ -77,6 +88,7 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
             gatewayConnected = true;
             reconnectAttempt = 0;
             console.log("[gateway-rpc] handshake completed");
+            resolveConnectWaiters();
           } else {
             console.error(`[gateway-rpc] handshake failed: ${JSON.stringify(frame.error)}`);
             gatewayConnected = false;
@@ -160,6 +172,30 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
 
   function start() { connectToGateway(); }
 
+  function waitUntilConnected(timeoutMs = 10_000) {
+    if (gatewayWs && gatewayWs.readyState === WebSocket.OPEN && gatewayConnected) {
+      return Promise.resolve();
+    }
+    connectToGateway();
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      };
+      const timer = setTimeout(() => {
+        connectWaiters.delete(waiter);
+        reject(new Error("gateway WS not connected"));
+      }, timeoutMs);
+      connectWaiters.add(waiter);
+    });
+  }
+
   function restart() {
     intentionalClose = true;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -174,6 +210,7 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (gatewayWs) { gatewayWs.removeAllListeners(); gatewayWs.close(); gatewayWs = null; }
     gatewayConnected = false; connectNonce = null; hubHandshakeId = null;
+    rejectConnectWaiters(new Error("gateway RPC closing"));
     for (const { resolve } of selfPending.values()) {
       resolve({ ok: false, error: { code: "disconnected", message: "closing" } });
     }
@@ -185,6 +222,7 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
     restart,
     close,
     isGatewayConnected: () => gatewayConnected,
+    waitUntilConnected,
     rpcGateway,
   };
 }

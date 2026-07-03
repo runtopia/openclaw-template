@@ -18,3 +18,6 @@ npm-debug.log*
 .serena/
 .tmpdata/
 .vercel
+
+# npm lockfile 不用（本项目用 pnpm）
+package-lock.json

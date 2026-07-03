@@ -7,7 +7,7 @@ import test from "node:test";
 
 import express from "express";
 
-import { createRepairRouter } from "../src/lib/routes/repair.js";
+import { createRepairRouter } from "../src/repair/router.js";
 
 function listen(app) {
   const server = http.createServer(app);

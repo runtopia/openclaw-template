@@ -23,7 +23,7 @@ import httpProxy from "http-proxy";
 import { createGatewayManager } from "./gateway/manager.js";
 import { createGatewayRpc } from "./gateway/rpc.js";
 import { createOneclawIntegration } from "./integration/oneclaw.js";
-import { createRepairRouter } from "./lib/routes/repair.js";
+import { createRepairRouter } from "./repair/router.js";
 import { createSkillsRouter } from "./skills/router.js";
 import { readEnvProviderKey, readDefaultProviderKey } from "./repair/ai-key.js";
 import { applyRuntimeDefaults, generateConfigDirect } from "./config/generate.js";

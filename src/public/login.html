@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🦞 OpenClaw 登录</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #0a0a0f; color: #e5e7eb;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+    .card {
+      width: 100%; max-width: 360px; background: #15151f;
+      border: 1px solid #262630; border-radius: 16px; padding: 32px;
+    }
+    .logo { text-align: center; font-size: 48px; margin-bottom: 8px; }
+    h1 { text-align: center; font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+    p.sub { text-align: center; font-size: 13px; color: #9ca3af; margin-bottom: 24px; }
+    label { display: block; font-size: 13px; color: #d1d5db; margin-bottom: 6px; }
+    input {
+      width: 100%; background: #1f1f2b; border: 1px solid #33333f; border-radius: 8px;
+      padding: 10px 12px; font-size: 14px; color: #fff; outline: none;
+    }
+    input:focus { border-color: #3b82f6; }
+    button {
+      width: 100%; margin-top: 20px; background: #2563eb; color: #fff; border: none;
+      border-radius: 8px; padding: 11px; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    button:hover { background: #3b82f6; }
+    .err { margin-top: 14px; font-size: 13px; color: #f87171; text-align: center; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🦞</div>
+    <h1>OpenClaw</h1>
+    <p class="sub">请输入访问密码</p>
+    <form method="POST" action="/login">
+      <input type="hidden" name="next" id="next" />
+      <label for="password">密码</label>
+      <input type="password" name="password" id="password" autofocus autocomplete="current-password" />
+      <button type="submit">登录</button>
+    </form>
+    <div class="err" id="err"></div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    document.getElementById('next').value = params.get('next') || '/openclaw';
+    if (params.get('error')) document.getElementById('err').textContent = '密码错误';
+  </script>
+</body>
+</html>

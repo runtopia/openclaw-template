@@ -303,6 +303,8 @@ export function createRepairRouter({
   // dashboard can fetch it via plain HTTP.
   //   POST /whatsapp-login/start → { qrDataUrl, connected, message }
   //   POST /whatsapp-login/wait  → { qrDataUrl, connected, message }  (pass currentQrDataUrl in body)
+  const WHATSAPP_GATEWAY_RPC_WAIT_MS = 10_000;
+
   function sendWhatsAppLoginPreparing(res, message = "WhatsApp gateway is starting. Retrying shortly.") {
     return res.status(202).json({ ok: true, qrDataUrl: null, connected: false, message });
   }
@@ -323,7 +325,7 @@ export function createRepairRouter({
       gatewayRpc.start?.();
       if (typeof gatewayRpc.waitUntilConnected === "function") {
         try {
-          await gatewayRpc.waitUntilConnected(3_000);
+          await gatewayRpc.waitUntilConnected(WHATSAPP_GATEWAY_RPC_WAIT_MS);
         } catch {
           startGatewayInBackground();
           return sendWhatsAppLoginPreparing(res);

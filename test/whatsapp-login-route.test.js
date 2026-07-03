@@ -60,3 +60,58 @@ test("whatsapp login start returns preparing while gateway is warming up", async
   assert.equal(data.connected, false);
   assert.equal(data.qrDataUrl, null);
 });
+
+test("whatsapp login waits for gateway rpc and returns qr when startup finishes quickly", async (t) => {
+  const app = express();
+  app.use(express.json());
+  let waitCalled = false;
+  let rpcCalled = false;
+  app.use("/repair", createRepairRouter({
+    requireSetupAuth: (_req, _res, next) => next(),
+    instanceSecret: undefined,
+    runCmd: async () => ({ code: 0, output: "" }),
+    clawArgs: (args) => args,
+    OPENCLAW_NODE: "node",
+    restartGateway: async () => ({ ok: true }),
+    configFilePath: () => "/tmp/missing-openclaw.json",
+    stateDir: "/tmp",
+    gatewayManager: {
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      ensureGatewayRunning: async () => ({ ok: true }),
+      getRecentLogs: () => [],
+    },
+    getRepairAiKey: () => null,
+    gatewayRpc: {
+      start() {},
+      waitUntilConnected: async () => {
+        waitCalled = true;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      },
+      rpcGateway: async (method, params) => {
+        rpcCalled = true;
+        assert.equal(method, "web.login.start");
+        assert.equal(params.accountId, "emp1");
+        return { ok: true, payload: { qrDataUrl: "data:image/png;base64,abc", connected: false } };
+      },
+    },
+  }));
+
+  const server = await listen(app);
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const res = await fetch(`http://127.0.0.1:${port}/repair/whatsapp-login/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: "emp1" }),
+  });
+  const data = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(waitCalled, true);
+  assert.equal(rpcCalled, true);
+  assert.equal(data.ok, true);
+  assert.equal(data.connected, false);
+  assert.equal(data.qrDataUrl, "data:image/png;base64,abc");
+});

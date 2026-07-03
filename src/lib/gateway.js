@@ -24,7 +24,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     return new Promise((r) => setTimeout(r, ms));
   }
 
-  async function waitForGatewayReady(opts = {}) {
+  async function waitForGatewayHttpReady(opts = {}) {
     const timeoutMs = opts.timeoutMs ?? 60_000;
     const start = Date.now();
     const endpoints = ["/openclaw", "/", "/health"];
@@ -32,7 +32,10 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
       for (const endpoint of endpoints) {
         try {
           const res = await fetch(`${GATEWAY_TARGET}${endpoint}`, { method: "GET" });
-          if (res) { console.log(`[gateway] ready at ${endpoint}`); return true; }
+          if (res) {
+            console.log(`[gateway] http listening at ${endpoint} status=${res.status}`);
+            return true;
+          }
         } catch (err) {
           if (err.code !== "ECONNREFUSED" && err.cause?.code !== "ECONNREFUSED") {
             const msg = err.code || err.message;
@@ -44,7 +47,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
       }
       await sleep(250);
     }
-    console.error(`[gateway] failed to become ready after ${timeoutMs / 1000}s`);
+    console.error(`[gateway] failed to start HTTP listener after ${timeoutMs / 1000}s`);
     return false;
   }
 
@@ -119,8 +122,8 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     if (!gatewayStarting) {
       gatewayStarting = (async () => {
         await startGateway();
-        const ready = await waitForGatewayReady({ timeoutMs: 60_000 });
-        if (!ready) throw new Error("Gateway did not become ready in time");
+        const ready = await waitForGatewayHttpReady({ timeoutMs: 60_000 });
+        if (!ready) throw new Error("Gateway HTTP listener did not become ready in time");
         consecutiveCrashes = 0; // 成功就绪，重置崩溃计数
       })().finally(() => { gatewayStarting = null; });
     }
@@ -172,6 +175,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     restartGateway,
     stopGateway,
     isGatewayStarting: () => gatewayStarting !== null,
+    isGatewayProcessReady: () => gatewayProc !== null && gatewayStarting === null,
     isGatewayReady: () => gatewayProc !== null && gatewayStarting === null,
     getGatewayProc: () => gatewayProc,
     getRecentLogs: (n = 100) => logBuffer.slice(-Math.min(n, LOG_BUFFER_MAX)),

@@ -29,6 +29,7 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
 
   let reconnectAttempt = 0;
   let reconnectTimer = null;
+  let nextReconnectDelayMs = null;
   let intentionalClose = false;
   const connectWaiters = new Set();
 
@@ -43,6 +44,10 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
   }
 
   function connectToGateway() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (gatewayWs) {
       if (gatewayWs.readyState === WebSocket.OPEN || gatewayWs.readyState === WebSocket.CONNECTING) {
         return;
@@ -92,6 +97,7 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
           } else {
             console.error(`[gateway-rpc] handshake failed: ${JSON.stringify(frame.error)}`);
             gatewayConnected = false;
+            nextReconnectDelayMs = resolveRetryAfterMs(frame.error);
             gatewayWs.close();
           }
           hubHandshakeId = null;
@@ -122,7 +128,7 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
       }
       selfPending.clear();
       if (intentionalClose) { intentionalClose = false; return; }
-      scheduleReconnect();
+      scheduleReconnect(nextReconnectDelayMs ?? resolveCloseRetryAfterMs(code, reason));
     });
 
     gatewayWs.on("error", (err) => {
@@ -146,14 +152,35 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
     }));
   }
 
-  function scheduleReconnect() {
+  function resolveRetryAfterMs(error) {
+    if (!error || typeof error !== "object") return null;
+    const retryable = error.retryable === true || error.details?.reason === "startup-sidecars";
+    if (!retryable) return null;
+    const raw = typeof error.retryAfterMs === "number" ? error.retryAfterMs : 500;
+    if (!Number.isFinite(raw) || raw < 0) return 500;
+    return Math.min(Math.max(raw, 100), 5_000);
+  }
+
+  function resolveCloseRetryAfterMs(code, reason) {
+    const text = reason?.toString?.() || "";
+    if (code === 1013 || /gateway starting|startup-sidecars/i.test(text)) return 500;
+    return null;
+  }
+
+  function scheduleReconnect(delayOverrideMs = null) {
     if (reconnectAttempt >= BACKOFF_MAX_ATTEMPTS) {
       console.error(`[gateway-rpc] max reconnect attempts reached, giving up`);
       return;
     }
-    reconnectAttempt++;
-    const delay = Math.min(BACKOFF_BASE_MS * 2 ** (reconnectAttempt - 1), BACKOFF_CAP_MS);
-    console.log(`[gateway-rpc] reconnecting in ${delay}ms (attempt ${reconnectAttempt})`);
+    const startupDelay = delayOverrideMs ?? nextReconnectDelayMs;
+    nextReconnectDelayMs = null;
+    const isStartupRetry = typeof startupDelay === "number";
+    if (!isStartupRetry) reconnectAttempt++;
+    const delay = isStartupRetry
+      ? startupDelay
+      : Math.min(BACKOFF_BASE_MS * 2 ** (reconnectAttempt - 1), BACKOFF_CAP_MS);
+    const attemptLabel = isStartupRetry ? "startup-retry" : `attempt ${reconnectAttempt}`;
+    console.log(`[gateway-rpc] reconnecting in ${delay}ms (${attemptLabel})`);
     reconnectTimer = setTimeout(() => { reconnectTimer = null; connectToGateway(); }, delay);
   }
 
@@ -200,7 +227,7 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
     intentionalClose = true;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (gatewayWs) { gatewayWs.removeAllListeners(); gatewayWs.close(); gatewayWs = null; }
-    gatewayConnected = false; connectNonce = null; hubHandshakeId = null; reconnectAttempt = 0;
+    gatewayConnected = false; connectNonce = null; hubHandshakeId = null; reconnectAttempt = 0; nextReconnectDelayMs = null;
     intentionalClose = false;
     connectToGateway();
   }
@@ -209,7 +236,7 @@ export function createGatewayRpc({ gatewayHost, gatewayPort, gatewayToken, baseP
     intentionalClose = true;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (gatewayWs) { gatewayWs.removeAllListeners(); gatewayWs.close(); gatewayWs = null; }
-    gatewayConnected = false; connectNonce = null; hubHandshakeId = null;
+    gatewayConnected = false; connectNonce = null; hubHandshakeId = null; nextReconnectDelayMs = null;
     rejectConnectWaiters(new Error("gateway RPC closing"));
     for (const { resolve } of selfPending.values()) {
       resolve({ ok: false, error: { code: "disconnected", message: "closing" } });

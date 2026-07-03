@@ -1,7 +1,7 @@
 // sidecar.js — PID 1 进程
 //
 // 职责：
-//   1. 启动时调用 init-config.js 逻辑写好 openclaw.json
+//   1. 启动时通过 env 变量写好 openclaw.json（纯 env 驱动，无 setup 向导）
 //   2. spawn openclaw gateway run（内部端口 18789，loopback）作为子进程
 //   3. 管理 gateway 生命周期：崩溃自愈、主动重启
 //   4. 对外监听 $PORT，提供：
@@ -344,67 +344,6 @@ app.post("/login", express.urlencoded({ extended: false }), (req, res) => {
   res.redirect(next);
 });
 
-// ── setup 配置页面 ─────────────────────────────────────────────────────────────
-// 密码保护（SETUP_PASSWORD），用于首次配置 API key + 渠道
-
-async function handleSetupConfigure(req, res) {
-  // 用户提交的配置
-  const { apiKey, provider, channels: ch = {} } = req.body || {};
-
-  // 构建 env 对象用于 generateConfigDirect
-  const setupEnv = { ...process.env };
-  if (provider === "clawrouters") setupEnv.CLAWROUTERS_API_KEY = apiKey;
-  else if (provider === "anthropic") setupEnv.ANTHROPIC_API_KEY = apiKey;
-  else if (provider === "openai") setupEnv.OPENAI_API_KEY = apiKey;
-  else if (provider === "gemini") setupEnv.GOOGLE_GENERATIVE_AI_API_KEY = apiKey;
-  else if (provider === "openrouter") setupEnv.OPENROUTER_API_KEY = apiKey;
-  else if (provider === "deepseek") setupEnv.DEEPSEEK_API_KEY = apiKey;
-
-  if (ch.telegram?.botToken) setupEnv.TELEGRAM_BOT_TOKEN = ch.telegram.botToken;
-  if (ch.discord?.botToken) setupEnv.DISCORD_BOT_TOKEN = ch.discord.botToken;
-  if (ch.slack?.botToken && ch.slack?.appToken) {
-    setupEnv.SLACK_BOT_TOKEN = ch.slack.botToken;
-    setupEnv.SLACK_APP_TOKEN = ch.slack.appToken;
-  }
-  if (ch.feishu?.appId && ch.feishu?.appSecret) {
-    setupEnv.FEISHU_APP_ID = ch.feishu.appId;
-    setupEnv.FEISHU_APP_SECRET = ch.feishu.appSecret;
-  }
-  if (ch.whatsapp?.enabled) setupEnv.WHATSAPP_ENABLED = "1";
-  if (ch.wechat?.enabled) setupEnv.WECHAT_ENABLED = "1";
-
-  try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
-    fs.mkdirSync(path.join(STATE_DIR, "credentials"), { recursive: true });
-
-    generateConfigDirect({
-      configPath: CONFIG_PATH,
-      workspaceDir: WORKSPACE_DIR,
-      gatewayToken: GATEWAY_TOKEN,
-      port: GATEWAY_PORT,
-      publicPort: PORT,
-      env: setupEnv,
-    });
-
-    // 初始化 workspace 文件（SOUL.md、AGENTS.md 等）
-    const result = await runCmd(OPENCLAW_NODE, clawArgs(["setup", "--workspace", WORKSPACE_DIR]));
-    console.log(`[setup] openclaw setup exit=${result.code}`);
-
-    // 刷新 repair AI key（新配置可能换了 provider）
-    repairAiKey = readEnvProviderKey(setupEnv) || readDefaultProviderKey(CONFIG_PATH);
-
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-}
-
-app.get("/setup", requireAuthPage, (_req, res) => {
-  res.sendFile(path.join(process.cwd(), "src", "public", "setup.html"));
-});
-app.post("/setup/api/configure", requireAuthApi, jsonParser, handleSetupConfigure);
-
 // ── 修复助手 API ──────────────────────────────────────────────────────────────
 const repairRouter = createRepairRouter({
   requireSetupAuth: requireAuthApi,
@@ -431,7 +370,6 @@ app.use("/skills", createSkillsRouter());
 // ── WebUI 入口 ────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
   if (!isAuthed(req)) return res.redirect("/login");
-  if (!isConfigured()) return res.redirect("/setup");
   res.redirect("/openclaw/");
 });
 

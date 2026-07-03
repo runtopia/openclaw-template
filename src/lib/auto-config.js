@@ -3,8 +3,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ensureControlUiConfig } from "./control-ui-config.js";
-import { patchConfig, setIn } from "./openclaw-config.js";
-import { resolvePreinstalledPluginPaths } from "./preinstalled-plugins.js";
+import { patchConfig, setIn } from "../config/edit.js";
+import { resolvePreinstalledPluginPaths } from "../config/plugins.js";
 import { applyRuntimeDefaults, generateConfigDirect, buildHttpEndpoints, resolveClawroutersApiBaseUrl } from "./direct-config.js";
 
 function truthy(v) {

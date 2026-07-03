@@ -18,8 +18,8 @@
 
 import path from "node:path";
 import fs from "node:fs";
-import { patchConfig, setIn } from "./openclaw-config.js";
-import { mergeChannelPolicy } from "./channel-access-policy.js";
+import { patchConfig, setIn } from "../config/edit.js";
+import { mergeChannelPolicy } from "./access-policy.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();

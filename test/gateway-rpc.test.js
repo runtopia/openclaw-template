@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocketServer } from "ws";
 
-import { createGatewayRpc } from "../src/lib/gateway-rpc.js";
+import { createGatewayRpc } from "../src/gateway/rpc.js";
 
 function listenServer(server) {
   return new Promise((resolve) => {

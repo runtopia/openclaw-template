@@ -1,10 +1,10 @@
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
-import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../channel-bindings.js";
-import { patchConfig, setIn } from "../openclaw-config.js";
-import { applyChannelPolicy, normalizeChannelAccessPolicy } from "../channel-access-policy.js";
-import { startWechatLogin, getWechatLoginState } from "../wechat-login.js";
+import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../../channels/bindings.js";
+import { patchConfig, setIn } from "../../config/edit.js";
+import { applyChannelPolicy, normalizeChannelAccessPolicy } from "../../channels/access-policy.js";
+import { startWechatLogin, getWechatLoginState } from "../../channels/wechat-login.js";
 
 const SENSITIVE_KEYS = new Set(["apiKey", "token", "secret", "password", "key"]);
 const WHATSAPP_DIAGNOSTIC_LOG_RE = /whatsapp|web\.login|provider|baileys|qr|auth|service restart|sigterm/i;

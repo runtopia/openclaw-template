@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startWechatLogin, getWechatLoginState, stopWechatLogin } from "../src/lib/wechat-login.js";
+import { startWechatLogin, getWechatLoginState, stopWechatLogin } from "../src/channels/wechat-login.js";
 
 async function waitFor(predicate, timeoutMs = 1000) {
   const deadline = Date.now() + timeoutMs;

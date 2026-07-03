@@ -20,16 +20,16 @@ import path from "node:path";
 import express from "express";
 import httpProxy from "http-proxy";
 
-import { createGatewayManager } from "./lib/gateway.js";
-import { createGatewayRpc } from "./lib/gateway-rpc.js";
-import { createOneclawIntegration } from "./lib/oneclaw-integration.js";
+import { createGatewayManager } from "./gateway/manager.js";
+import { createGatewayRpc } from "./gateway/rpc.js";
+import { createOneclawIntegration } from "./integration/oneclaw.js";
 import { createRepairRouter } from "./lib/routes/repair.js";
-import { createSkillsRouter } from "./lib/routes/skills.js";
-import { readEnvProviderKey, readDefaultProviderKey } from "./lib/repair-ai-key.js";
+import { createSkillsRouter } from "./skills/router.js";
+import { readEnvProviderKey, readDefaultProviderKey } from "./repair/ai-key.js";
 import { applyRuntimeDefaults, generateConfigDirect } from "./lib/direct-config.js";
-import { patchConfig, setIn } from "./lib/openclaw-config.js";
-import { reconcileAllChannels } from "./lib/channel-manifest.js";
-import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./lib/preinstalled-plugins.js";
+import { patchConfig, setIn } from "./config/edit.js";
+import { reconcileAllChannels } from "./channels/manifest.js";
+import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./config/plugins.js";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 

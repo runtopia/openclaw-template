@@ -3,7 +3,7 @@ import childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { createGatewayManager } from "../src/lib/gateway.js";
+import { createGatewayManager } from "../src/gateway/manager.js";
 
 class FakeProc extends EventEmitter {
   constructor(id) {

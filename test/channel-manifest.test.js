@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getActiveChannels } from "../src/lib/channel-manifest.js";
+import { getActiveChannels } from "../src/channels/manifest.js";
 
 // 回归:已配置实例上启用微信走的是 reconcileAllChannels(只看 CHANNEL_MANIFEST)。
 // 微信若不在 manifest 里,WECHAT_ENABLED=1 在重新部署后不会激活通道。

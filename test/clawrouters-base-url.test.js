@@ -10,7 +10,7 @@ import {
   patchClawroutersProviderBaseUrl,
   resolveClawroutersApiBaseUrl,
 } from "../src/lib/direct-config.js";
-import { readEnvProviderKey } from "../src/lib/repair-ai-key.js";
+import { readEnvProviderKey } from "../src/repair/ai-key.js";
 
 test("CLAWROUTERS_BASE_URL origin is normalized to /api/v1", () => {
   const env = { CLAWROUTERS_BASE_URL: "https://clawrouters-dev.example.com" };

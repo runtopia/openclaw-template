@@ -5,7 +5,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePreinstalledPluginPaths } from "./preinstalled-plugins.js";
+import { resolvePreinstalledPluginPaths } from "../config/plugins.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();

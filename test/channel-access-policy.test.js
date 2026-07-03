@@ -5,7 +5,7 @@ import {
   normalizeChannelAccessPolicy,
   applyChannelPolicy,
   mergeChannelPolicy,
-} from "../src/lib/channel-access-policy.js";
+} from "../src/channels/access-policy.js";
 
 test("default policy maps to pairing and disabled groups", () => {
   assert.deepEqual(buildRuntimeChannelAccessPolicy(undefined), {

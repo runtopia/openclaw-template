@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../src/lib/channel-bindings.js";
+import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../src/channels/bindings.js";
 
 test("readChannelBindings returns enabled channels, accounts, and bindings", () => {
   const cfg = {

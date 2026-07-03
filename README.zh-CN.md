@@ -1,33 +1,93 @@
-# OpenClaw Railway 模板（一键部署）
+# OpenClaw Railway 模板
 
-这个项目将 **OpenClaw** 打包到 Railway，提供一个小型的 **/setup** Web 向导，让用户可以在**不运行任何命令**的情况下完成部署和启动。
+将 **OpenClaw**（AI 编程助手平台）部署到 Railway 的单容器方案。配置完全由环境变量驱动，无 Web 配置向导，无 Web 终端。[oneclaw_web](https://www.oneclaw.net) SaaS 控制台负责按用户部署和引导。
 
-## 🎯 你能得到什么
+## 你能得到什么
 
-- **OpenClaw 网关 + Control UI** (在 `/` 和 `/openclaw` 提供)
-- 友好的**配置向导**在 `/setup` (受密码保护)
-- 可选的**Web 终端** (Web TUI) 在 `/tui` 用于浏览器终端访问
-- **持久化存储**通过 Railway Volume（配置、凭证、记忆在重新部署时保留）
+- **OpenClaw 网关 + Control UI** 在 `/openclaw`
+- **反向代理**（监听 `PORT`），自动注入 Bearer Token
+- **持久化存储**通过 Railway Volume（`/data`）— 配置、凭证和记忆在重新部署时保留
+- **修复控制台**在 `/repair/*` — AI 诊断对话、网关重启、WhatsApp/微信扫码绑定
+- **健康检查端点** `/health`
+- **登录页** `/login`（由 `SETUP_PASSWORD` 保护）
 
-## ⚙️ 工作原理
+## 架构
 
-- 容器运行一个包装器 Web 服务器
-- 包装器用 `SETUP_PASSWORD` 保护 `/setup`
-- 初始化设置期间，包装器运行 `openclaw onboard --non-interactive ...`，将状态写入卷存储，然后启动网关
-- 设置完成后，**`/` 就是 OpenClaw**。包装器反向代理所有流量（包括 WebSocket）到本地网关进程
-
-## 🚀 快速开始
-
-### 本地开发
-
-```bash
-npm install              # 安装依赖
-npm run dev             # 开发模式运行（需要 OpenClaw 全局安装或设置 OPENCLAW_ENTRY）
-npm start               # 生产环境运行
-npm run lint            # 语法检查
+```
+用户请求
+  ↓
+Wrapper（Express 监听 PORT）
+  ├─ /health         → 存活检测
+  ├─ /login          → Control UI 登录页（鉴权：SETUP_PASSWORD）
+  ├─ /repair/*       → 修复助手（鉴权：session 或 Bearer 密钥）
+  └─ 其他所有路由    → 反向代理到 openclaw gateway（自动注入 Bearer Token）
 ```
 
-### Docker 本地测试
+### 生命周期
+
+1. **启动**：Wrapper 读取环境变量 → 写入 `openclaw.json`（幂等）→ 启动 `openclaw gateway` → 等待网关就绪 → 开始处理流量。
+2. **运行时**：自动恢复网关崩溃（指数退避，最多 5 次）。在设置了平台环境变量时，向 oneclaw_web 上报心跳、统计和人格信息。
+3. **修复**：`/repair/*` 端点供 oneclaw_web 面板（或直接 API 调用）使用，支持 AI 诊断、网关重启，以及 WhatsApp/微信 QR 绑定流程。
+
+## 环境变量
+
+### 必需
+
+| 变量 | 说明 |
+|------|------|
+| `SETUP_PASSWORD` | 保护 `/login` 登录页。不填则无密码直接放行。 |
+
+触发自动配置至少需要一个模型 provider 密钥：
+
+| 变量 | 说明 |
+|------|------|
+| `CLAWROUTERS_API_KEY` | ClawRouters 多模型路由（推荐） |
+| `ANTHROPIC_API_KEY` | Anthropic Claude 直连 |
+| `OPENAI_API_KEY` | OpenAI 直连 |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Google Gemini 直连 |
+| `DEEPSEEK_API_KEY` | DeepSeek 直连 |
+| `OPENROUTER_API_KEY` | OpenRouter |
+
+### 推荐
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `8080` | Wrapper HTTP 端口 |
+| `OPENCLAW_STATE_DIR` | `/data/.openclaw` | 配置和凭证存储目录 |
+| `OPENCLAW_WORKSPACE_DIR` | `/data/workspace` | Agent 工作空间目录 |
+
+### 渠道配置
+
+| 变量 | 说明 |
+|------|------|
+| `TELEGRAM_BOT_TOKEN` | Telegram 机器人 Token |
+| `DISCORD_BOT_TOKEN` | Discord 机器人 Token（需在开发者门户开启 MESSAGE CONTENT INTENT） |
+| `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Slack 机器人和应用 Token |
+| `FEISHU_APP_ID` + `FEISHU_APP_SECRET` | 飞书应用凭证 |
+| `WHATSAPP_ENABLED=1` | 启用 WhatsApp 渠道；运行后通过 oneclaw_web 面板完成扫码绑定 |
+| `WECHAT_ENABLED=1` | 启用微信渠道；运行后通过 oneclaw_web 面板完成扫码绑定 |
+
+### OneClaw 平台集成
+
+| 变量 | 说明 |
+|------|------|
+| `ONECLAW_API_URL` | OneClaw API 端点（默认：`https://www.oneclaw.net/api`） |
+| `ONECLAW_INSTANCE_ID` | oneclaw_web 分配的实例 ID |
+| `ONECLAW_INSTANCE_SECRET` | 心跳上报的实例密钥 |
+| `ONECLAW_TEMPLATE_ID` | 模板 ID（可选） |
+
+### 可选 / 高级
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `OPENCLAW_GATEWAY_TOKEN` | 自动生成 | 网关 Bearer Token（不设则自动生成并持久化到 `STATE_DIR/gateway.token`） |
+| `INTERNAL_GATEWAY_PORT` | `18789` | 网关内部端口 |
+| `OPENCLAW_ENTRY` | `/usr/local/lib/node_modules/openclaw/dist/entry.js` | openclaw `entry.js` 路径 |
+| `PROXY_TIMEOUT_MS` | `600000` | 反向代理超时（毫秒） |
+| `GATEWAY_CHAT_COMPLETIONS_ENABLED` | 关闭 | 启用 `POST /v1/chat/completions`（同时开启 `/v1/models` 和 `/v1/embeddings`） |
+| `GATEWAY_RESPONSES_ENABLED` | 关闭 | 启用 `POST /v1/responses` |
+
+## 本地 Docker 运行
 
 ```bash
 # 构建镜像
@@ -37,259 +97,114 @@ docker build -t openclaw-railway-template .
 docker run --rm -p 8080:8080 \
   -e PORT=8080 \
   -e SETUP_PASSWORD=test \
-  -e ENABLE_WEB_TUI=true \
+  -e CLAWROUTERS_API_KEY=your_key_here \
   -e OPENCLAW_STATE_DIR=/data/.openclaw \
   -e OPENCLAW_WORKSPACE_DIR=/data/workspace \
   -v $(pwd)/.tmpdata:/data \
   openclaw-railway-template
 
 # 访问
-# 配置向导: http://localhost:8080/setup (密码: test)
-# Web 终端: http://localhost:8080/tui (设置完成后)
+# 健康检查：  http://localhost:8080/health
+# 登录页：    http://localhost:8080/login   （密码：test）
+# Control UI：http://localhost:8080/openclaw
 ```
 
-## 📝 获取聊天机器人 Token
+按需追加渠道 Token：
 
-### Telegram 机器人 Token
+```bash
+  -e TELEGRAM_BOT_TOKEN=123456789:AA... \
+  -e DISCORD_BOT_TOKEN=your_discord_token \
+```
 
-1. 在 Telegram 中消息 **@BotFather**
-2. 运行 `/newbot` 并按照提示操作
-3. BotFather 会给你一个 token，格式如：`123456789:AA...`
-4. 粘贴到 `/setup`
+## Railway 部署
 
-### Discord 机器人 Token
+1. Fork 或在 Railway 中使用本模板。
+2. 在 `/data` 挂载一个 **Volume**。
+3. 在 Railway Variables 中设置**环境变量**（见上表）。
+4. 开启**公开网络**（自动分配 `*.up.railway.app` 域名）。
+5. 部署 — 容器启动时自动配置。
 
-1. 打开 Discord 开发者门户：https://discord.com/developers/applications
-2. **New Application** → 选择名称
-3. 打开 **Bot** 标签 → **Add Bot**
-4. 复制 **Bot Token** 粘贴到 `/setup`
-5. 邀请机器人到你的服务器（OAuth2 URL Generator → scopes: `bot`、`applications.commands`）
+部署前检查清单：
+- `/data` 已挂载 Volume
+- `SETUP_PASSWORD` 已设置（或有意留空以开放访问）
+- 至少设置一个 provider API 密钥
+- 公开网络已开启
 
-## 💻 Web 终端 (TUI)
-
-模板包含一个可选的基于 Web 的终端，可以在浏览器中运行 `openclaw tui`。
-
-### 启用方式
-
-在 Railway 变量中设置 `ENABLE_WEB_TUI=true`。Web 终端**默认禁用**。
-
-启用后，通过 `/tui` 访问，或点击设置页面的 "Open Terminal" 按钮。
-
-### 安全机制
-
-| 控制项 | 说明 |
-|------|------|
-| **选择启用** | 默认禁用，需要明确设置 `ENABLE_WEB_TUI=true` |
-| **密码保护** | 使用与配置向导相同的 `SETUP_PASSWORD` |
-| **单会话** | 一次仅允许 1 个并发 TUI 会话 |
-| **空闲超时** | 无活动 5 分钟后自动关闭（可通过 `TUI_IDLE_TIMEOUT_MS` 配置） |
-| **最大时长** | 每个会话硬性限制 30 分钟（可通过 `TUI_MAX_SESSION_MS` 配置） |
-
-### TUI 配置
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `ENABLE_WEB_TUI` | `false` | 设置为 `true` 启用 |
-| `TUI_IDLE_TIMEOUT_MS` | `300000` (5 分钟) | 无活动关闭时间 |
-| `TUI_MAX_SESSION_MS` | `1800000` (30 分钟) | 最大会话时长 |
-
-## 📋 环境变量配置
-
-### 必需
-
-| 变量 | 说明 |
-|------|------|
-| `SETUP_PASSWORD` | 配置向导的访问密码（Basic Auth） |
-
-### 推荐
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `OPENCLAW_STATE_DIR` | `/data/.openclaw` | OpenClaw 配置和凭证存储目录 |
-| `OPENCLAW_WORKSPACE_DIR` | `/data/workspace` | OpenClaw 工作空间目录 |
-| `PORT` | `8080` | 包装器 HTTP 服务器端口 |
-| `INTERNAL_GATEWAY_PORT` | `18789` | OpenClaw 网关内部端口 |
-
-### 可选 - OneClaw 集成
-
-| 变量 | 说明 |
-|------|------|
-| `ONECLAW_API_URL` | OneClaw API 端点 (默认: `https://www.oneclaw.net/api`) |
-| `ONECLAW_INSTANCE_ID` | OneClaw 实例 ID |
-| `ONECLAW_INSTANCE_SECRET` | OneClaw 实例密钥 |
-| `ONECLAW_TEMPLATE_ID` | OneClaw 模板 ID（可选） |
-
-### 可选 - 其他
-
-| 变量 | 说明 |
-|------|------|
-| `OPENCLAW_GATEWAY_TOKEN` | 网关认证 token（不提供时自动生成） |
-| `OPENCLAW_ENTRY` | OpenClaw 入口脚本路径 (默认: `/openclaw/dist/entry.js`) |
-| `OPENCLAW_NODE` | Node.js 可执行文件 (默认: `node`) |
-| `INTERNAL_GATEWAY_HOST` | 网关绑定地址 (默认: `127.0.0.1`) |
-| `CR_PROXY_PORT` | ClawRouters 代理端口 (默认: `18791`) |
-
-## 🏗️ 代码架构
-
-### 核心模块
+## 目录结构
 
 ```
 src/
-├── server.js                          # Express 主程序入口
-├── lib/
-│   ├── gateway.js                     # 网关生命周期管理
-│   ├── auto-config.js                 # 自动配置逻辑
-│   ├── channel-manifest.js            # 渠道配置管理
-│   ├── oneclaw-integration.js         # OneClaw 平台集成
-│   ├── cr-proxy.js                    # ClawRouters 反向代理
-│   └── routes/
-│       ├── setup.js                   # /setup 路由处理器
-│       ├── api.js                     # /setup/api/* API 端点
-│       └── tui.js                     # /tui Web 终端路由
-└── public/
-    ├── setup.html                     # 配置向导 HTML
-    ├── setup-app.js                   # 配置向导客户端 JS（原生）
-    ├── tui.html                       # Web 终端 HTML
-    └── loading.html                   # 加载页面
+├── index.js               # PID1 入口：写 openclaw.json，启动 gateway，启动 Express
+├── config/                # 从 env 生成配置（generate.js, runtime-defaults.js, plugins.js, edit.js）
+│   └── direct-config.js   # 核心配置构建：buildHttpEndpoints()，applyRuntimeDefaults()
+├── gateway/               # 网关进程管理（manager.js, gateway-rpc.js）
+├── channels/              # 渠道配置写入（Telegram/Discord/Slack/飞书/WhatsApp/微信）
+├── integration/           # OneClaw 平台集成（心跳、人格同步）
+├── proxy/                 # 反向代理与鉴权（proxy.js, auth.js）
+├── repair/                # 修复助手路由（assistant.js, config-ops.js, qr-login.js）
+├── skills/                # 修复助手 AI 工具定义
+└── public/                # 静态页面：login.html，loading.html
+start.sh                   # Docker 启动脚本：修复 /data 权限 → gosu 降权 → node src/index.js
+Dockerfile                 # 单阶段构建：安装 OpenClaw core + 插件到 /opt/openclaw-plugins
+railway.toml               # Railway 部署配置
+docker-compose.yml         # 本地开发 compose
 ```
 
-### 请求流程
+## 渠道配置指引
 
-```
-用户请求
-  ↓
-Express 服务器 (PORT 8080)
-  ├─ /setup/* → setupRouter (auth: SETUP_PASSWORD)
-  ├─ /setup/api/* → apiRouter (auth: SETUP_PASSWORD)
-  ├─ /tui → tuiRouter (auth: SETUP_PASSWORD)
-  ├─ /openclaw → gateway 反向代理 (Token 自动注入)
-  └─ 其他 → gateway 反向代理 (Token 自动注入)
-```
+### Telegram
 
-### 生命周期
+1. 在 Telegram 中消息 **@BotFather**。
+2. 运行 `/newbot` 并按提示操作。
+3. 复制 Token（格式：`123456789:AA...`）。
+4. 在 Railway Variables 中设置 `TELEGRAM_BOT_TOKEN` 并重新部署。
 
-#### 1. 未配置状态
-- `openclaw.json` 不存在
-- 所有非 `/setup` 路由重定向到 `/setup`
-- 用户完成配置后自动运行 `openclaw onboard`
+### Discord
 
-#### 2. 配置完成状态
-- `openclaw.json` 存在且有效
-- 包装器启动网关子进程：`openclaw gateway run --bind loopback ...`
-- 轮询网关健康检查端点确保就绪
-- 反向代理所有请求，自动注入 Bearer Token
+1. 打开 [Discord 开发者门户](https://discord.com/developers/applications)。
+2. **New Application** → **Bot** 标签 → **Add Bot** → 复制 Token。
+3. 在 Privileged Gateway Intents 下开启 **MESSAGE CONTENT INTENT**。
+4. 通过 OAuth2 URL Generator 邀请机器人（scopes：`bot`、`applications.commands`）。
+5. 在 Railway Variables 中设置 `DISCORD_BOT_TOKEN` 并重新部署。
 
-## 🔐 认证两层机制
+### 飞书 / Lark
 
-### 第一层：Web 界面认证
-- **类型**：HTTP Basic Auth
-- **保护路由**：`/setup`、`/tui`、API 端点
-- **凭证**：`SETUP_PASSWORD` 环境变量
-- **实现**：`src/lib/routes/*.js` 中的认证中间件
+在 Railway Variables 中设置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。
 
-### 第二层：网关 Token 认证
-- **类型**：Bearer Token
-- **来源**：`OPENCLAW_GATEWAY_TOKEN` 环境变量（无则自动生成）
-- **存储**：`${STATE_DIR}/gateway.token`
-- **注入方式**：代理所有请求时自动添加 `Authorization: Bearer <token>` 头
-- **实现**：`src/lib/cr-proxy.js` 中的代理事件处理器
+### WhatsApp
 
-## ❓ 常见问题
+设置 `WHATSAPP_ENABLED=1`，部署后通过 oneclaw_web 面板完成扫码绑定。
 
-**Q: 如何访问配置页面？**
+### 微信
 
-A: 访问 `/setup` 在你部署的实例。当提示认证时，使用你 Railway 变量中的 `SETUP_PASSWORD` 作为密码。用户名可以留空。
+设置 `WECHAT_ENABLED=1`，部署后通过 oneclaw_web 面板完成扫码绑定。
 
-**Q: 看到 "gateway disconnected" 或认证错误怎么办？**
+## 常见问题
 
-A: 回到 `/setup` 点击 "Open OpenClaw UI" 按钮。设置页面会传递必要的 token 给 UI。直接访问 UI 而不通过设置页面会导致连接错误。
+**Q：如何访问 Control UI？**
 
-**Q: 在设置页面看不到 TUI 选项。**
+A：访问部署实例的 `/login`，输入 `SETUP_PASSWORD`，然后导航到 `/openclaw`。Wrapper 会自动注入网关 Bearer Token，无需手动配置鉴权。
 
-A: 确保 `ENABLE_WEB_TUI=true` 已在 Railway 变量中设置并重新部署。Web 终端默认禁用。
+**Q：Control UI 出现 "gateway disconnected" 或认证错误怎么办？**
 
-**Q: 如何批准 Telegram 或 Discord 的配对请求？**
+A：先访问 `/login` 获取 session，再前往 `/openclaw`。如问题持续，检查容器日志中的网关启动错误，并确认 `OPENCLAW_STATE_DIR` 所在的 Volume 已正确挂载且可写。
 
-A: 回到 `/setup` 使用 "Approve Pairing" 对话框批准来自聊天频道的挂起配对请求。
+**Q：如何诊断或修复问题？**
 
-**Q: 设置后如何更换 AI 模型？**
+A：修复助手通过 oneclaw_web 面板访问，面板会调用 `/repair/*` 端点，提供 AI 辅助诊断、网关重启和 WhatsApp/微信 QR 绑定功能。
 
-A: 使用 OpenClaw CLI 切换模型。通过 `/tui`（如启用）访问 Web 终端，或 SSH 进入容器运行：
+**Q：如何更换 AI 模型？**
 
-```bash
-openclaw models set provider/model-id
-```
+A：设置不同的 provider API 密钥，或使用 `CLAWROUTERS_API_KEY` 进行多模型路由。也可在登录后通过 `/openclaw` 的 Control UI 进行模型配置。
 
-例如：`openclaw models set anthropic/claude-sonnet-4-20250514` 或 `openclaw models set openai/gpt-4-turbo`。
+**Q：网关 Bearer Token 如何在重新部署后保持稳定？**
 
-使用 `openclaw models list --all` 查看可用模型。
+A：如果未设置 `OPENCLAW_GATEWAY_TOKEN`，Wrapper 在首次启动时自动生成 Token 并持久化到 `${OPENCLAW_STATE_DIR}/gateway.token`。只要 `/data` Volume 保持挂载，重新部署后会复用同一 Token。
 
-**Q: 我的配置出错或遇到奇怪的错误。**
+**Q：为什么插件预装在镜像中而不是运行时安装？**
 
-A: 回到 `/setup` 点击 "Run Doctor" 按钮。这会运行 `openclaw doctor --repair`，执行网关和频道的健康检查，备份你的配置，并删除任何无法识别或损坏的配置键。
+A：OpenClaw 的插件发现机制不扫描全局 `node_modules`。插件在 Docker 构建阶段安装到 `/opt/openclaw-plugins`，并通过 `openclaw.json` 中的 `plugins.load.paths` 声明。这样可避免每次启动时的大量文件复制，同时确保 `/data` Volume 挂载不会覆盖插件文件。
 
-## 🚢 Railway 部署
+## 支持
 
-部署前确保：
-
-- ✅ 在 Railway 项目中挂载 `/data` 卷
-- ✅ 在 Railway 变量中设置 `SETUP_PASSWORD`
-- ✅ 启用公开网络（自动分配 `*.up.railway.app` 域名）
-- ✅ Dockerfile 构建会自动安装最新版 OpenClaw
-
-## 🐛 调试
-
-### 查看网关日志
-
-```bash
-# 容器日志会直接显示网关输出（stdio: "inherit"）
-# 查看关键信息：
-# [gateway] starting: node /openclaw/dist/entry.js ...
-# [gateway] ready at /openclaw
-# [event] sent: heartbeat
-```
-
-### 测试配置向导
-
-```bash
-# 删除配置重置状态
-rm -f ${OPENCLAW_STATE_DIR}/openclaw.json
-
-# 访问设置页面重新配置
-curl -u :test http://localhost:8080/setup
-```
-
-### 测试代理连接
-
-```bash
-# 验证 token 注入（应该成功）
-curl http://localhost:8080/
-
-# 验证缺少 token 时失败（应该返回 401）
-# 临时禁用代理中的 token 注入后测试
-```
-
-## 📚 核心概念
-
-### ClawRouters 代理 (cr-proxy)
-如果 `CLAWROUTERS_KEY` 环境变量设置，则启动一个额外的 ClawRouters 反向代理，允许更复杂的路由和负载均衡。
-
-### 自动配置 (auto-config)
-如果检测到 AI API Key 环境变量，系统可以自动运行初始配置流程。
-
-### 网关管理 (gateway)
-负责：
-- 启动 OpenClaw 网关子进程
-- 监视网关健康状态（轮询 `/openclaw`、`/`、`/health`）
-- 在网关崩溃时重启
-- 优雅关闭
-
-### OneClaw 集成 (oneclaw-integration)
-可选功能，与 OneClaw 平台集成实现：
-- 定期心跳信号
-- 使用统计追踪
-- 个性化配置应用
-
----
-
-**最后更新：** 2026-05-14
+需要帮助？[在 Railway Station 提交支持请求](https://station.railway.com/all-templates/d0880c01-2cc5-462c-8b76-d84c1a203348)

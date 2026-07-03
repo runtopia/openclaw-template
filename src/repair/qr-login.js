@@ -257,7 +257,11 @@ export function mountQrLogin(router, deps) {
 
   router.post("/whatsapp-login/wait", requireRepairAuth, async (req, res) => {
     const currentQrDataUrl = typeof req.body?.currentQrDataUrl === "string" ? req.body.currentQrDataUrl : undefined;
-    await whatsappLoginRpc(res, "web.login.wait", { timeoutMs: 30_000, ...(currentQrDataUrl ? { currentQrDataUrl } : {}) });
+    // accountId 必须与 start 一致：登录会话按 accountId 隔离，不传会退回
+    // DEFAULT_ACCOUNT_ID → 查不到 start(accountId) 建的会话 → "No active login"。
+    const accountId = typeof req.body?.accountId === "string" && req.body.accountId.trim()
+      ? req.body.accountId.trim() : undefined;
+    await whatsappLoginRpc(res, "web.login.wait", { timeoutMs: 30_000, ...(currentQrDataUrl ? { currentQrDataUrl } : {}), ...(accountId ? { accountId } : {}) });
   });
 
   router.get("/whatsapp-login/status", requireRepairAuth, (_req, res) => {

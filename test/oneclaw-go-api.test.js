@@ -88,7 +88,7 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
 
 test("fetchPersonality reads Go API snake_case response and writes workspace files", async () => {
   const workspaceDir = makeWorkspace();
-  const restoreFetch = withFetch((url) => {
+  const restoreFetch = withFetch((url, opts) => {
     assert.equal(url, "https://oneclaw.example.com/api/v1/agent/personality?instance_id=runtime-1");
     return jsonResponse({
       instance_id: "runtime-1",
@@ -123,4 +123,300 @@ test("fetchPersonality reads Go API snake_case response and writes workspace fil
 
   assert.equal(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf8"), "Use Go API contract.");
   assert.equal(fs.readFileSync(path.join(workspaceDir, "memory/go.md"), "utf8"), "snake_case");
+});
+
+test("channel bind command stops polling after session expires", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  let heartbeatCalls = 0;
+  let waitCalls = 0;
+  let stateReports = 0;
+  const restoreFetch = withFetch((url, opts) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      heartbeatCalls += 1;
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: heartbeatCalls === 1 ? [{
+          id: "cmd-bind",
+          type: "update_config",
+          payload: {
+            action: "bind_channel",
+            employee_id: "emp-1",
+            channel: "whatsapp",
+            state: {
+              binding: {
+                session_id: "bind-1",
+                expires_at: new Date(startAt + 45).toISOString(),
+              },
+            },
+          },
+        }] : [],
+      });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/start") {
+      return jsonResponse({ ok: true, connected: false, qrDataUrl: "qr-start" });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/wait") {
+      waitCalls += 1;
+      return jsonResponse({ ok: true, connected: false, qrDataUrl: `qr-wait-${waitCalls}` });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      stateReports += 1;
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  } finally {
+    restoreFetch();
+  }
+
+  const stoppedWaitCalls = waitCalls;
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(waitCalls, stoppedWaitCalls);
+  assert.ok(stateReports >= 1, "should report at least one qr state");
+});
+
+test("channel bind command uses sidecar repair target", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  let repairCalls = 0;
+  const restoreFetch = withFetch((url, opts) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [{
+          id: "cmd-bind",
+          type: "update_config",
+          payload: {
+            action: "bind_channel",
+            employee_id: "emp-1",
+            channel: "whatsapp",
+            state: {
+              binding: {
+                session_id: "bind-1",
+                expires_at: new Date(startAt + 50).toISOString(),
+              },
+            },
+          },
+        }],
+      });
+    }
+    if (url === "http://sidecar.local/repair/whatsapp-login/start") {
+      assert.equal(opts.headers.Authorization, "Bearer secret-1");
+      repairCalls += 1;
+      return jsonResponse({ ok: true, connected: false, qrDataUrl: "qr-start" });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      return jsonResponse({ ok: true });
+    }
+    assert.notEqual(url, "http://gateway.local/repair/whatsapp-login/start");
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      repairTarget: "http://sidecar.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(repairCalls, 1);
+});
+
+test("cancel bind command stops active channel polling", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  let heartbeatCalls = 0;
+  let waitCalls = 0;
+  const restoreFetch = withFetch((url) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      heartbeatCalls += 1;
+      const command = heartbeatCalls === 1
+        ? {
+            id: "cmd-bind",
+            type: "update_config",
+            payload: {
+              action: "bind_channel",
+              employee_id: "emp-1",
+              channel: "whatsapp",
+              state: {
+                binding: {
+                  session_id: "bind-1",
+                  expires_at: new Date(startAt + 1_000).toISOString(),
+                },
+              },
+            },
+          }
+        : {
+            id: "cmd-cancel",
+            type: "update_config",
+            payload: {
+              action: "cancel_bind_channel",
+              employee_id: "emp-1",
+              channel: "whatsapp",
+              state: {
+                binding: {
+                  session_id: "bind-1",
+                  expires_at: new Date(startAt + 1_000).toISOString(),
+                },
+              },
+            },
+          };
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [command],
+      });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/start") {
+      return jsonResponse({ ok: true, connected: false, qrDataUrl: "qr-start" });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/wait") {
+      waitCalls += 1;
+      return jsonResponse({ ok: true, connected: false, qrDataUrl: `qr-wait-${waitCalls}` });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.ok(waitCalls >= 1, "bind session should poll before cancel");
+    await integration.sendHeartbeat();
+    const stoppedWaitCalls = waitCalls;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(waitCalls, stoppedWaitCalls);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("cancel wechat bind command stops wrapper login process", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  let heartbeatCalls = 0;
+  let stopCalls = 0;
+  const restoreFetch = withFetch((url) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      heartbeatCalls += 1;
+      const command = heartbeatCalls === 1
+        ? {
+            id: "cmd-bind",
+            type: "update_config",
+            payload: {
+              action: "bind_channel",
+              employee_id: "emp-1",
+              channel: "wechat",
+              state: {
+                binding: {
+                  session_id: "bind-1",
+                  expires_at: new Date(startAt + 1_000).toISOString(),
+                },
+              },
+            },
+          }
+        : {
+            id: "cmd-cancel",
+            type: "update_config",
+            payload: {
+              action: "cancel_bind_channel",
+              employee_id: "emp-1",
+              channel: "wechat",
+              state: {
+                binding: {
+                  session_id: "bind-1",
+                  expires_at: new Date(startAt + 1_000).toISOString(),
+                },
+              },
+            },
+          };
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [command],
+      });
+    }
+    if (url === "http://gateway.local/repair/wechat-login/start") {
+      return jsonResponse({ ok: true, status: "scan", qrUrl: "https://wechat.example/qr" });
+    }
+    if (url === "http://gateway.local/repair/wechat-login") {
+      return jsonResponse({ ok: true, status: "scan", qrUrl: "https://wechat.example/qr2" });
+    }
+    if (url === "http://gateway.local/repair/wechat-login/stop") {
+      stopCalls += 1;
+      return jsonResponse({ ok: true, status: "idle" });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await integration.sendHeartbeat();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(stopCalls, 1);
 });

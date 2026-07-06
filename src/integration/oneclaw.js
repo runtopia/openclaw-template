@@ -15,8 +15,9 @@ export function normalizeOneclawApiUrl(raw) {
 }
 
 export function createOneclawIntegration({
-  apiUrl, instanceId, instanceSecret, workspaceDir,
-  gatewayTarget, gatewayToken, isGatewayReady, isGatewayStarting,
+	apiUrl, instanceId, instanceSecret, workspaceDir,
+	gatewayTarget, repairTarget, gatewayToken, isGatewayReady, isGatewayStarting,
+	channelBindingPollMs = 1500,
 }) {
   const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
   if (!platformApiUrl || !instanceId || !instanceSecret) {
@@ -34,9 +35,10 @@ export function createOneclawIntegration({
   }
 
   let heartbeatInterval = null;
-  let remindersInterval = null;
-  let cachedPersonality = null;
-  const usageStats = { messages: 0, tokens: 0, lastModel: null };
+	let remindersInterval = null;
+	let cachedPersonality = null;
+	const usageStats = { messages: 0, tokens: 0, lastModel: null };
+	const activeChannelBindings = new Map();
 
   function trackMessage(tokens = 0, model = null) {
     usageStats.messages++;
@@ -51,6 +53,21 @@ export function createOneclawIntegration({
     });
   }
 
+  async function repairFetch(pathname, method = "GET", body = undefined) {
+    const target = repairTarget || gatewayTarget;
+    if (!target) throw new Error("repair target unavailable");
+    const headers = { "Content-Type": "application/json" };
+    if (instanceSecret) headers.Authorization = `Bearer ${instanceSecret}`;
+    const res = await fetch(`${target}/repair/${pathname.replace(/^\/+/, "")}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.message || `repair ${pathname} failed: ${res.status}`);
+    return data;
+  }
+
   async function sendEvent(event, data = {}) {
     try {
       await apiFetch("/agent/event", {
@@ -60,6 +77,18 @@ export function createOneclawIntegration({
       console.log(`[event] sent: ${event}`);
     } catch (err) {
       console.error(`[event] error: ${err.message}`);
+    }
+  }
+
+  async function reportChannelState(payload) {
+    try {
+      const res = await apiFetch("/agent/channels/state", {
+        method: "POST",
+        body: JSON.stringify({ instance_id: instanceId, ...payload }),
+      });
+      if (!res.ok) console.warn(`[channel-bind] state report failed: ${res.status}`);
+    } catch (err) {
+      console.error(`[channel-bind] state report error: ${err.message}`);
     }
   }
 
@@ -241,6 +270,8 @@ export function createOneclawIntegration({
   function stop() {
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
     if (remindersInterval) { clearInterval(remindersInterval); remindersInterval = null; }
+    for (const session of activeChannelBindings.values()) cancelChannelBindingSession(session);
+    activeChannelBindings.clear();
   }
 
   function applyMemoryFiles(memoryFiles) {
@@ -257,6 +288,10 @@ export function createOneclawIntegration({
 
   async function applyAgentCommand(command) {
     const payload = command?.payload || command || {};
+    if (command?.type === "update_config") {
+      await applyUpdateConfigCommand(payload);
+      return;
+    }
     if (command?.type !== "apply_template") return;
     const soulMd = payload.soul_md || payload.soulMd;
     if (soulMd) {
@@ -270,6 +305,171 @@ export function createOneclawIntegration({
   }
 
   return { start, stop, sendHeartbeat, sendEvent, trackMessage, fetchPersonality, applyPersonality, applyTemplateFromEnv, getCachedPersonality: () => cachedPersonality };
+
+  async function applyUpdateConfigCommand(payload) {
+    const action = payload?.action;
+    if (action === "bind_channel") {
+      startChannelBindingSession(payload);
+      return;
+    }
+    if (action === "cancel_bind_channel" || action === "unbind_channel") {
+      await cancelChannelBindingByPayload(payload);
+    }
+  }
+
+  function bindingKey(channel, employeeId) {
+    return `${channel}:${employeeId}`;
+  }
+
+  function cancelChannelBindingSession(session) {
+    session.cancelled = true;
+    if (session.timer) clearTimeout(session.timer);
+    session.timer = null;
+  }
+
+  async function cancelChannelBindingByPayload(payload) {
+    const channel = String(payload?.channel || "").trim();
+    const employeeId = String(payload?.employee_id || payload?.employeeId || "").trim();
+    if (!channel || !employeeId) return;
+    const key = bindingKey(channel, employeeId);
+    const session = activeChannelBindings.get(key);
+    if (session) {
+      cancelChannelBindingSession(session);
+      activeChannelBindings.delete(key);
+    }
+    await stopRuntimeQrLogin(channel);
+    await reportChannelState({
+      employee_id: employeeId,
+      channel,
+      status: "expired",
+      session_id: payload?.state?.binding?.session_id || payload?.session_id || "",
+    });
+  }
+
+  function startChannelBindingSession(payload) {
+    const channel = String(payload?.channel || "").trim();
+    const employeeId = String(payload?.employee_id || payload?.employeeId || "").trim();
+    const binding = payload?.state?.binding || payload?.binding || {};
+    const sessionId = String(binding.session_id || payload?.session_id || "").trim();
+    const expiresAtRaw = String(binding.expires_at || payload?.expires_at || "").trim();
+    const expiresAt = Date.parse(expiresAtRaw);
+    if (!employeeId || !sessionId || !Number.isFinite(expiresAt)) {
+      console.warn("[channel-bind] invalid bind_channel payload");
+      return;
+    }
+    if (channel !== "whatsapp" && channel !== "wechat") return;
+
+    const key = bindingKey(channel, employeeId);
+    const previous = activeChannelBindings.get(key);
+    if (previous) cancelChannelBindingSession(previous);
+
+    // 本次扫码绑定是用户发起的一次性会话；expires_at 是总截止时间，
+    // 到期后必须停止刷新二维码，避免用户离开页面后实例继续刷日志。
+    const session = {
+      key,
+      channel,
+      employeeId,
+      sessionId,
+      expiresAt,
+      started: false,
+      currentQrUrl: null,
+      cancelled: false,
+      timer: null,
+    };
+    activeChannelBindings.set(key, session);
+    runChannelBindingTick(session);
+  }
+
+  async function runChannelBindingTick(session) {
+    if (session.cancelled) return;
+    const remaining = session.expiresAt - Date.now();
+    if (remaining <= 0) {
+      activeChannelBindings.delete(session.key);
+      await stopRuntimeQrLogin(session.channel);
+      await reportChannelState({
+        employee_id: session.employeeId,
+        channel: session.channel,
+        status: "expired",
+        session_id: session.sessionId,
+      });
+      return;
+    }
+
+    try {
+      const data = session.channel === "whatsapp"
+        ? await pollWhatsAppBinding(session)
+        : await pollWechatBinding(session);
+      if (session.cancelled) return;
+      const connected = !!data.connected || data.status === "connected";
+      if (connected) {
+        activeChannelBindings.delete(session.key);
+        await reportChannelState({
+          employee_id: session.employeeId,
+          channel: session.channel,
+          status: "ready",
+          session_id: session.sessionId,
+          config: data.connectedAccountId ? { account_id: data.connectedAccountId } : undefined,
+        });
+        return;
+      }
+      const qrUrl = data.qrDataUrl || data.qrUrl || null;
+      if (qrUrl) {
+        session.currentQrUrl = qrUrl;
+        await reportChannelState({
+          employee_id: session.employeeId,
+          channel: session.channel,
+          status: "pending",
+          session_id: session.sessionId,
+          qr_url: qrUrl,
+        });
+      }
+    } catch (err) {
+      console.error(`[channel-bind] ${session.channel} poll error: ${err.message}`);
+      await reportChannelState({
+        employee_id: session.employeeId,
+        channel: session.channel,
+        status: "failed",
+        session_id: session.sessionId,
+        error: err.message,
+      });
+    }
+
+    if (!session.cancelled && activeChannelBindings.get(session.key) === session) {
+      const delay = Math.max(1, Math.min(channelBindingPollMs, session.expiresAt - Date.now()));
+      session.timer = setTimeout(() => runChannelBindingTick(session), delay);
+    }
+  }
+
+  async function pollWhatsAppBinding(session) {
+    if (!session.started) {
+      session.started = true;
+      return repairFetch("whatsapp-login/start", "POST", {
+        accountId: session.employeeId,
+        force: true,
+      });
+    }
+    return repairFetch("whatsapp-login/wait", "POST", {
+      accountId: session.employeeId,
+      ...(session.currentQrUrl ? { currentQrDataUrl: session.currentQrUrl } : {}),
+    });
+  }
+
+  async function pollWechatBinding(session) {
+    if (!session.started) {
+      session.started = true;
+      return repairFetch("wechat-login/start", "POST", { accountId: session.employeeId });
+    }
+    return repairFetch("wechat-login", "GET");
+  }
+
+  async function stopRuntimeQrLogin(channel) {
+    if (channel !== "wechat") return;
+    try {
+      await repairFetch("wechat-login/stop", "POST");
+    } catch (err) {
+      console.warn(`[channel-bind] failed to stop ${channel} login: ${err.message}`);
+    }
+  }
 }
 
 function normalizePersonality(personality) {

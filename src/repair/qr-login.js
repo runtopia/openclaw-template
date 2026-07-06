@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { startWechatLogin, getWechatLoginState } from "../channels/wechat-login.js";
+import { startWechatLogin, getWechatLoginState, stopWechatLogin } from "../channels/wechat-login.js";
 
 const WHATSAPP_DIAGNOSTIC_LOG_RE = /whatsapp|web\.login|provider|baileys|qr|auth|service restart|sigterm/i;
 
@@ -292,6 +292,11 @@ export function mountQrLogin(router, deps) {
   });
 
   router.get("/wechat-login", requireRepairAuth, (_req, res) => {
+    res.json({ ok: true, ...getWechatLoginState() });
+  });
+
+  router.post("/wechat-login/stop", requireRepairAuth, (_req, res) => {
+    stopWechatLogin();
     res.json({ ok: true, ...getWechatLoginState() });
   });
 }

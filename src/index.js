@@ -240,6 +240,7 @@ const oneclaw = createOneclawIntegration({
   instanceSecret: ONECLAW_INSTANCE_SECRET,
   workspaceDir: WORKSPACE_DIR,
   gatewayTarget: `http://${GATEWAY_HOST}:${GATEWAY_PORT}`,
+  repairTarget: `http://127.0.0.1:${PORT}`,
   gatewayToken: GATEWAY_TOKEN,
   isGatewayReady: gateway.isGatewayReady,
   isGatewayStarting: gateway.isGatewayStarting,

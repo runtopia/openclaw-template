@@ -6,11 +6,20 @@ import path from "node:path";
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const REMINDERS_CHECK_INTERVAL_MS = 60 * 1000;
 
+export function normalizeOneclawApiUrl(raw) {
+  const base = String(raw || "").trim().replace(/\/+$/, "");
+  if (!base) return "";
+  if (base.endsWith("/api/v1")) return base;
+  if (base.endsWith("/api")) return `${base}/v1`;
+  return `${base}/api/v1`;
+}
+
 export function createOneclawIntegration({
   apiUrl, instanceId, instanceSecret, workspaceDir,
   gatewayTarget, gatewayToken, isGatewayReady, isGatewayStarting,
 }) {
-  if (!apiUrl || !instanceId || !instanceSecret) {
+  const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
+  if (!platformApiUrl || !instanceId || !instanceSecret) {
     return {
       start() {},
       stop() {},
@@ -36,7 +45,7 @@ export function createOneclawIntegration({
   }
 
   async function apiFetch(endpoint, opts = {}) {
-    return fetch(`${apiUrl}${endpoint}`, {
+    return fetch(`${platformApiUrl}${endpoint}`, {
       ...opts,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${instanceSecret}`, ...(opts.headers || {}) },
     });
@@ -46,7 +55,7 @@ export function createOneclawIntegration({
     try {
       await apiFetch("/agent/event", {
         method: "POST",
-        body: JSON.stringify({ instanceId, event, data, timestamp: new Date().toISOString() }),
+        body: JSON.stringify({ instance_id: instanceId, event, data, timestamp: new Date().toISOString() }),
       });
       console.log(`[event] sent: ${event}`);
     } catch (err) {
@@ -59,7 +68,7 @@ export function createOneclawIntegration({
     try {
       const res = await apiFetch("/agent/stats", {
         method: "POST",
-        body: JSON.stringify({ instanceId, secret: instanceSecret, messages: usageStats.messages, tokens: usageStats.tokens, model: usageStats.lastModel }),
+        body: JSON.stringify({ instance_id: instanceId, secret: instanceSecret, messages: usageStats.messages, tokens: usageStats.tokens, model: usageStats.lastModel }),
       });
       if (res.ok) {
         console.log(`[stats] reported: ${usageStats.messages} messages`);
@@ -73,12 +82,12 @@ export function createOneclawIntegration({
 
   async function fetchPersonality() {
     try {
-      const res = await apiFetch(`/agent/personality?instanceId=${instanceId}`, { method: "GET" });
+      const res = await apiFetch(`/agent/personality?instance_id=${encodeURIComponent(instanceId)}`, { method: "GET" });
       if (res.ok) {
         const data = await res.json();
-        cachedPersonality = data.personality;
+        cachedPersonality = normalizePersonality(data.personality);
         console.log(`[personality] fetched: ${cachedPersonality?.botName || "default"}`);
-        return { personality: data.personality, template: data.template };
+        return { personality: cachedPersonality, template: normalizeTemplate(data.template) };
       }
     } catch (err) {
       console.error(`[personality] fetch error: ${err.message}`);
@@ -88,21 +97,14 @@ export function createOneclawIntegration({
 
   async function applyPersonality(personality, template = null) {
     try {
-      if (personality?.systemPrompt) {
+      const systemPrompt = personality?.systemPrompt || personality?.system_prompt;
+      if (systemPrompt) {
         const soulPath = path.join(workspaceDir, "SOUL.md");
-        fs.writeFileSync(soulPath, personality.systemPrompt, "utf8");
+        fs.mkdirSync(workspaceDir, { recursive: true });
+        fs.writeFileSync(soulPath, systemPrompt, "utf8");
         console.log(`[personality] applied system prompt`);
       }
-      if (template?.memoryFiles && Array.isArray(template.memoryFiles)) {
-        for (const file of template.memoryFiles) {
-          if (file.path && file.content) {
-            const filePath = path.join(workspaceDir, file.path);
-            fs.mkdirSync(path.dirname(filePath), { recursive: true });
-            fs.writeFileSync(filePath, file.content, "utf8");
-            console.log(`[template] applied ${file.path}`);
-          }
-        }
-      }
+      applyMemoryFiles(template?.memoryFiles || template?.memory_files);
     } catch (err) {
       console.error(`[personality] apply error: ${err.message}`);
     }
@@ -117,25 +119,18 @@ export function createOneclawIntegration({
     }
     console.log(`[template] applying template: ${templateId}`);
     try {
-      const res = await fetch(`${apiUrl}/templates?id=${templateId}`);
+      const res = await apiFetch(`/templates/${encodeURIComponent(templateId)}`, { method: "GET" });
       if (!res.ok) { console.error(`[template] fetch failed: ${res.status}`); return false; }
-      const { template } = await res.json();
+      const body = await res.json();
+      const template = normalizeTemplate(body.template || body);
       if (!template) { console.error("[template] not found"); return false; }
-      if (template.soulMd) {
+      if (template.soulMd || template.soul_md) {
+        const soulMd = template.soulMd || template.soul_md;
         fs.mkdirSync(workspaceDir, { recursive: true });
-        fs.writeFileSync(soulPath, template.soulMd, "utf8");
-        console.log(`[template] wrote SOUL.md (${template.soulMd.length} chars)`);
+        fs.writeFileSync(soulPath, soulMd, "utf8");
+        console.log(`[template] wrote SOUL.md (${soulMd.length} chars)`);
       }
-      if (Array.isArray(template.memoryFiles)) {
-        for (const file of template.memoryFiles) {
-          if (file.path && file.content) {
-            const filePath = path.join(workspaceDir, file.path);
-            fs.mkdirSync(path.dirname(filePath), { recursive: true });
-            fs.writeFileSync(filePath, file.content, "utf8");
-            console.log(`[template] wrote ${file.path}`);
-          }
-        }
-      }
+      applyMemoryFiles(template.memoryFiles || template.memory_files);
       return true;
     } catch (err) {
       console.error(`[template] apply error: ${err.message}`);
@@ -147,7 +142,7 @@ export function createOneclawIntegration({
     try {
       await apiFetch("/agent/reminders/executed", {
         method: "POST",
-        body: JSON.stringify({ instanceId, reminderId, executedAt: new Date().toISOString() }),
+        body: JSON.stringify({ instance_id: instanceId, reminder_id: reminderId, executed_at: new Date().toISOString() }),
       });
     } catch (err) {
       console.error(`[reminders] mark executed error: ${err.message}`);
@@ -170,7 +165,7 @@ export function createOneclawIntegration({
 
   async function checkReminders() {
     try {
-      const res = await apiFetch(`/agent/reminders/due?instanceId=${instanceId}`, { method: "GET" });
+      const res = await apiFetch(`/agent/reminders/due?instance_id=${encodeURIComponent(instanceId)}`, { method: "GET" });
       if (res.ok) {
         const { reminders = [] } = await res.json();
         for (const r of reminders) { console.log(`[reminders] executing: ${r.title}`); await executeReminder(r); }
@@ -189,6 +184,7 @@ export function createOneclawIntegration({
       // env credentials are present AND the gateway is ready (i.e. the
       // plugin has booted). This matches what the inbound message logs show.
       const gatewayReady = isGatewayReady();
+      const statusReason = gatewayReady ? "gateway_ready" : isGatewayStarting() ? "gateway_starting" : "gateway_unhealthy";
       const platforms = gatewayReady ? {
         telegram: !!process.env.TELEGRAM_BOT_TOKEN?.trim(),
         discord: !!process.env.DISCORD_BOT_TOKEN?.trim(),
@@ -198,7 +194,17 @@ export function createOneclawIntegration({
       } : {};
       const res = await apiFetch("/agent/heartbeat", {
         method: "POST",
-        body: JSON.stringify({ instanceId, status, timestamp: new Date().toISOString(), uptime: process.uptime(), gatewayReady, platforms }),
+        body: JSON.stringify({
+          instance_id: instanceId,
+          status,
+          status_reason: statusReason,
+          agent: {
+            timestamp: new Date().toISOString(),
+            uptime_seconds: process.uptime(),
+            gateway_ready: gatewayReady,
+            platforms,
+          },
+        }),
       });
       if (res.ok) {
         console.log(`[heartbeat] sent: ${status}`);
@@ -206,12 +212,7 @@ export function createOneclawIntegration({
           const result = await res.json();
           if (Array.isArray(result.commands) && result.commands.length > 0) {
             for (const cmd of result.commands) {
-              if (cmd.type === "apply_template" && cmd.soulMd) {
-                const soulPath = path.join(workspaceDir, "SOUL.md");
-                fs.mkdirSync(workspaceDir, { recursive: true });
-                fs.writeFileSync(soulPath, cmd.soulMd, "utf8");
-                console.log(`[command] wrote SOUL.md (${cmd.soulMd.length} chars)`);
-              }
+              await applyAgentCommand(cmd);
             }
           }
         } catch {}
@@ -242,5 +243,51 @@ export function createOneclawIntegration({
     if (remindersInterval) { clearInterval(remindersInterval); remindersInterval = null; }
   }
 
+  function applyMemoryFiles(memoryFiles) {
+    if (!Array.isArray(memoryFiles)) return;
+    for (const file of memoryFiles) {
+      if (file.path && file.content) {
+        const filePath = path.join(workspaceDir, file.path);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, file.content, "utf8");
+        console.log(`[template] applied ${file.path}`);
+      }
+    }
+  }
+
+  async function applyAgentCommand(command) {
+    const payload = command?.payload || command || {};
+    if (command?.type !== "apply_template") return;
+    const soulMd = payload.soul_md || payload.soulMd;
+    if (soulMd) {
+      const soulPath = path.join(workspaceDir, "SOUL.md");
+      fs.mkdirSync(workspaceDir, { recursive: true });
+      fs.writeFileSync(soulPath, soulMd, "utf8");
+      console.log(`[command] wrote SOUL.md (${soulMd.length} chars)`);
+    }
+    // Go 后端 command 使用 payload.memory_files；保留 memoryFiles 读取，方便旧队列平滑过渡。
+    applyMemoryFiles(payload.memory_files || payload.memoryFiles);
+  }
+
   return { start, stop, sendHeartbeat, sendEvent, trackMessage, fetchPersonality, applyPersonality, applyTemplateFromEnv, getCachedPersonality: () => cachedPersonality };
+}
+
+function normalizePersonality(personality) {
+  if (!personality) return null;
+  return {
+    ...personality,
+    botName: personality.botName || personality.bot_name,
+    systemPrompt: personality.systemPrompt || personality.system_prompt,
+  };
+}
+
+function normalizeTemplate(template) {
+  if (!template) return null;
+  return {
+    ...template,
+    templateId: template.templateId || template.template_id || template.id,
+    soulMd: template.soulMd || template.soul_md,
+    memoryFiles: template.memoryFiles || template.memory_files,
+    suggestedModel: template.suggestedModel || template.suggested_model,
+  };
 }

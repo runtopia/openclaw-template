@@ -49,7 +49,7 @@ const OPENCLAW_ENTRY = process.env.OPENCLAW_ENTRY?.trim() || "/usr/local/lib/nod
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
 
 // OneClaw 平台集成参数
-const ONECLAW_API_URL      = process.env.ONECLAW_API_URL?.trim()      || "https://www.oneclaw.net/api";
+const ONECLAW_API_URL      = process.env.ONECLAW_API_URL?.trim()      || "https://www.oneclaw.net/api/v1";
 const ONECLAW_INSTANCE_ID  = process.env.ONECLAW_INSTANCE_ID?.trim();
 const ONECLAW_INSTANCE_SECRET = process.env.ONECLAW_INSTANCE_SECRET?.trim();
 const ONECLAW_TEMPLATE_ID  = process.env.ONECLAW_TEMPLATE_ID?.trim()  || null;

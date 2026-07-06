@@ -71,7 +71,7 @@ Wrapper（Express 监听 PORT）
 
 | 变量 | 说明 |
 |------|------|
-| `ONECLAW_API_URL` | OneClaw API 端点（默认：`https://www.oneclaw.net/api`） |
+| `ONECLAW_API_URL` | OneClaw API 端点（默认：`https://www.oneclaw.net/api/v1`） |
 | `ONECLAW_INSTANCE_ID` | oneclaw_web 分配的实例 ID |
 | `ONECLAW_INSTANCE_SECRET` | 心跳上报的实例密钥 |
 | `ONECLAW_TEMPLATE_ID` | 模板 ID（可选） |

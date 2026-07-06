@@ -71,7 +71,7 @@ At least one model provider key is required to trigger auto-configuration:
 
 | Variable | Description |
 |----------|-------------|
-| `ONECLAW_API_URL` | OneClaw API endpoint (default: `https://www.oneclaw.net/api`) |
+| `ONECLAW_API_URL` | OneClaw API endpoint (default: `https://www.oneclaw.net/api/v1`) |
 | `ONECLAW_INSTANCE_ID` | Instance ID assigned by oneclaw_web |
 | `ONECLAW_INSTANCE_SECRET` | Instance secret for heartbeat auth |
 | `ONECLAW_TEMPLATE_ID` | Template ID (optional) |

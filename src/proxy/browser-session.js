@@ -15,6 +15,20 @@ function requestOrigin(req, fallbackPort) {
   return `${proto}://${host}`;
 }
 
+function isHttpsRequest(req) {
+  const xfProto = req.headers["x-forwarded-proto"];
+  const proto = (typeof xfProto === "string" ? xfProto.split(",")[0].trim() : xfProto) || req.protocol || "http";
+  return proto === "https";
+}
+
+function sessionCookieAttributes(req) {
+  // 控制台页面和实例域名通常不是同源，内嵌 WebSocket 需要浏览器在跨站请求中携带 cookie。
+  // HTTPS 入口使用 SameSite=None; Secure；本地 HTTP 调试无法设置 Secure，只能退回 Lax。
+  return isHttpsRequest(req)
+    ? "HttpOnly; Path=/; SameSite=None; Secure; Max-Age=604800"
+    : "HttpOnly; Path=/; SameSite=Lax; Max-Age=604800";
+}
+
 export function createBrowserSessionManager({ signSession, authCookie, port, ttlMs = DEFAULT_TTL_MS }) {
   const tickets = new Map();
 
@@ -42,8 +56,7 @@ export function createBrowserSessionManager({ signSession, authCookie, port, ttl
     if (!entry) return res.status(401).send("login ticket expired");
     const requestedNext = normalizeNext(req.query?.next);
     const next = requestedNext === entry.next ? entry.next : "/openclaw/";
-    const secure = (req.headers["x-forwarded-proto"] || "").includes("https") ? "; Secure" : "";
-    res.setHeader("Set-Cookie", `${authCookie}=${signSession()}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${secure}`);
+    res.setHeader("Set-Cookie", `${authCookie}=${signSession()}; ${sessionCookieAttributes(req)}`);
     return res.redirect(next);
   }
 

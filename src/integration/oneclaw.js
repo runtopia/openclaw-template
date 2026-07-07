@@ -17,6 +17,7 @@ export function normalizeOneclawApiUrl(raw) {
 export function createOneclawIntegration({
 	apiUrl, instanceId, instanceSecret, workspaceDir,
 	gatewayTarget, repairTarget, gatewayToken, isGatewayReady, isGatewayStarting,
+	gatewayRpc,
 	channelBindingPollMs = 1500,
 }) {
   const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
@@ -292,7 +293,16 @@ export function createOneclawIntegration({
       await applyUpdateConfigCommand(payload);
       return;
     }
+    if (command?.type === "delete_agent") {
+      await deleteEmployeeAgent(payload);
+      return;
+    }
     if (command?.type !== "apply_template") return;
+    const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
+    if (employeeId) {
+      await applyEmployeeAgentTemplate(payload, employeeId);
+      return;
+    }
     const soulMd = payload.soul_md || payload.soulMd;
     if (soulMd) {
       const soulPath = path.join(workspaceDir, "SOUL.md");
@@ -302,6 +312,72 @@ export function createOneclawIntegration({
     }
     // Go 后端 command 使用 payload.memory_files；保留 memoryFiles 读取，方便旧队列平滑过渡。
     applyMemoryFiles(payload.memory_files || payload.memoryFiles);
+  }
+
+  async function applyEmployeeAgentTemplate(payload, employeeId) {
+    if (!gatewayRpc?.rpcGateway) {
+      console.warn("[command] gateway rpc unavailable; cannot sync employee agent");
+      return;
+    }
+    try {
+      await gatewayRpc.waitUntilConnected?.(10_000);
+      const agentId = await ensureEmployeeAgent(payload, employeeId);
+      const soulMd = payload.soul_md || payload.soulMd;
+      if (soulMd) {
+        await callGateway("agents.files.set", { agentId, name: "SOUL.md", content: soulMd });
+      }
+      for (const file of payload.memory_files || payload.memoryFiles || []) {
+        if (!file?.path || typeof file.content !== "string") continue;
+        await callGateway("agents.files.set", { agentId, name: file.path, content: file.content });
+      }
+      console.log(`[command] synced employee agent ${employeeId} -> ${agentId}`);
+    } catch (err) {
+      console.error(`[command] employee agent sync failed: ${err.message}`);
+    }
+  }
+
+  async function ensureEmployeeAgent(payload, employeeId) {
+    const preferredAgentId = String(payload.openclaw_agent_id || payload.agent_id || "").trim();
+    if (preferredAgentId) return preferredAgentId;
+    const stableName = `oneclaw-${employeeId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    const workspace = path.posix.join(workspaceDir, "agents", employeeId.replace(/[^a-zA-Z0-9_-]/g, "-"));
+    const createFrame = await callGateway("agents.create", {
+      name: stableName,
+      workspace,
+      model: payload.suggested_model || payload.suggestedModel || "clawrouters/auto",
+      emoji: payload.avatar || "",
+      avatar: "",
+    }, { tolerateError: true });
+    if (createFrame?.agentId) return createFrame.agentId;
+    if (createFrame?.result?.agentId) return createFrame.result.agentId;
+    if (createFrame?.payload?.agentId) return createFrame.payload.agentId;
+    const listFrame = await callGateway("agents.list", {}, { tolerateError: true });
+    const agents = listFrame?.result?.agents || listFrame?.payload?.agents || [];
+    const found = agents.find((agent) => agent?.id === stableName || agent?.agentId === stableName || agent?.name === stableName);
+    return found?.id || found?.agentId || stableName;
+  }
+
+  async function deleteEmployeeAgent(payload) {
+    if (!gatewayRpc?.rpcGateway) return;
+    const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
+    const agentId = String(payload.openclaw_agent_id || payload.agent_id || "").trim()
+      || (employeeId ? `oneclaw-${employeeId.replace(/[^a-zA-Z0-9_-]/g, "-")}` : "");
+    if (!agentId) return;
+    try {
+      await gatewayRpc.waitUntilConnected?.(10_000);
+      await callGateway("agents.delete", { agentId }, { tolerateError: true });
+      console.log(`[command] deleted employee agent ${agentId}`);
+    } catch (err) {
+      console.warn(`[command] delete employee agent failed: ${err.message}`);
+    }
+  }
+
+  async function callGateway(method, params = {}, opts = {}) {
+    const frame = await gatewayRpc.rpcGateway(method, params);
+    if (frame?.ok === false && !opts.tolerateError) {
+      throw new Error(frame.error?.message || frame.error?.code || `${method} failed`);
+    }
+    return frame?.payload || frame?.result || frame;
   }
 
   return { start, stop, sendHeartbeat, sendEvent, trackMessage, fetchPersonality, applyPersonality, applyTemplateFromEnv, getCachedPersonality: () => cachedPersonality };

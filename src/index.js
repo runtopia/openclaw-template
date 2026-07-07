@@ -242,6 +242,7 @@ const oneclaw = createOneclawIntegration({
   gatewayTarget: `http://${GATEWAY_HOST}:${GATEWAY_PORT}`,
   repairTarget: `http://127.0.0.1:${PORT}`,
   gatewayToken: GATEWAY_TOKEN,
+  gatewayRpc,
   isGatewayReady: gateway.isGatewayReady,
   isGatewayStarting: gateway.isGatewayStarting,
 });

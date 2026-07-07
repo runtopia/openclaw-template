@@ -86,6 +86,67 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
   assert.equal(fs.readFileSync(path.join(workspaceDir, "memory/profile.md"), "utf8"), "hello");
 });
 
+test("employee template command syncs an OpenClaw agent workspace", async () => {
+  const workspaceDir = makeWorkspace();
+  const rpcCalls = [];
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method, params) => {
+      rpcCalls.push({ method, params });
+      if (method === "agents.create") {
+        return { ok: true, payload: { agentId: "oneclaw-emp-1" } };
+      }
+      if (method === "agents.files.set") {
+        return { ok: true, payload: { ok: true } };
+      }
+      throw new Error(`unexpected rpc ${method}`);
+    },
+  };
+  const restoreFetch = withFetch((url) => {
+    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/heartbeat");
+    return jsonResponse({
+      instance_id: "runtime-1",
+      status: "running",
+      last_heartbeat: "2026-07-06T12:00:00Z",
+      commands: [{
+        id: "cmd-employee-template",
+        type: "apply_template",
+        payload: {
+          employee_id: "emp-1",
+          bot_name: "程序员助理",
+          avatar: "👨‍💻",
+          soul_md: "You are a developer assistant.",
+          memory_files: [{ path: "memory/dev.md", content: "dev notes" }],
+        },
+      }],
+    });
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayRpc,
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.sendHeartbeat();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(fs.existsSync(path.join(workspaceDir, "SOUL.md")), false);
+  assert.equal(rpcCalls[0].method, "agents.create");
+  assert.equal(rpcCalls[0].params.name, "oneclaw-emp-1");
+  assert.equal(rpcCalls[1].method, "agents.files.set");
+  assert.deepEqual(
+    rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
+    ["SOUL.md", "memory/dev.md"],
+  );
+});
+
 test("fetchPersonality reads Go API snake_case response and writes workspace files", async () => {
   const workspaceDir = makeWorkspace();
   const restoreFetch = withFetch((url, opts) => {

@@ -2,6 +2,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { buildRuntimeChannelAccessPolicy } from "../channels/access-policy.js";
+import { CHANNEL_MANIFEST, setChannelConfig } from "../channels/manifest.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const REMINDERS_CHECK_INTERVAL_MS = 60 * 1000;
@@ -16,7 +18,7 @@ export function normalizeOneclawApiUrl(raw) {
 }
 
 export function createOneclawIntegration({
-	apiUrl, instanceId, instanceSecret, workspaceDir,
+	apiUrl, instanceId, instanceSecret, stateDir, workspaceDir,
 	gatewayTarget, repairTarget, gatewayToken, isGatewayReady, isGatewayStarting,
 	gatewayRpc,
 	channelBindingPollMs = 1500,
@@ -459,6 +461,7 @@ export function createOneclawIntegration({
       return;
     }
     if (channel !== "whatsapp" && channel !== "wechat") return;
+    ensureQrChannelRuntimeConfig(channel, payload);
 
     const key = bindingKey(channel, employeeId);
     const previous = activeChannelBindings.get(key);
@@ -479,6 +482,24 @@ export function createOneclawIntegration({
     };
     activeChannelBindings.set(key, session);
     runChannelBindingTick(session);
+  }
+
+  function ensureQrChannelRuntimeConfig(channel, payload) {
+    const runtimeChannel = channel === "wechat" ? "openclaw-weixin" : channel;
+    const manifestEntry = CHANNEL_MANIFEST.find((entry) => entry.id === runtimeChannel);
+    if (!manifestEntry?.reconcileShape) return;
+    const configState = payload?.state?.config || payload?.config || {};
+    const access = configState?.access;
+    const runtimePolicy = access ? buildRuntimeChannelAccessPolicy(access) : {};
+    const shape = {
+      ...manifestEntry.reconcileShape(process.env),
+      ...runtimePolicy,
+    };
+    // 正常部署由 Go 后端通过 WECHAT_ENABLED/WHATSAPP_ENABLED 启用；这里作为老容器或异常配置的兜底。
+    // 若绑定时 channel/plugin 缺失，OpenClaw CLI 会停在交互式“Install plugin?”提示，导致拿不到二维码。
+    setChannelConfig(runtimeChannel, shape, {
+      stateDir: stateDir || path.dirname(workspaceDir),
+    });
   }
 
   async function runChannelBindingTick(session) {

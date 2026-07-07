@@ -369,6 +369,86 @@ test("channel bind command uses sidecar repair target", async () => {
   assert.equal(repairCalls, 1);
 });
 
+test("wechat bind command enables openclaw-weixin config before starting login", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({
+    plugins: { entries: {}, load: { paths: ["/opt/openclaw-plugins/node_modules/@tencent-weixin/openclaw-weixin"] } },
+    channels: {},
+  }));
+  const startAt = Date.now();
+  const restoreFetch = withFetch((url) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [{
+          id: "cmd-bind-wechat",
+          type: "update_config",
+          payload: {
+            action: "bind_channel",
+            employee_id: "emp-1",
+            channel: "wechat",
+            state: {
+              config: {
+                access: {
+                  mode: "allowlist",
+                  allowFrom: ["wx-owner"],
+                  groupMode: "disabled",
+                  groupAllowFrom: [],
+                  requireMention: true,
+                },
+              },
+              binding: {
+                session_id: "bind-1",
+                expires_at: new Date(startAt + 1_000).toISOString(),
+              },
+            },
+          },
+        }],
+      });
+    }
+    if (url === "http://gateway.local/repair/wechat-login/start") {
+      const cfg = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
+      assert.equal(cfg.plugins.entries["openclaw-weixin"].enabled, true);
+      assert.equal(cfg.channels["openclaw-weixin"].enabled, true);
+      assert.equal(cfg.channels["openclaw-weixin"].dmPolicy, "allowlist");
+      assert.deepEqual(cfg.channels["openclaw-weixin"].allowFrom, ["wx-owner"]);
+      return jsonResponse({ ok: true, status: "scan", qrUrl: "https://wechat.example/qr" });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    restoreFetch();
+  }
+
+  const cfg = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
+  assert.equal(cfg.plugins.entries["openclaw-weixin"].enabled, true);
+  assert.equal(cfg.channels["openclaw-weixin"].enabled, true);
+  assert.equal(cfg.channels["openclaw-weixin"].dmPolicy, "allowlist");
+  assert.deepEqual(cfg.channels["openclaw-weixin"].allowFrom, ["wx-owner"]);
+});
+
 test("cancel bind command stops active channel polling", async () => {
   const workspaceDir = makeWorkspace();
   const startAt = Date.now();

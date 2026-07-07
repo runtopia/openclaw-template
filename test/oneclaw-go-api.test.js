@@ -147,6 +147,60 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
   );
 });
 
+test("command polling applies employee template commands without waiting for heartbeat", async () => {
+  const workspaceDir = makeWorkspace();
+  const rpcCalls = [];
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method, params) => {
+      rpcCalls.push({ method, params });
+      if (method === "agents.create") return { ok: true, payload: { agentId: "oneclaw-emp-poll" } };
+      if (method === "agents.files.set") return { ok: true, payload: { ok: true } };
+      throw new Error(`unexpected rpc ${method}`);
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    assert.equal(opts.method, "GET");
+    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
+    return jsonResponse({
+      instance_id: "runtime-1",
+      commands: [{
+        id: "cmd-polled-employee-template",
+        type: "apply_template",
+        payload: {
+          employee_id: "emp-poll",
+          template_id: "developer",
+          bot_name: "程序员助理",
+          soul_md: "Polled employee prompt.",
+          memory_files: [{ path: "memory/polled.md", content: "poll notes" }],
+        },
+      }],
+    });
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayRpc,
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(rpcCalls[0].method, "agents.create");
+  assert.equal(rpcCalls[0].params.name, "oneclaw-emp-poll");
+  assert.deepEqual(
+    rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
+    ["SOUL.md", "memory/polled.md"],
+  );
+});
+
 test("fetchPersonality reads Go API snake_case response and writes workspace files", async () => {
   const workspaceDir = makeWorkspace();
   const restoreFetch = withFetch((url, opts) => {

@@ -5,6 +5,7 @@ import path from "node:path";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const REMINDERS_CHECK_INTERVAL_MS = 60 * 1000;
+const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 15_000);
 
 export function normalizeOneclawApiUrl(raw) {
   const base = String(raw || "").trim().replace(/\/+$/, "");
@@ -26,6 +27,7 @@ export function createOneclawIntegration({
       start() {},
       stop() {},
       sendHeartbeat() {},
+      pollCommands() {},
       sendEvent() {},
       trackMessage() {},
       getCachedPersonality() { return null; },
@@ -37,6 +39,7 @@ export function createOneclawIntegration({
 
   let heartbeatInterval = null;
 	let remindersInterval = null;
+	let commandPollInterval = null;
 	let cachedPersonality = null;
 	const usageStats = { messages: 0, tokens: 0, lastModel: null };
 	const activeChannelBindings = new Map();
@@ -240,11 +243,7 @@ export function createOneclawIntegration({
         console.log(`[heartbeat] sent: ${status}`);
         try {
           const result = await res.json();
-          if (Array.isArray(result.commands) && result.commands.length > 0) {
-            for (const cmd of result.commands) {
-              await applyAgentCommand(cmd);
-            }
-          }
+          await applyAgentCommands(result.commands);
         } catch {}
         if (usageStats.messages > 0) await reportStats();
       } else {
@@ -252,6 +251,27 @@ export function createOneclawIntegration({
       }
     } catch (err) {
       console.error(`[heartbeat] error: ${err.message}`);
+    }
+  }
+
+  async function pollCommands() {
+    try {
+      const res = await apiFetch(`/agent/commands?instance_id=${encodeURIComponent(instanceId)}&limit=10`, { method: "GET" });
+      if (!res.ok) {
+        if (res.status !== 404) console.warn(`[commands] poll failed: ${res.status}`);
+        return;
+      }
+      const result = await res.json().catch(() => ({}));
+      await applyAgentCommands(result.commands);
+    } catch (err) {
+      console.error(`[commands] poll error: ${err.message}`);
+    }
+  }
+
+  async function applyAgentCommands(commands) {
+    if (!Array.isArray(commands) || commands.length === 0) return;
+    for (const cmd of commands) {
+      await applyAgentCommand(cmd);
     }
   }
 
@@ -264,13 +284,18 @@ export function createOneclawIntegration({
     }, 30_000);
     heartbeatInterval = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     remindersInterval = setInterval(checkReminders, REMINDERS_CHECK_INTERVAL_MS);
+    // 员工雇佣、通道绑定、技能安装需要秒级生效；heartbeat 保持低频，命令用轻量轮询承接。
+    commandPollInterval = setInterval(pollCommands, COMMAND_POLL_INTERVAL_MS);
+    setTimeout(pollCommands, Math.min(COMMAND_POLL_INTERVAL_MS, 5_000));
     console.log(`[heartbeat] started (interval: ${HEARTBEAT_INTERVAL_MS / 1000}s)`);
+    console.log(`[commands] poll started (interval: ${COMMAND_POLL_INTERVAL_MS / 1000}s)`);
     console.log(`[reminders] check started (interval: ${REMINDERS_CHECK_INTERVAL_MS / 1000}s)`);
   }
 
   function stop() {
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
     if (remindersInterval) { clearInterval(remindersInterval); remindersInterval = null; }
+    if (commandPollInterval) { clearInterval(commandPollInterval); commandPollInterval = null; }
     for (const session of activeChannelBindings.values()) cancelChannelBindingSession(session);
     activeChannelBindings.clear();
   }
@@ -380,7 +405,7 @@ export function createOneclawIntegration({
     return frame?.payload || frame?.result || frame;
   }
 
-  return { start, stop, sendHeartbeat, sendEvent, trackMessage, fetchPersonality, applyPersonality, applyTemplateFromEnv, getCachedPersonality: () => cachedPersonality };
+  return { start, stop, sendHeartbeat, pollCommands, sendEvent, trackMessage, fetchPersonality, applyPersonality, applyTemplateFromEnv, getCachedPersonality: () => cachedPersonality };
 
   async function applyUpdateConfigCommand(payload) {
     const action = payload?.action;

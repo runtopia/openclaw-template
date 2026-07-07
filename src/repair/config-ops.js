@@ -44,7 +44,7 @@ export function mountConfigOps(router, deps) {
   router.get("/", (_req, res) => {
     res.json({
       ok: true,
-      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "GET /whatsapp-login/status", "GET /whatsapp-login/diagnostics", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "GET /channel-bindings", "POST /bind-channel", "POST /unbind-channel", "PATCH /channel-policy", "GET /channel-access-requests", "POST /channel-access-requests/:requestId/approve", "POST /channel-access-requests/:requestId/reject"],
+      endpoints: ["GET /status", "GET /logs", "GET /config", "POST /chat", "POST /restart", "POST /doctor", "PATCH /config", "POST /openclaw-login", "POST /whatsapp-login/start", "POST /whatsapp-login/wait", "GET /whatsapp-login/status", "GET /whatsapp-login/diagnostics", "POST /wechat-login/start", "GET /wechat-login", "GET /channel-status", "GET /channel-bindings", "POST /bind-channel", "POST /unbind-channel", "PATCH /channel-policy", "GET /channel-access-requests", "POST /channel-access-requests/:requestId/approve", "POST /channel-access-requests/:requestId/reject"],
     });
   });
 

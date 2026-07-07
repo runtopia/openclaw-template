@@ -201,6 +201,8 @@ A: Set a different provider API key or use `CLAWROUTERS_API_KEY` for multi-model
 
 A: If `OPENCLAW_GATEWAY_TOKEN` is not set, the wrapper auto-generates a token on first startup and persists it to `${OPENCLAW_STATE_DIR}/gateway.token`. As long as the `/data` volume is mounted, the same token is reused across redeploys.
 
+For platform dashboards, do not expose `OPENCLAW_GATEWAY_TOKEN` to browsers. Use `POST /repair/openclaw-login` with `Authorization: Bearer <ONECLAW_INSTANCE_SECRET>` to issue a short-lived `/oneclaw-login?ticket=...` URL. The browser consumes that URL to receive an HttpOnly session cookie before entering `/openclaw/` or `/openclaw/chat`.
+
 **Q: Why are plugins baked into the image rather than installed at runtime?**
 
 A: OpenClaw's plugin discovery does not scan global `node_modules`. Plugins are installed into `/opt/openclaw-plugins` during the Docker build and declared via `plugins.load.paths` in `openclaw.json`. This avoids a large runtime `cp` on every boot and ensures the `/data` volume mount does not shadow plugin files.

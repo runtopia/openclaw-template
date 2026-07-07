@@ -30,6 +30,7 @@ import { patchConfig, setIn } from "./config/edit.js";
 import { reconcileAllChannels } from "./channels/manifest.js";
 import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./config/plugins.js";
 import { createAuth } from "./proxy/auth.js";
+import { createBrowserSessionManager } from "./proxy/browser-session.js";
 import { createReverseProxy } from "./proxy/reverse-proxy.js";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
@@ -86,6 +87,11 @@ const { isAuthed, requireAuthPage, requireAuthApi, signSession, AUTH_COOKIE } = 
   ONECLAW_INSTANCE_SECRET,
   GATEWAY_TOKEN,
   PORT,
+});
+const browserSessions = createBrowserSessionManager({
+  signSession,
+  authCookie: AUTH_COOKIE,
+  port: PORT,
 });
 
 const { proxy, stripForwardedHeaders } = createReverseProxy({
@@ -286,6 +292,9 @@ app.post("/login", express.urlencoded({ extended: false }), (req, res) => {
     `${AUTH_COOKIE}=${signSession()}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${secure}`);
   res.redirect(next);
 });
+// 平台服务端通过 /repair/openclaw-login 创建一次性 ticket，浏览器访问这里后只获得
+// HttpOnly cookie；gateway token 不进入前端 API 响应或浏览器 URL。
+app.get("/oneclaw-login", (req, res) => browserSessions.handleLogin(req, res));
 
 // ── 修复助手 API ──────────────────────────────────────────────────────────────
 const repairRouter = createRepairRouter({
@@ -300,6 +309,7 @@ const repairRouter = createRepairRouter({
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
   gatewayRpc,
+  issueBrowserLoginUrl: (req, next) => browserSessions.issueLoginUrl(req, next),
 });
 app.use("/repair", requireAuthApi);
 app.use("/repair", jsonParser);
@@ -327,15 +337,8 @@ app.use((req, res) => {
     if (gateway.isGatewayStarting() && !gateway.isGatewayReady()) {
       return res.sendFile(path.join(process.cwd(), "src", "public", "loading.html"));
     }
-    // Control UI 前端需要拿到 gateway token 才能发起 WebSocket connect RPC。
-    // 已通过 cookie 鉴权，这里把 token 注入到 URL（fragment 不会发到服务端，
-    // 比 query 更安全）。token 仅暴露给已登录用户自己的浏览器。
-    if (req.path === "/openclaw" || req.path === "/openclaw/") {
-      if (!req.query.token) {
-        return res.redirect(`/openclaw/?token=${GATEWAY_TOKEN}`);
-      }
-    }
-    // 聊天 UI 需要 gatewayUrl(query) + token(fragment) 才能建立连接
+    // 已通过 cookie 鉴权的浏览器请求不再注入 GATEWAY_TOKEN；WS 升级由 cookie 放行，
+    // 反代层再给内部 gateway 注入 Authorization，避免长 token 出现在前端 URL。
     if (req.path === "/openclaw/chat" && !req.query.gatewayUrl) {
       const xfProto = req.headers["x-forwarded-proto"];
       const proto = (typeof xfProto === "string" ? xfProto.split(",")[0].trim() : xfProto) || req.protocol || "http";
@@ -344,7 +347,7 @@ app.use((req, res) => {
       const gatewayUrl = `${wsProto}://${host}/openclaw`;
       const url = new URL(req.originalUrl || req.url, `http://${host}`);
       url.searchParams.set("gatewayUrl", gatewayUrl);
-      return res.redirect(`${url.pathname}${url.search}#token=${GATEWAY_TOKEN}`);
+      return res.redirect(`${url.pathname}${url.search}`);
     }
     return proxy.web(req, res);
   }

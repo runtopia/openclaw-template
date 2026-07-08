@@ -586,7 +586,7 @@ export function createOneclawIntegration({
       return;
     }
     if (action === "cancel_bind_channel" || action === "unbind_channel") {
-      await cancelChannelBindingByPayload(payload);
+      await cancelChannelBindingByPayload(payload, action);
     }
   }
 
@@ -621,7 +621,7 @@ export function createOneclawIntegration({
     session.timer = null;
   }
 
-  async function cancelChannelBindingByPayload(payload) {
+  async function cancelChannelBindingByPayload(payload, action = "cancel_bind_channel") {
     const channel = String(payload?.channel || "").trim();
     const employeeId = String(payload?.employee_id || payload?.employeeId || "").trim();
     if (!channel || !employeeId) return;
@@ -632,10 +632,14 @@ export function createOneclawIntegration({
       activeChannelBindings.delete(key);
     }
     await stopRuntimeQrLogin(channel);
+    if (action === "unbind_channel") {
+      await unbindRuntimeChannel(payload, channel, employeeId);
+      await restartRuntimeAfterChannelChange();
+    }
     await reportChannelState({
       employee_id: employeeId,
       channel,
-      status: "expired",
+      status: action === "unbind_channel" ? "unbound" : "expired",
       session_id: payload?.state?.binding?.session_id || payload?.session_id || "",
     });
   }
@@ -664,6 +668,7 @@ export function createOneclawIntegration({
       key,
       channel,
       employeeId,
+      agentId: runtimeAgentId(payload, employeeId),
       sessionId,
       expiresAt,
       started: false,
@@ -716,6 +721,8 @@ export function createOneclawIntegration({
       const connected = !!data.connected || data.status === "connected";
       if (connected) {
         activeChannelBindings.delete(session.key);
+        await bindRuntimeChannel(session);
+        await restartRuntimeAfterChannelChange();
         await reportChannelState({
           employee_id: session.employeeId,
           channel: session.channel,
@@ -782,6 +789,57 @@ export function createOneclawIntegration({
     } catch (err) {
       console.warn(`[channel-bind] failed to stop ${channel} login: ${err.message}`);
     }
+  }
+
+  async function bindRuntimeChannel(session) {
+    const runtimeChannel = runtimeChannelName(session.channel);
+    if (!runtimeChannel || !session.employeeId || !session.agentId) return;
+    try {
+      await repairFetch("bind-channel", "POST", {
+        channel: runtimeChannel,
+        accountId: session.employeeId,
+        agentId: session.agentId,
+      });
+    } catch (err) {
+      console.warn(`[channel-bind] failed to bind runtime channel ${runtimeChannel}: ${err.message}`);
+    }
+  }
+
+  async function unbindRuntimeChannel(payload, channel, employeeId) {
+    const runtimeChannel = runtimeChannelName(channel);
+    const agentId = runtimeAgentId(payload, employeeId);
+    if (!runtimeChannel || !employeeId || !agentId) return;
+    try {
+      await repairFetch("unbind-channel", "POST", {
+        channel: runtimeChannel,
+        accountId: employeeId,
+        agentId,
+      });
+    } catch (err) {
+      console.warn(`[channel-bind] failed to unbind runtime channel ${runtimeChannel}: ${err.message}`);
+    }
+  }
+
+  async function restartRuntimeAfterChannelChange() {
+    try {
+      if (typeof restartGateway === "function") {
+        const result = await restartGateway({ waitReady: false });
+        if (!result?.coalesced) gatewayRpc?.restart?.();
+        return;
+      }
+      await repairFetch("restart", "POST");
+    } catch (err) {
+      console.warn(`[channel-bind] failed to restart gateway after channel change: ${err.message}`);
+    }
+  }
+
+  function runtimeChannelName(channel) {
+    return channel === "wechat" ? "openclaw-weixin" : channel;
+  }
+
+  function runtimeAgentId(payload, employeeId) {
+    return String(payload?.openclaw_agent_id || payload?.agent_id || payload?.agentId || "").trim()
+      || (employeeId ? `oneclaw-${employeeId.replace(/[^a-zA-Z0-9_-]/g, "-")}` : "");
   }
 }
 

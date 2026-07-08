@@ -855,3 +855,64 @@ test("cancel wechat bind command stops wrapper login process", async () => {
 
   assert.equal(stopCalls, 1);
 });
+
+test("unbind channel command removes runtime binding and restarts gateway", async () => {
+  const workspaceDir = makeWorkspace();
+  let unbindCalls = 0;
+  let restartCalls = 0;
+  const restoreFetch = withFetch((url, opts) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date().toISOString(),
+        commands: [{
+          id: "cmd-unbind",
+          type: "update_config",
+          payload: {
+            action: "unbind_channel",
+            employee_id: "emp-1",
+            openclaw_agent_id: "agent-1",
+            channel: "whatsapp",
+            state: { status: "unbound", enabled: false },
+          },
+        }],
+      });
+    }
+    if (url === "http://gateway.local/repair/unbind-channel") {
+      unbindCalls += 1;
+      const body = JSON.parse(opts.body);
+      assert.equal(body.channel, "whatsapp");
+      assert.equal(body.accountId, "emp-1");
+      assert.equal(body.agentId, "agent-1");
+      return jsonResponse({ ok: true, result: { removed: true } });
+    }
+    if (url === "http://gateway.local/repair/restart") {
+      restartCalls += 1;
+      return jsonResponse({ ok: true, pending: true });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.sendHeartbeat();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(unbindCalls, 1);
+  assert.equal(restartCalls, 1);
+});

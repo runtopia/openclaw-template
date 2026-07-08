@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../channels/bindings.js";
 import { patchConfig, setIn } from "../config/edit.js";
 import { applyChannelPolicy, normalizeChannelAccessPolicy } from "../channels/access-policy.js";
@@ -29,6 +30,7 @@ export function mountConfigOps(router, deps) {
     restartGateway,
     configFilePath,
     gatewayRpc,
+    stateDir,
   } = deps;
 
   // 双重认证：SETUP_PASSWORD (Basic Auth) 或 ONECLAW_INSTANCE_SECRET (Bearer)
@@ -228,9 +230,47 @@ export function mountConfigOps(router, deps) {
       patchConfig(configFilePath(), (cfg) => {
         result = removeChannelBinding(cfg, { channel, accountId, agentId });
       });
+      const artifacts = removeChannelRuntimeArtifacts({ stateDir, channel, accountId });
+      result = { ...result, artifacts };
       res.json({ ok: true, result });
     } catch (err) {
       res.status(400).json({ ok: false, error: String(err?.message || err) });
     }
   });
+}
+
+function removeChannelRuntimeArtifacts({ stateDir, channel, accountId }) {
+  const removed = [];
+  if (!stateDir || typeof accountId !== "string" || !accountId.trim()) return removed;
+  const cleanAccountId = accountId.trim();
+  const candidates = [];
+  if (channel === "whatsapp") {
+    candidates.push(
+      pathJoinSafe(stateDir, "oauth", "whatsapp", cleanAccountId),
+      pathJoinSafe(stateDir, "credentials", `whatsapp-${cleanAccountId}.json`),
+    );
+  }
+  if (channel === "openclaw-weixin") {
+    candidates.push(
+      pathJoinSafe(stateDir, "oauth", "openclaw-weixin", cleanAccountId),
+      pathJoinSafe(stateDir, "credentials", `openclaw-weixin-${cleanAccountId}.json`),
+    );
+  }
+  for (const target of candidates.filter(Boolean)) {
+    try {
+      if (!fs.existsSync(target)) continue;
+      fs.rmSync(target, { recursive: true, force: true });
+      removed.push(target);
+    } catch (err) {
+      console.warn(`[channel-bind] failed to remove runtime artifact ${target}: ${err.message}`);
+    }
+  }
+  return removed;
+}
+
+function pathJoinSafe(root, ...parts) {
+  const base = fs.realpathSync.native?.(root) || fs.realpathSync(root);
+  const target = path.join(base, ...parts);
+  if (!target.startsWith(base + path.sep)) return null;
+  return target;
 }

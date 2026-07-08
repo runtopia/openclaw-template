@@ -261,7 +261,7 @@ test("whatsapp login diagnostics reports plugin, account, and relevant log evide
   fs.mkdirSync(path.join(stateDir, "oauth", "whatsapp", "emp1"), { recursive: true });
   fs.writeFileSync(path.join(stateDir, "oauth", "whatsapp", "emp1", "creds.json"), JSON.stringify({ registrationId: 4321 }), "utf8");
   fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "package.json"), JSON.stringify({ name: "@openclaw/whatsapp", version: "2026.6.11" }), "utf8");
+  fs.writeFileSync(path.join(pluginDir, "package.json"), JSON.stringify({ name: "@openclaw/whatsapp", version: "2026.6.10" }), "utf8");
   fs.writeFileSync(cfgPath, JSON.stringify({
     channels: {
       whatsapp: {
@@ -273,7 +273,7 @@ test("whatsapp login diagnostics reports plugin, account, and relevant log evide
     bindings: [{ agentId: "agent1", match: { channel: "whatsapp", accountId: "emp1" } }],
     plugins: {
       entries: { whatsapp: { enabled: true } },
-      installs: { whatsapp: { installPath: pluginDir, version: "2026.6.11" } },
+      installs: { whatsapp: { installPath: pluginDir, version: "2026.6.10" } },
     },
   }), "utf8");
 
@@ -326,7 +326,7 @@ test("whatsapp login diagnostics reports plugin, account, and relevant log evide
   assert.equal(data.gateway.rpc.startupRetrying, true);
   assert.equal(data.gateway.rpc.startupRetryCount, 12);
   assert.equal(data.plugin.installPathExists, true);
-  assert.equal(data.plugin.packageVersion, "2026.6.11");
+  assert.equal(data.plugin.packageVersion, "2026.6.10");
   assert.deepEqual(data.accounts.configuredAccountIds, ["emp1"]);
   assert.deepEqual(data.accounts.auth.accountDirs, [{ accountId: "emp1", hasCredentials: true }]);
   assert.equal(data.logs.length, 2);

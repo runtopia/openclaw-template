@@ -47,7 +47,7 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 #   it via `plugins.load.paths`. The discovery code (discoverFromPath) accepts
 #   any path and resolves each plugin's deps through the adjacent node_modules,
 #   so this needs zero runtime copy and zero runtime npm install.
-#   Channels (verified against openclaw 2026.6.11 source):
+#   Channels (verified against openclaw 2026.6.10 source):
 #     - telegram is BUILT INTO openclaw core (dist/extensions/telegram) — no
 #       plugin to install here.
 #     - slack / discord / feishu / whatsapp are official standalone packages.

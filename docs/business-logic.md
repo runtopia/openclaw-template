@@ -362,7 +362,7 @@ flowchart TD
 镜像构建：
 
 - 基础镜像：`node:22-bookworm`。
-- 安装 OpenClaw core，当前 Dockerfile pin 到 `openclaw@2026.6.11`。
+- 安装 OpenClaw core，当前 Dockerfile pin 到 `openclaw@2026.6.10`。
 - 预装 ClawRouters、Slack、Discord、Feishu、WhatsApp、WeChat 插件到 `/opt/openclaw-plugins`。
 - 安装 wrapper 依赖 `express`、`http-proxy`、`ws`。
 - 运行时通过 `start.sh` 启动。

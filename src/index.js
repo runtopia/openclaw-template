@@ -312,6 +312,8 @@ const repairRouter = createRepairRouter({
   restartGateway: gateway.restartGateway,
   configFilePath: () => CONFIG_PATH,
   stateDir: STATE_DIR,
+  gatewayTarget: `http://${GATEWAY_HOST}:${GATEWAY_PORT}`,
+  gatewayToken: GATEWAY_TOKEN,
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
   gatewayRpc,

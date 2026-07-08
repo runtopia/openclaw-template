@@ -224,13 +224,17 @@ export function mountConfigOps(router, deps) {
   });
 
   router.post("/unbind-channel", requireRepairAuth, (req, res) => {
-    const { channel, accountId, agentId } = req.body || {};
+    const { channel, accountId, agentId, runtimeAccountId, runtime_account_id } = req.body || {};
     try {
       let result;
       patchConfig(configFilePath(), (cfg) => {
         result = removeChannelBinding(cfg, { channel, accountId, agentId });
       });
-      const artifacts = removeChannelRuntimeArtifacts({ stateDir, channel, accountId });
+      const artifacts = removeChannelRuntimeArtifacts({
+        stateDir,
+        channel,
+        accountId: runtimeAccountId || runtime_account_id || accountId,
+      });
       result = { ...result, artifacts };
       res.json({ ok: true, result });
     } catch (err) {
@@ -239,7 +243,7 @@ export function mountConfigOps(router, deps) {
   });
 }
 
-function removeChannelRuntimeArtifacts({ stateDir, channel, accountId }) {
+export function removeChannelRuntimeArtifacts({ stateDir, channel, accountId }) {
   const removed = [];
   if (!stateDir || typeof accountId !== "string" || !accountId.trim()) return removed;
   const cleanAccountId = accountId.trim();
@@ -251,7 +255,22 @@ function removeChannelRuntimeArtifacts({ stateDir, channel, accountId }) {
     );
   }
   if (channel === "openclaw-weixin") {
+    const accountIds = resolveWeixinArtifactAccountIds(stateDir, cleanAccountId);
+    for (const id of accountIds) {
+      removeWeixinAccountIndexEntry(stateDir, id, removed);
+    }
+    for (const id of accountIds) {
+      candidates.push(
+        pathJoinSafe(stateDir, "openclaw-weixin", "accounts", `${id}.json`),
+        pathJoinSafe(stateDir, "openclaw-weixin", "accounts", `${id}.sync.json`),
+        pathJoinSafe(stateDir, "openclaw-weixin", "accounts", `${id}.context-tokens.json`),
+        pathJoinSafe(stateDir, "credentials", `openclaw-weixin-${safeCredentialKey(id)}-allowFrom.json`),
+      );
+    }
     candidates.push(
+      // 兼容旧版单账号微信插件状态；不清掉它时，账号文件删了仍可能从 legacy token 恢复。
+      pathJoinSafe(stateDir, "credentials", "openclaw-weixin", "credentials.json"),
+      pathJoinSafe(stateDir, "agents", "default", "sessions", ".openclaw-weixin-sync", "default.json"),
       pathJoinSafe(stateDir, "oauth", "openclaw-weixin", cleanAccountId),
       pathJoinSafe(stateDir, "credentials", `openclaw-weixin-${cleanAccountId}.json`),
     );
@@ -266,6 +285,61 @@ function removeChannelRuntimeArtifacts({ stateDir, channel, accountId }) {
     }
   }
   return removed;
+}
+
+function resolveWeixinArtifactAccountIds(stateDir, accountId) {
+  const ids = new Set([accountId]);
+  const indexed = readWeixinAccountIndex(stateDir);
+  if (!indexed.includes(accountId) && indexed.length === 1) {
+    // 历史版本曾把员工 ID 当作微信 accountId 写入配置；若插件索引里只有一个真实账号，
+    // 解绑时一并清掉它，避免微信插件继续用残留登录态启动。
+    ids.add(indexed[0]);
+  }
+  for (const id of Array.from(ids)) {
+    const raw = deriveRawWeixinAccountId(id);
+    if (raw) ids.add(raw);
+  }
+  return Array.from(ids);
+}
+
+function readWeixinAccountIndex(stateDir) {
+  const indexPath = pathJoinSafe(stateDir, "openclaw-weixin", "accounts.json");
+  if (!indexPath || !fs.existsSync(indexPath)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string" && item.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
+function removeWeixinAccountIndexEntry(stateDir, accountId, removed) {
+  const indexPath = pathJoinSafe(stateDir, "openclaw-weixin", "accounts.json");
+  if (!indexPath || !fs.existsSync(indexPath)) return;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    if (!Array.isArray(parsed)) return;
+    const updated = parsed.filter((item) => item !== accountId);
+    if (updated.length === parsed.length) return;
+    fs.writeFileSync(indexPath, JSON.stringify(updated, null, 2), "utf8");
+    removed.push(indexPath);
+  } catch (err) {
+    console.warn(`[channel-bind] failed to update weixin account index ${indexPath}: ${err.message}`);
+  }
+}
+
+function deriveRawWeixinAccountId(accountId) {
+  if (accountId.endsWith("-im-bot")) return `${accountId.slice(0, -7)}@im.bot`;
+  if (accountId.endsWith("-im-wechat")) return `${accountId.slice(0, -10)}@im.wechat`;
+  return "";
+}
+
+function safeCredentialKey(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\.\./g, "_");
 }
 
 function pathJoinSafe(root, ...parts) {

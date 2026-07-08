@@ -689,6 +689,83 @@ test("wechat bind command enables openclaw-weixin config before starting login",
   assert.deepEqual(cfg.channels["openclaw-weixin"].allowFrom, ["wx-owner"]);
 });
 
+test("wechat bind command binds the real plugin account id to the employee agent", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  const repairBodies = [];
+  const restartCalls = [];
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [{
+          id: "cmd-bind-wechat-ready",
+          type: "update_config",
+          payload: {
+            action: "bind_channel",
+            employee_id: "emp-1",
+            openclaw_agent_id: "agent-1",
+            channel: "wechat",
+            state: {
+              binding: {
+                session_id: "bind-1",
+                expires_at: new Date(startAt + 1_000).toISOString(),
+              },
+            },
+          },
+        }],
+      });
+    }
+    if (url === "http://gateway.local/repair/wechat-login/start") {
+      return jsonResponse({
+        ok: true,
+        status: "connected",
+        connected: true,
+        connectedAccountId: "77597573942e-im-bot",
+      });
+    }
+    if (url === "http://gateway.local/repair/bind-channel") {
+      repairBodies.push(JSON.parse(opts.body));
+      return jsonResponse({ ok: true });
+    }
+    if (url === "http://gateway.local/repair/restart") {
+      restartCalls.push(true);
+      return jsonResponse({ ok: true, pending: true });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    restoreFetch();
+  }
+
+  assert.deepEqual(repairBodies, [{
+    channel: "openclaw-weixin",
+    accountId: "77597573942e-im-bot",
+    agentId: "agent-1",
+  }]);
+  assert.equal(restartCalls.length, 1);
+});
+
 test("cancel bind command stops active channel polling", async () => {
   const workspaceDir = makeWorkspace();
   const startAt = Date.now();
@@ -854,6 +931,73 @@ test("cancel wechat bind command stops wrapper login process", async () => {
   }
 
   assert.equal(stopCalls, 1);
+});
+
+test("wechat bind command reports plugin login failures instead of keeping stale QR pending", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  const channelStates = [];
+  const restoreFetch = withFetch((url, opts) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [{
+          id: "cmd-bind-wechat-fail",
+          type: "update_config",
+          payload: {
+            action: "bind_channel",
+            employee_id: "emp-1",
+            openclaw_agent_id: "agent-1",
+            channel: "wechat",
+            state: {
+              binding: {
+                session_id: "bind-fail",
+                expires_at: new Date(startAt + 1_000).toISOString(),
+              },
+            },
+          },
+        }],
+      });
+    }
+    if (url === "http://gateway.local/repair/wechat-login/start") {
+      return jsonResponse({
+        ok: true,
+        status: "error",
+        qrUrl: "https://liteapp.weixin.qq.com/q/stale?qrcode=old&bot_type=3",
+        message: "temporary upstream network error",
+      });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      channelStates.push(JSON.parse(opts.body));
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(
+    channelStates.some((state) => state.status === "failed" && state.error === "temporary upstream network error"),
+    true,
+  );
 });
 
 test("unbind channel command removes runtime binding and restarts gateway", async () => {

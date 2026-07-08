@@ -58,11 +58,13 @@ ARG CACHEBUST_PLUGINS=v6
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts ./scripts
+# 修复 openclaw@2026.6.11 dashboard 二轮对话：sessions.send 需透传既有 sessionId。
 RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
+  && node /app/scripts/patch-openclaw-dashboard-session-send.js /usr/local/lib/node_modules/openclaw \
   && cd ${OPENCLAW_PLUGINS_DIR} \
   && npm init -y >/dev/null 2>&1 \
   && npm install --omit=dev --no-audit --no-fund \
-       github:runtopia/clawrouters-plugin \
+       github:runtopia/clawrouters-plugin#0.4.1 \
        @openclaw/slack@2026.6.11 \
        @openclaw/discord@2026.6.11 \
        @openclaw/feishu@2026.6.11 \

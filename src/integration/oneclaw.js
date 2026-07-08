@@ -718,9 +718,13 @@ export function createOneclawIntegration({
         ? await pollWhatsAppBinding(session)
         : await pollWechatBinding(session);
       if (session.cancelled) return;
+      if (data?.status === "error" || data?.status === "failed" || data?.error) {
+        throw new Error(data.error || data.message || `${session.channel} login failed`);
+      }
       const connected = !!data.connected || data.status === "connected";
       if (connected) {
         activeChannelBindings.delete(session.key);
+        session.runtimeAccountId = String(data.connectedAccountId || data.accountId || "").trim();
         await bindRuntimeChannel(session);
         await restartRuntimeAfterChannelChange();
         await reportChannelState({
@@ -793,11 +797,12 @@ export function createOneclawIntegration({
 
   async function bindRuntimeChannel(session) {
     const runtimeChannel = runtimeChannelName(session.channel);
-    if (!runtimeChannel || !session.employeeId || !session.agentId) return;
+    const accountId = runtimeChannelAccountId(session.channel, session.employeeId, session.runtimeAccountId);
+    if (!runtimeChannel || !accountId || !session.agentId) return;
     try {
       await repairFetch("bind-channel", "POST", {
         channel: runtimeChannel,
-        accountId: session.employeeId,
+        accountId,
         agentId: session.agentId,
       });
     } catch (err) {
@@ -808,11 +813,12 @@ export function createOneclawIntegration({
   async function unbindRuntimeChannel(payload, channel, employeeId) {
     const runtimeChannel = runtimeChannelName(channel);
     const agentId = runtimeAgentId(payload, employeeId);
-    if (!runtimeChannel || !employeeId || !agentId) return;
+    const accountId = runtimeAccountIdFromPayload(payload, channel, employeeId);
+    if (!runtimeChannel || !accountId || !agentId) return;
     try {
       await repairFetch("unbind-channel", "POST", {
         channel: runtimeChannel,
-        accountId: employeeId,
+        accountId,
         agentId,
       });
     } catch (err) {
@@ -835,6 +841,24 @@ export function createOneclawIntegration({
 
   function runtimeChannelName(channel) {
     return channel === "wechat" ? "openclaw-weixin" : channel;
+  }
+
+  function runtimeChannelAccountId(channel, employeeId, runtimeAccountId) {
+    const accountId = String(runtimeAccountId || "").trim();
+    if (channel === "wechat" && accountId) return accountId;
+    return employeeId;
+  }
+
+  function runtimeAccountIdFromPayload(payload, channel, employeeId) {
+    const stateConfig = payload?.state?.config || payload?.config || {};
+    const runtimeAccountId = String(
+      payload?.runtime_account_id ||
+      payload?.runtimeAccountId ||
+      stateConfig.account_id ||
+      stateConfig.accountId ||
+      "",
+    ).trim();
+    return runtimeChannelAccountId(channel, employeeId, runtimeAccountId);
   }
 
   function runtimeAgentId(payload, employeeId) {

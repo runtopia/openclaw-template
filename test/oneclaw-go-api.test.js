@@ -201,6 +201,246 @@ test("command polling applies employee template commands without waiting for hea
   );
 });
 
+test("command polling installs and removes employee skills", async () => {
+  const workspaceDir = makeWorkspace();
+  const baseDir = path.join(workspaceDir, "agents", "emp-skill", "skills");
+  fs.mkdirSync(path.join(baseDir, "github"), { recursive: true });
+  const rpcCalls = [];
+  const runCalls = [];
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method, params) => {
+      rpcCalls.push({ method, params });
+      if (method === "agents.create") return { ok: true, payload: { agentId: "oneclaw-emp-skill" } };
+      if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "oneclaw-emp-skill", name: "oneclaw-emp-skill" }] } };
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    assert.equal(opts.method, "GET");
+    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
+    return jsonResponse({
+      commands: [
+        { id: "cmd-install", type: "install_skill", payload: { employee_id: "emp-skill", skill_slug: "github" } },
+        { id: "cmd-remove", type: "remove_skill", payload: { employee_id: "emp-skill", skill_slug: "github" } },
+      ],
+    });
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayRpc,
+      runCmd: async (_cmd, args) => {
+        runCalls.push(args);
+        if (args.includes("list")) {
+          return { code: 0, output: JSON.stringify({ baseDir }) };
+        }
+        return { code: 0, output: "ok" };
+      },
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.deepEqual(runCalls[0], ["skills", "install", "github", "--agent", "oneclaw-emp-skill"]);
+  assert.deepEqual(runCalls[1], ["skills", "list", "--agent", "oneclaw-emp-skill", "--json"]);
+  assert.equal(fs.existsSync(path.join(baseDir, "github")), false);
+});
+
+test("command polling restarts gateway and reports runtime logs", async () => {
+  const workspaceDir = makeWorkspace();
+  const eventBodies = [];
+  let restartCalls = 0;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10") {
+      return jsonResponse({
+        commands: [
+          { id: "cmd-restart", type: "restart", payload: { reason: "manual" } },
+          { id: "cmd-logs", type: "get_logs", payload: { lines: 2 } },
+        ],
+      });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/event") {
+      eventBodies.push(JSON.parse(opts.body));
+      return jsonResponse({ accepted: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      restartGateway: async () => {
+        restartCalls += 1;
+        return { ok: true, pending: true };
+      },
+      getGatewayLogs: () => ["line-1", "line-2", "line-3"],
+      gatewayRpc: { restart: () => {} },
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(restartCalls, 1);
+  assert.equal(eventBodies[0].event, "runtime_command_executed");
+  assert.equal(eventBodies[1].event, "runtime_logs");
+  assert.deepEqual(eventBodies[1].data.lines, ["line-2", "line-3"]);
+});
+
+test("command polling syncs OneClaw cron tasks through OpenClaw native cron RPC", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  const rpcCalls = [];
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method, params) => {
+      rpcCalls.push({ method, params });
+      if (method === "cron.list") return { ok: true, payload: { jobs: [] } };
+      if (method === "cron.add") return { ok: true, payload: { id: "native-cron-1" } };
+      if (method === "cron.get") return { ok: true, payload: { id: "native-cron-1" } };
+      if (method === "cron.run") return { ok: true, payload: { ok: true } };
+      if (method === "cron.remove") return { ok: true, payload: { ok: true } };
+      throw new Error(`unexpected rpc ${method}`);
+    },
+  };
+  let pollCount = 0;
+  const restoreFetch = withFetch((url) => {
+    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
+    pollCount += 1;
+    if (pollCount === 1) {
+      return jsonResponse({
+        commands: [{
+          id: "cmd-upsert-task",
+          type: "upsert_cron_task",
+          payload: {
+            employee_id: "emp-1",
+            task: {
+              id: "oneclaw-task-1",
+              name: "早间简报",
+              schedule: { kind: "cron", expr: "0 9 * * *", tz: "Asia/Shanghai" },
+              session_target: "isolated",
+              wake_mode: "now",
+              payload: { kind: "agentTurn", message: "给我一份今天摘要" },
+              delivery: { mode: "announce", channel: "last", best_effort: true },
+              agent_id: "emp-1",
+              enabled: true,
+            },
+          },
+        }],
+      });
+    }
+    return jsonResponse({
+      commands: [
+        { id: "cmd-run-task", type: "run_cron_task", payload: { task_id: "oneclaw-task-1" } },
+        { id: "cmd-delete-task", type: "delete_cron_task", payload: { task_id: "oneclaw-task-1" } },
+      ],
+    });
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      gatewayRpc,
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  const addCall = rpcCalls.find((call) => call.method === "cron.add");
+  assert.ok(addCall, "cron.add should be called");
+  assert.equal(addCall.params.id, undefined);
+  assert.equal(addCall.params.name, "oneclaw-task-1 · 早间简报");
+  assert.equal(addCall.params.schedule.expr, "0 9 * * *");
+  assert.equal(addCall.params.schedule.tz, "Asia/Shanghai");
+  assert.equal(addCall.params.sessionTarget, "isolated");
+  assert.equal(addCall.params.wakeMode, "now");
+  assert.equal(addCall.params.agentId, "emp-1");
+  assert.equal(addCall.params.delivery.bestEffort, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(stateDir, "oneclaw-cron-tasks.json"), "utf8")), {});
+  assert.deepEqual(
+    rpcCalls.filter((call) => call.method === "cron.run" || call.method === "cron.remove").map((call) => [call.method, call.params.id]),
+    [["cron.run", "native-cron-1"], ["cron.remove", "native-cron-1"]],
+  );
+});
+
+test("command polling applies regular channel config updates", async () => {
+  const workspaceDir = makeWorkspace();
+  const stateDir = makeWorkspace();
+  let restartCalls = 0;
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({ channels: {}, plugins: { entries: {} } }, null, 2));
+  const restoreFetch = withFetch((url) => {
+    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
+    return jsonResponse({
+      commands: [{
+        id: "cmd-channel",
+        type: "update_config",
+        payload: {
+          action: "update_channel",
+          employee_id: "emp-1",
+          channel: "telegram",
+          state: {
+            enabled: true,
+            config: {
+              access: { mode: "allowlist", allowFrom: ["tg-owner"], groupMode: "disabled" },
+            },
+            secrets: { botToken: "telegram-token" },
+          },
+        },
+      }],
+    });
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      restartGateway: async () => {
+        restartCalls += 1;
+        return { ok: true, pending: true };
+      },
+      gatewayRpc: { restart: () => {} },
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  const cfg = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
+  assert.equal(cfg.channels.telegram.enabled, true);
+  assert.equal(cfg.channels.telegram.botToken, "telegram-token");
+  assert.equal(cfg.channels.telegram.dmPolicy, "allowlist");
+  assert.deepEqual(cfg.channels.telegram.allowFrom, ["tg-owner"]);
+  assert.equal(restartCalls, 1);
+});
+
 test("fetchPersonality reads Go API snake_case response and writes workspace files", async () => {
   const workspaceDir = makeWorkspace();
   const restoreFetch = withFetch((url, opts) => {

@@ -30,7 +30,10 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Pin OpenClaw core.
-ARG OPENCLAW_VERSION=2026.6.11
+# 固定在 2026.6.10：2026.6.11 的 reply session 初始化改用整-entry CAS（只重试一次），
+# 会导致 dashboard/webchat 二轮对话及微信等通道第二条消息起报
+# "reply session initialization conflicted"。6.10 无此逻辑。
+ARG OPENCLAW_VERSION=2026.6.10
 RUN npm install -g openclaw@${OPENCLAW_VERSION}
 
 # Pre-install plugins OUTSIDE the /data volume, into a fixed image path.
@@ -54,21 +57,19 @@ RUN npm install -g openclaw@${OPENCLAW_VERSION}
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v6
+ARG CACHEBUST_PLUGINS=v7
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts ./scripts
-# 修复 openclaw@2026.6.11 dashboard 二轮对话：sessions.send 需透传既有 sessionId。
 RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
-  && node /app/scripts/patch-openclaw-dashboard-session-send.js /usr/local/lib/node_modules/openclaw \
   && cd ${OPENCLAW_PLUGINS_DIR} \
   && npm init -y >/dev/null 2>&1 \
   && npm install --omit=dev --no-audit --no-fund \
        github:runtopia/clawrouters-plugin#0.4.1 \
-       @openclaw/slack@2026.6.11 \
-       @openclaw/discord@2026.6.11 \
-       @openclaw/feishu@2026.6.11 \
-       @openclaw/whatsapp@2026.6.11 \
+       @openclaw/slack@2026.6.10 \
+       @openclaw/discord@2026.6.10 \
+       @openclaw/feishu@2026.6.10 \
+       @openclaw/whatsapp@2026.6.10 \
        @tencent-weixin/openclaw-weixin@2.4.6 \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}

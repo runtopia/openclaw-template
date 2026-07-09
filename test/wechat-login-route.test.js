@@ -28,15 +28,15 @@ function jsonResponse(body, status = 200) {
   };
 }
 
-function createWechatRepairApp() {
+function createWechatRepairApp(overrides = {}) {
   const app = express();
   app.use(express.json());
   app.use("/repair", createRepairRouter({
     requireSetupAuth: (_req, _res, next) => next(),
     instanceSecret: undefined,
     runCmd: async () => ({ code: 0, output: "" }),
-    clawArgs: (args) => args,
-    OPENCLAW_NODE: "node",
+    clawArgs: () => ["-e", "setTimeout(() => {}, 5000)"],
+    OPENCLAW_NODE: process.execPath,
     restartGateway: async () => ({ ok: true }),
     configFilePath: () => "/tmp/missing-openclaw.json",
     stateDir: "/tmp",
@@ -50,6 +50,7 @@ function createWechatRepairApp() {
     },
     getRepairAiKey: () => null,
     gatewayRpc: null,
+    ...overrides,
   }));
   return app;
 }
@@ -180,4 +181,37 @@ test("wechat login start retries transient plugin QR failures once", async (t) =
   assert.equal(res.status, 200);
   assert.equal(data.qrUrl, "https://liteapp.weixin.qq.com/q/retry?qrcode=abc&bot_type=3");
   assert.equal(attempts, 2);
+});
+
+test("wechat login start disables plugin HTTP route after 404 and falls back to CLI", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let pluginCalls = 0;
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-start") {
+      pluginCalls += 1;
+      return jsonResponse({ error: "Not Found" }, 404);
+    }
+    return originalFetch(url, opts);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    stopWechatLogin();
+  });
+
+  const server = await listen(createWechatRepairApp());
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  for (let i = 0; i < 2; i += 1) {
+    const res = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: "emp1" }),
+    });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.ok, true);
+  }
+
+  assert.equal(pluginCalls, 1);
 });

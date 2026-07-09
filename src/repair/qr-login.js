@@ -289,13 +289,14 @@ export function mountQrLogin(router, deps) {
   const WECHAT_PLUGIN_QR_START_ATTEMPTS = 2;
   const WECHAT_PLUGIN_RETRY_DELAY_MS = 350;
   let wechatPluginSession = null;
+  let wechatPluginHttpUnavailable = false;
 
   function wechatPluginBaseUrl() {
     return (gatewayTarget || gatewayManager?.GATEWAY_TARGET || "").replace(/\/+$/, "");
   }
 
   function canUseWechatPluginHttp() {
-    return !!(wechatPluginBaseUrl() && gatewayToken);
+    return !wechatPluginHttpUnavailable && !!(wechatPluginBaseUrl() && gatewayToken);
   }
 
   async function sleep(ms) {
@@ -478,7 +479,12 @@ export function mountQrLogin(router, deps) {
         }
         return res.json(started);
       } catch (err) {
-        console.warn(`[wechat-login] plugin HTTP QR start failed, falling back to CLI: ${err.message}`);
+        if (err?.status === 404) {
+          wechatPluginHttpUnavailable = true;
+          console.warn("[wechat-login] plugin HTTP QR route unavailable (404); using CLI fallback for this process");
+        } else {
+          console.warn(`[wechat-login] plugin HTTP QR start failed, falling back to CLI: ${err.message}`);
+        }
       }
     }
     const s = startWechatLogin({ OPENCLAW_NODE, clawArgs, accountId });

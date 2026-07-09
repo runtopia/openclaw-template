@@ -71,6 +71,7 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
        @openclaw/feishu@2026.6.10 \
        @openclaw/whatsapp@2026.6.10 \
        @tencent-weixin/openclaw-weixin@2.4.6 \
+  && node /app/scripts/patch-weixin-http-routes.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 

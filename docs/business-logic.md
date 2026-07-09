@@ -280,7 +280,7 @@ Runtime 从 Go API 心跳响应或 `/agent/commands` 拉取命令。模板当前
 2. 只处理 `whatsapp` 和 `wechat`。
 3. 确保二维码通道 runtime 配置存在。
 4. 启动一次性绑定 session。
-5. 在 session 过期前持续拉二维码或登录状态。
+5. 在 session 过期前持续拉二维码或登录状态；WeChat 同账号已有可用二维码时复用缓存，不重复生成。
 6. 每次二维码刷新或状态变化回写 `/agent/channels/state`。
 
 当前需要注意：
@@ -317,9 +317,11 @@ flowchart TD
     D --> E["启动本地绑定 session"]
     E --> F{"channel"}
     F -- "whatsapp" --> G["gateway RPC web.login.start/wait"]
-    F -- "wechat" --> H["openclaw channels login --channel openclaw-weixin"]
-    G --> I["生成或刷新二维码"]
+    F -- "wechat" --> H["插件 HTTP /plugins/openclaw-weixin/qr-start 或复用缓存 QR"]
+    H -. "旧插件兜底" .-> M["openclaw channels login --channel openclaw-weixin"]
+    G --> I["生成、刷新或复用二维码"]
     H --> I
+    M --> I
     I --> J["POST /agent/channels/state pending + qr_url"]
     J --> K["用户扫码"]
     K --> L["POST /agent/channels/state ready"]
@@ -328,6 +330,7 @@ flowchart TD
 绑定生命周期：
 
 - session 只在 `expires_at` 前刷新。
+- 微信插件如果没有返回 `qrExpiresAt`/`expiresAt`，模板认为该二维码可继续复用；只有插件明确返回过期时间且已过期时，才重新调用 `qr-start`。
 - 到期后本地停止刷新，并上报 `expired`。
 - 用户取消绑定时，Go API 入队 `cancel_bind_channel`，模板停止本地 session。
 - 微信取消时会额外调用 `wechat-login/stop` 停止登录进程。

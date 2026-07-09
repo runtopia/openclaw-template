@@ -65,6 +65,7 @@ test("wechat login start uses plugin HTTP route and returns QR immediately", asy
       return jsonResponse({
         sessionKey: "wechat-session-1",
         qrDataUrl: "https://liteapp.weixin.qq.com/q/test?qrcode=abc&bot_type=3",
+        qrExpiresAt: "2026-07-09T11:20:00.000Z",
         message: "使用微信扫描以下二维码，以完成连接。",
       });
     }
@@ -90,8 +91,57 @@ test("wechat login start uses plugin HTTP route and returns QR immediately", asy
   assert.equal(data.ok, true);
   assert.equal(data.status, "scan");
   assert.equal(data.qrUrl, "https://liteapp.weixin.qq.com/q/test?qrcode=abc&bot_type=3");
+  assert.equal(data.qrExpiresAt, "2026-07-09T11:20:00.000Z");
   assert.equal(data.sessionKey, "wechat-session-1");
   assert.equal(pluginCalls.length, 1);
+});
+
+test("wechat login start reuses active plugin QR for the same account", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let startCalls = 0;
+  let statusCalls = 0;
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-start") {
+      startCalls += 1;
+      assert.deepEqual(JSON.parse(opts.body), { accountId: "emp1" });
+      return jsonResponse({
+        sessionKey: "wechat-session-reuse",
+        qrDataUrl: "https://liteapp.weixin.qq.com/q/reuse?qrcode=abc&bot_type=3",
+        message: "使用微信扫描以下二维码，以完成连接。",
+      });
+    }
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-status?sessionKey=wechat-session-reuse") {
+      statusCalls += 1;
+      return jsonResponse({ status: "scan", message: "waiting" });
+    }
+    return originalFetch(url, opts);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    stopWechatLogin();
+  });
+
+  const server = await listen(createWechatRepairApp());
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const first = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: "emp1" }),
+  });
+  const firstData = await first.json();
+  const second = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: "emp1" }),
+  });
+  const secondData = await second.json();
+
+  assert.equal(firstData.qrUrl, "https://liteapp.weixin.qq.com/q/reuse?qrcode=abc&bot_type=3");
+  assert.equal(secondData.qrUrl, firstData.qrUrl);
+  assert.equal(startCalls, 1);
+  assert.equal(statusCalls, 1);
 });
 
 test("wechat login start retries transient plugin QR failures once", async (t) => {

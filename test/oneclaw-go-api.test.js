@@ -617,7 +617,8 @@ test("wechat bind command enables openclaw-weixin config before starting login",
     channels: {},
   }));
   const startAt = Date.now();
-  const restoreFetch = withFetch((url) => {
+  const channelStates = [];
+  const restoreFetch = withFetch((url, opts = {}) => {
     if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
       return jsonResponse({
         instance_id: "runtime-1",
@@ -655,9 +656,15 @@ test("wechat bind command enables openclaw-weixin config before starting login",
       assert.equal(cfg.channels["openclaw-weixin"].enabled, true);
       assert.equal(cfg.channels["openclaw-weixin"].dmPolicy, "allowlist");
       assert.deepEqual(cfg.channels["openclaw-weixin"].allowFrom, ["wx-owner"]);
-      return jsonResponse({ ok: true, status: "scan", qrUrl: "https://wechat.example/qr" });
+      return jsonResponse({
+        ok: true,
+        status: "scan",
+        qrUrl: "https://wechat.example/qr",
+        qrExpiresAt: "2026-07-09T11:20:00.000Z",
+      });
     }
     if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      channelStates.push(JSON.parse(opts.body));
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -687,6 +694,7 @@ test("wechat bind command enables openclaw-weixin config before starting login",
   assert.equal(cfg.channels["openclaw-weixin"].enabled, true);
   assert.equal(cfg.channels["openclaw-weixin"].dmPolicy, "allowlist");
   assert.deepEqual(cfg.channels["openclaw-weixin"].allowFrom, ["wx-owner"]);
+  assert.equal(channelStates[0]?.qr_expires_at, "2026-07-09T11:20:00.000Z");
 });
 
 test("wechat bind command binds the real plugin account id to the employee agent", async () => {

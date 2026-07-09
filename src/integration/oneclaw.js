@@ -6,7 +6,7 @@ import { buildRuntimeChannelAccessPolicy, mergeChannelPolicy } from "../channels
 import { CHANNEL_MANIFEST, setChannelConfig } from "../channels/manifest.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
-const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 15_000);
+const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
 
 export function normalizeOneclawApiUrl(raw) {
   const base = String(raw || "").trim().replace(/\/+$/, "");
@@ -745,6 +745,7 @@ export function createOneclawIntegration({
           status: "pending",
           session_id: session.sessionId,
           qr_url: qrUrl,
+          qr_expires_at: channelQrExpiresAt(data),
         });
       }
     } catch (err) {
@@ -764,12 +765,17 @@ export function createOneclawIntegration({
     }
   }
 
+  function channelQrExpiresAt(data) {
+    const raw = data?.qr_expires_at ?? data?.qrExpiresAt ?? data?.expires_at ?? data?.expiresAt ?? null;
+    if (typeof raw !== "string" || raw.trim() === "") return undefined;
+    return raw.trim();
+  }
+
   async function pollWhatsAppBinding(session) {
     if (!session.started) {
       session.started = true;
       return repairFetch("whatsapp-login/start", "POST", {
         accountId: session.employeeId,
-        force: true,
       });
     }
     return repairFetch("whatsapp-login/wait", "POST", {

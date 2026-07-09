@@ -322,6 +322,7 @@ const repairRouter = createRepairRouter({
   gatewayManager: gateway,
   getRepairAiKey: () => repairAiKey,
   gatewayRpc,
+  oneclawIntegration: oneclaw,
   issueBrowserLoginUrl: (req, next) => browserSessions.issueLoginUrl(req, next),
 });
 app.use("/repair", requireAuthApi);

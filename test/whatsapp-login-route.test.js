@@ -64,6 +64,50 @@ test("whatsapp login start returns preparing while gateway is warming up", async
   assert.equal(data.qrDataUrl, null);
 });
 
+test("repair command wake endpoint polls OneClaw commands immediately", async (t) => {
+  const app = express();
+  app.use(express.json());
+  let pollCount = 0;
+  app.use("/repair", createRepairRouter({
+    requireSetupAuth: (_req, _res, next) => next(),
+    instanceSecret: undefined,
+    runCmd: async () => ({ code: 0, output: "" }),
+    clawArgs: (args) => args,
+    OPENCLAW_NODE: "node",
+    restartGateway: async () => ({ ok: true }),
+    configFilePath: () => "/tmp/missing-openclaw.json",
+    stateDir: "/tmp",
+    gatewayManager: {
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      ensureGatewayRunning: async () => ({ ok: true }),
+      getRecentLogs: () => [],
+    },
+    getRepairAiKey: () => null,
+    gatewayRpc: null,
+    oneclawIntegration: {
+      pollCommands: async () => {
+        pollCount += 1;
+      },
+    },
+  }));
+
+  const server = await listen(app);
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const res = await fetch(`http://127.0.0.1:${port}/repair/commands/poll-now`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(data.ok, true);
+  assert.equal(data.polled, true);
+  assert.equal(pollCount, 1);
+});
+
 test("whatsapp login waits for gateway rpc and returns qr when startup finishes quickly", async (t) => {
   const app = express();
   app.use(express.json());

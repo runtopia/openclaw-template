@@ -3,6 +3,7 @@ import path from "node:path";
 import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../channels/bindings.js";
 import { patchConfig, setIn } from "../config/edit.js";
 import { applyChannelPolicy, normalizeChannelAccessPolicy } from "../channels/access-policy.js";
+import { approvePairingRequest, listPairingRequests, normalizePairingChannel, resolveOpenClawEntryFromClawArgs } from "../channels/pairing-store.js";
 
 const SENSITIVE_KEYS = new Set(["apiKey", "token", "secret", "password", "key"]);
 
@@ -159,15 +160,24 @@ export function mountConfigOps(router, deps) {
     const channel = typeof req.query.channel === "string" && req.query.channel.trim()
       ? req.query.channel.trim()
       : undefined;
+    if (!channel) {
+      return res.status(400).json({ ok: false, error: "Missing channel" });
+    }
+    const accountId = typeof req.query.account_id === "string" && req.query.account_id.trim()
+      ? req.query.account_id.trim()
+      : typeof req.query.accountId === "string" && req.query.accountId.trim()
+        ? req.query.accountId.trim()
+        : "";
     try {
-      const args = ["pairing", "list"];
-      if (channel) args.push(channel);
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(args));
-      res.status(r.code === 0 ? 200 : 500).json({
-        ok: r.code === 0,
-        channel: channel ?? null,
-        requests: [],
-        output: r.output,
+      const requests = await listPairingRequests({
+        channel,
+        accountId,
+        openclawEntry: resolveOpenClawEntryFromClawArgs(clawArgs),
+      });
+      res.json({
+        ok: true,
+        channel: channel ? normalizePairingChannel(channel) : null,
+        requests,
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err?.message || err) });
@@ -175,7 +185,7 @@ export function mountConfigOps(router, deps) {
   });
 
   router.post("/channel-access-requests/:requestId/approve", requireRepairAuth, async (req, res) => {
-    const { channel, code } = req.body || {};
+    const { channel, code, account_id, accountId } = req.body || {};
     const pairingCode = typeof code === "string" && code.trim()
       ? code.trim()
       : String(req.params.requestId || "").trim();
@@ -183,8 +193,16 @@ export function mountConfigOps(router, deps) {
       return res.status(400).json({ ok: false, error: "Missing channel or pairing code" });
     }
     try {
-      const r = await runCmd(OPENCLAW_NODE, clawArgs(["pairing", "approve", String(channel), pairingCode]));
-      res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: r.output });
+      const approved = await approvePairingRequest({
+        channel,
+        code: pairingCode,
+        accountId: account_id || accountId || "",
+        openclawEntry: resolveOpenClawEntryFromClawArgs(clawArgs),
+      });
+      if (!approved) {
+        return res.status(404).json({ ok: false, error: `No pending pairing request found for code "${pairingCode}"` });
+      }
+      res.json({ ok: true, approved });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err?.message || err) });
     }

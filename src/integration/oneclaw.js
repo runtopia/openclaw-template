@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildRuntimeChannelAccessPolicy, mergeChannelPolicy } from "../channels/access-policy.js";
 import { CHANNEL_MANIFEST, setChannelConfig } from "../channels/manifest.js";
+import { approvePairingRequest, listPairingRequests, normalizePairingChannel, resolveOpenClawEntryFromClawArgs } from "../channels/pairing-store.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
@@ -94,6 +95,18 @@ export function createOneclawIntegration({
       if (!res.ok) console.warn(`[channel-bind] state report failed: ${res.status}`);
     } catch (err) {
       console.error(`[channel-bind] state report error: ${err.message}`);
+    }
+  }
+
+  async function reportChannelAccessRequest(payload) {
+    try {
+      const res = await apiFetch("/agent/channels/access-requests", {
+        method: "POST",
+        body: JSON.stringify({ instance_id: instanceId, ...payload }),
+      });
+      if (!res.ok) console.warn(`[channel-access] request report failed: ${res.status}`);
+    } catch (err) {
+      console.error(`[channel-access] request report error: ${err.message}`);
     }
   }
 
@@ -585,6 +598,10 @@ export function createOneclawIntegration({
       await applyChannelAccessRequestCommand(payload, action);
       return;
     }
+    if (action === "sync_channel_access_requests") {
+      await syncChannelAccessRequestsCommand(payload);
+      return;
+    }
     if (action === "bind_channel") {
       startChannelBindingSession(payload);
       return;
@@ -603,10 +620,17 @@ export function createOneclawIntegration({
     }
     const verb = action === "reject_channel_access_request" ? "reject" : "approve";
     try {
-      await repairFetch(`channel-access-requests/${encodeURIComponent(requestId)}/${verb}`, "POST", {
+      if (verb === "reject") {
+        console.log(`[channel-access] reject ${channel} ${requestId} (runtime pairing reject unsupported)`);
+        return;
+      }
+      const approved = await approvePairingRequest({
         channel,
         code: requestId,
+        accountId: payload?.account_id || payload?.accountId || "",
+        openclawEntry: resolveOpenClawEntryFromClawArgs(clawArgs),
       });
+      if (!approved) throw new Error(`pairing request not found: ${requestId}`);
       console.log(`[channel-access] ${verb} ${channel} ${requestId}`);
     } catch (err) {
       console.error(`[channel-access] ${verb} failed: ${err.message}`);
@@ -614,6 +638,40 @@ export function createOneclawIntegration({
         type: action,
         channel,
         request_id: requestId,
+        error: err.message,
+      });
+    }
+  }
+
+  async function syncChannelAccessRequestsCommand(payload) {
+    const channel = String(payload?.channel || "").trim();
+    const employeeId = String(payload?.employee_id || payload?.employeeId || "").trim();
+    if (!channel || !employeeId) return;
+    try {
+      const requests = await listPairingRequests({
+        channel,
+        accountId: payload?.account_id || payload?.accountId || "",
+        openclawEntry: resolveOpenClawEntryFromClawArgs(clawArgs),
+      });
+      for (const request of requests) {
+        if (!request.code) continue;
+        await reportChannelAccessRequest({
+          employee_id: employeeId,
+          channel: normalizePairingChannel(channel),
+          request_id: request.code,
+          subject_type: "pairing_code",
+          subject_id: request.code,
+          subject_name: request.subject_name || request.subject_id || request.code,
+          requested_at: request.requested_at || undefined,
+        });
+      }
+      console.log(`[channel-access] synced ${requests.length} ${channel} pairing request(s)`);
+    } catch (err) {
+      console.error(`[channel-access] sync failed: ${err.message}`);
+      await sendEvent("runtime_command_failed", {
+        type: "sync_channel_access_requests",
+        channel,
+        employee_id: employeeId,
         error: err.message,
       });
     }

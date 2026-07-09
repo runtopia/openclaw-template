@@ -441,10 +441,27 @@ test("command polling applies regular channel config updates", async () => {
   assert.equal(restartCalls, 1);
 });
 
-test("command polling applies channel access approval commands through repair target", async () => {
+function writePairingSdkStub(source) {
+  const dir = makeWorkspace();
+  const file = path.join(dir, "conversation-runtime.js");
+  fs.writeFileSync(file, source, "utf8");
+  return file;
+}
+
+test("command polling approves channel access through pairing store without repair target", async () => {
   const workspaceDir = makeWorkspace();
   const stateDir = makeWorkspace();
-  const repairBodies = [];
+  const sdkPath = writePairingSdkStub(`
+    export async function approveChannelPairingCode(params) {
+      globalThis.__pairingApprovals ||= [];
+      globalThis.__pairingApprovals.push(params);
+      return { id: "tg:42", entry: { code: params.code, id: "tg:42", createdAt: "2026-07-09T09:40:00Z" } };
+    }
+    export async function listChannelPairingRequests() { return []; }
+  `);
+  const previousSdkPath = process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE;
+  process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE = sdkPath;
+  globalThis.__pairingApprovals = [];
   const restoreFetch = withFetch((url, opts = {}) => {
     if (url === "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10") {
       return jsonResponse({
@@ -461,10 +478,6 @@ test("command polling applies channel access approval commands through repair ta
         }],
       });
     }
-    if (url === "http://sidecar.local/repair/channel-access-requests/PAIR-123/approve") {
-      repairBodies.push(JSON.parse(opts.body));
-      return jsonResponse({ ok: true, output: "approved" });
-    }
     throw new Error(`unexpected fetch ${url}`);
   });
 
@@ -476,15 +489,81 @@ test("command polling applies channel access approval commands through repair ta
       stateDir,
       workspaceDir,
       repairTarget: "http://sidecar.local",
+      clawArgs: () => ["/usr/local/lib/node_modules/openclaw/dist/entry.js"],
       isGatewayReady: () => true,
       isGatewayStarting: () => false,
     });
     await integration.pollCommands();
   } finally {
     restoreFetch();
+    if (previousSdkPath === undefined) delete process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE;
+    else process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE = previousSdkPath;
   }
 
-  assert.deepEqual(repairBodies, [{ channel: "telegram", code: "PAIR-123" }]);
+  assert.equal(globalThis.__pairingApprovals.length, 1);
+  assert.equal(globalThis.__pairingApprovals[0].channel, "telegram");
+  assert.equal(globalThis.__pairingApprovals[0].code, "PAIR-123");
+});
+
+test("command polling syncs pending channel access requests back to Go API", async () => {
+  const workspaceDir = makeWorkspace();
+  const stateDir = makeWorkspace();
+  const sdkPath = writePairingSdkStub(`
+    export async function listChannelPairingRequests(channel, env, accountId) {
+      globalThis.__pairingLists ||= [];
+      globalThis.__pairingLists.push({ channel, accountId });
+      return [{ code: "LYMSQ59X", id: "8377439533", createdAt: "2026-07-09T09:41:00Z", meta: { username: "tester" } }];
+    }
+    export async function approveChannelPairingCode() { return null; }
+  `);
+  const previousSdkPath = process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE;
+  process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE = sdkPath;
+  globalThis.__pairingLists = [];
+  const reports = [];
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10") {
+      return jsonResponse({
+        commands: [{
+          id: "cmd-sync-access",
+          type: "update_config",
+          payload: {
+            action: "sync_channel_access_requests",
+            employee_id: "emp-1",
+            channel: "telegram",
+          },
+        }],
+      });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/access-requests") {
+      reports.push(JSON.parse(opts.body));
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      clawArgs: () => ["/usr/local/lib/node_modules/openclaw/dist/entry.js"],
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+    if (previousSdkPath === undefined) delete process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE;
+    else process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE = previousSdkPath;
+  }
+
+  assert.deepEqual(globalThis.__pairingLists, [{ channel: "telegram", accountId: undefined }]);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].request_id, "LYMSQ59X");
+  assert.equal(reports[0].subject_type, "pairing_code");
+  assert.equal(reports[0].subject_id, "LYMSQ59X");
 });
 
 test("fetchPersonality reads Go API snake_case response and writes workspace files", async () => {

@@ -726,7 +726,10 @@ export function createOneclawIntegration({
         activeChannelBindings.delete(session.key);
         session.runtimeAccountId = String(data.connectedAccountId || data.accountId || "").trim();
         await bindRuntimeChannel(session);
-        await restartRuntimeAfterChannelChange();
+        // WeChat plugin login persists the account and bumps channelConfigUpdatedAt,
+        // which makes OpenClaw reload itself. Forcing a second wrapper restart here
+        // races that in-process reload and can interrupt the freshly connected gateway.
+        if (session.channel !== "wechat") await restartRuntimeAfterChannelChange();
         await reportChannelState({
           employee_id: session.employeeId,
           channel: session.channel,

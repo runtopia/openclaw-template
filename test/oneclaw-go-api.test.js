@@ -771,7 +771,7 @@ test("wechat bind command binds the real plugin account id to the employee agent
     accountId: "77597573942e-im-bot",
     agentId: "agent-1",
   }]);
-  assert.equal(restartCalls.length, 1);
+  assert.equal(restartCalls.length, 0);
 });
 
 test("cancel bind command stops active channel polling", async () => {

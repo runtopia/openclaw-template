@@ -111,6 +111,53 @@ test("gateway runner exit does not crash-loop when gateway http is still reachab
   assert.equal(gateway.isGatewayReady(), true);
 });
 
+test("gateway graceful exit waits for in-process restart before spawning replacement", async (t) => {
+  const originalSpawn = childProcess.spawn;
+  const originalFetch = globalThis.fetch;
+  const procs = [];
+  const testStart = Date.now();
+
+  childProcess.spawn = () => {
+    const proc = new FakeProc(procs.length + 1);
+    procs.push(proc);
+    if (proc.id === 1) setTimeout(() => {
+      proc.killed = true;
+      proc.emit("exit", 0, null);
+    }, 10);
+    return proc;
+  };
+  globalThis.fetch = async () => {
+    if (Date.now() - testStart >= 80) return new Response("ok", { status: 200 });
+    const err = new Error("connect ECONNREFUSED");
+    err.code = "ECONNREFUSED";
+    throw err;
+  };
+
+  t.after(() => {
+    childProcess.spawn = originalSpawn;
+    globalThis.fetch = originalFetch;
+  });
+
+  const gateway = createGatewayManager({
+    OPENCLAW_NODE: "node",
+    clawArgs: (args) => args,
+    stateDir: "/tmp/openclaw-template-gateway-test-in-process-restart",
+    workspaceDir: "/tmp/openclaw-template-gateway-test-in-process-restart/workspace",
+    internalGatewayPort: 18789,
+    internalGatewayHost: "127.0.0.1",
+    gatewayToken: "test-token",
+    isConfigured: () => true,
+    gracefulRestartAdoptionMs: 700,
+  });
+  t.after(() => gateway.stopGateway());
+
+  await gateway.ensureGatewayRunning();
+  await new Promise((resolve) => setTimeout(resolve, 850));
+
+  assert.equal(procs.length, 1);
+  assert.equal(gateway.isGatewayReady(), true);
+});
+
 test("gateway graceful service restart recovers without crash backoff", async (t) => {
   const originalSpawn = childProcess.spawn;
   const originalFetch = globalThis.fetch;
@@ -119,7 +166,10 @@ test("gateway graceful service restart recovers without crash backoff", async (t
   childProcess.spawn = () => {
     const proc = new FakeProc(procs.length + 1);
     procs.push(proc);
-    if (proc.id === 1) setTimeout(() => proc.emit("exit", 0, null), 10);
+    if (proc.id === 1) setTimeout(() => {
+      proc.killed = true;
+      proc.emit("exit", 0, null);
+    }, 10);
     return proc;
   };
   globalThis.fetch = async () => {
@@ -144,12 +194,13 @@ test("gateway graceful service restart recovers without crash backoff", async (t
     internalGatewayHost: "127.0.0.1",
     gatewayToken: "test-token",
     isConfigured: () => true,
+    gracefulRestartAdoptionMs: 300,
   });
   t.after(() => gateway.stopGateway());
 
   const started = gateway.ensureGatewayRunning();
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  assert.equal(procs.length, 2);
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
   await started;
+  assert.equal(procs.length, 2);
   assert.equal(gateway.isGatewayReady(), true);
 });

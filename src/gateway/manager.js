@@ -3,7 +3,7 @@
 import childProcess from "node:child_process";
 import fs from "node:fs";
 
-export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured }) {
+export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured, gracefulRestartAdoptionMs = 5_000 }) {
   const GATEWAY_TARGET = `http://${internalGatewayHost}:${internalGatewayPort}`;
 
   const LOG_BUFFER_MAX = 500;
@@ -123,6 +123,24 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
           return;
         }
         const gracefulRestart = code === 0 || signal === "SIGTERM";
+        if (gracefulRestart) {
+          waitForGatewayHttpReady({ timeoutMs: gracefulRestartAdoptionMs }).then((ready) => {
+            if (ready) {
+              gatewayHttpReadyWithoutProc = true;
+              consecutiveCrashes = 0;
+              console.log("[gateway] graceful restart completed in-process; adopting existing gateway");
+              return;
+            }
+            scheduleCrashRestart(true);
+          });
+          return;
+        }
+        scheduleCrashRestart(false);
+      });
+    });
+  }
+
+  function scheduleCrashRestart(gracefulRestart) {
         consecutiveCrashes++;
         if (consecutiveCrashes > MAX_CRASH_RESTARTS) {
           console.error(`[gateway] exited ${consecutiveCrashes}x; auto-restart paused until next request`);
@@ -133,10 +151,15 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
         console.log(`[gateway] ${reason} — auto-restarting in ${delay}ms (exit #${consecutiveCrashes})`);
         crashRestartTimer = setTimeout(() => {
           crashRestartTimer = null;
-          ensureGatewayRunning().catch((err) => console.error(`[gateway] auto-restart failed: ${err.message}`));
+          startGatewayAndWait().catch((err) => console.error(`[gateway] auto-restart failed: ${err.message}`));
         }, delay);
-      });
-    });
+  }
+
+  async function startGatewayAndWait() {
+    await startGateway();
+    const ready = await waitForGatewayHttpReady({ timeoutMs: 60_000 });
+    if (!ready) throw new Error("Gateway HTTP listener did not become ready in time");
+    consecutiveCrashes = 0; // 成功就绪，重置崩溃计数
   }
 
   async function ensureGatewayRunning() {
@@ -145,12 +168,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     if (gatewayHttpReadyWithoutProc && await isGatewayHttpReachable()) return { ok: true };
     gatewayHttpReadyWithoutProc = false;
     if (!gatewayStarting) {
-      gatewayStarting = (async () => {
-        await startGateway();
-        const ready = await waitForGatewayHttpReady({ timeoutMs: 60_000 });
-        if (!ready) throw new Error("Gateway HTTP listener did not become ready in time");
-        consecutiveCrashes = 0; // 成功就绪，重置崩溃计数
-      })().finally(() => { gatewayStarting = null; });
+      gatewayStarting = startGatewayAndWait().finally(() => { gatewayStarting = null; });
     }
     await gatewayStarting;
     return { ok: true };

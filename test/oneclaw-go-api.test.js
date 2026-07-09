@@ -441,6 +441,52 @@ test("command polling applies regular channel config updates", async () => {
   assert.equal(restartCalls, 1);
 });
 
+test("command polling applies channel access approval commands through repair target", async () => {
+  const workspaceDir = makeWorkspace();
+  const stateDir = makeWorkspace();
+  const repairBodies = [];
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10") {
+      return jsonResponse({
+        commands: [{
+          id: "cmd-approve-access",
+          type: "update_config",
+          payload: {
+            action: "approve_channel_access_request",
+            employee_id: "emp-1",
+            channel: "telegram",
+            request_id: "PAIR-123",
+            pairing_code: "PAIR-123",
+          },
+        }],
+      });
+    }
+    if (url === "http://sidecar.local/repair/channel-access-requests/PAIR-123/approve") {
+      repairBodies.push(JSON.parse(opts.body));
+      return jsonResponse({ ok: true, output: "approved" });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      repairTarget: "http://sidecar.local",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.deepEqual(repairBodies, [{ channel: "telegram", code: "PAIR-123" }]);
+});
+
 test("fetchPersonality reads Go API snake_case response and writes workspace files", async () => {
   const workspaceDir = makeWorkspace();
   const restoreFetch = withFetch((url, opts) => {

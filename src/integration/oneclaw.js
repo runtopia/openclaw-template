@@ -581,12 +581,41 @@ export function createOneclawIntegration({
       await applyRuntimeChannelUpdate(payload);
       return;
     }
+    if (action === "approve_channel_access_request" || action === "reject_channel_access_request") {
+      await applyChannelAccessRequestCommand(payload, action);
+      return;
+    }
     if (action === "bind_channel") {
       startChannelBindingSession(payload);
       return;
     }
     if (action === "cancel_bind_channel" || action === "unbind_channel") {
       await cancelChannelBindingByPayload(payload, action);
+    }
+  }
+
+  async function applyChannelAccessRequestCommand(payload, action) {
+    const channel = String(payload?.channel || "").trim();
+    const requestId = String(payload?.request_id || payload?.requestId || payload?.pairing_code || payload?.pairingCode || "").trim();
+    if (!channel || !requestId) {
+      console.warn("[channel-access] invalid access request command");
+      return;
+    }
+    const verb = action === "reject_channel_access_request" ? "reject" : "approve";
+    try {
+      await repairFetch(`channel-access-requests/${encodeURIComponent(requestId)}/${verb}`, "POST", {
+        channel,
+        code: requestId,
+      });
+      console.log(`[channel-access] ${verb} ${channel} ${requestId}`);
+    } catch (err) {
+      console.error(`[channel-access] ${verb} failed: ${err.message}`);
+      await sendEvent("runtime_command_failed", {
+        type: action,
+        channel,
+        request_id: requestId,
+        error: err.message,
+      });
     }
   }
 

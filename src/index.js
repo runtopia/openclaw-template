@@ -32,6 +32,7 @@ import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensio
 import { createAuth } from "./proxy/auth.js";
 import { createBrowserSessionManager } from "./proxy/browser-session.js";
 import { createReverseProxy } from "./proxy/reverse-proxy.js";
+import { createGatewayWsRelay } from "./proxy/ws-relay.js";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -94,12 +95,16 @@ const browserSessions = createBrowserSessionManager({
   port: PORT,
 });
 
-const { proxy, stripForwardedHeaders } = createReverseProxy({
+const { proxy } = createReverseProxy({
   GATEWAY_HOST,
   GATEWAY_PORT,
   GATEWAY_TOKEN,
   PROXY_TIMEOUT_MS,
 });
+
+// WebSocket 升级不再走 http-proxy 透明代理（网关只认 connect 帧里的 token，忽略头/URL）。
+// 改用 1:1 中继，在 connect 帧注入 params.auth.token。见 src/proxy/ws-relay.js。
+const wsRelay = createGatewayWsRelay({ GATEWAY_HOST, GATEWAY_PORT, GATEWAY_TOKEN });
 
 // ── 辅助 ──────────────────────────────────────────────────────────────────────
 
@@ -397,24 +402,18 @@ server.headersTimeout = 65000;
 server.timeout = PROXY_TIMEOUT_MS;
 server.keepAliveTimeout = 75000;
 
-// WebSocket 升级转发到 openclaw
-// 浏览器同源 WebSocket 握手会自动带上 cookie，用它鉴权；
-// gateway 的鉴权由 proxyReqWs 注入的 Authorization 头完成（token 不进 URL）。
+// WebSocket 升级：浏览器同源握手自动带 cookie，用它在 wrapper 层鉴权；
+// 到网关的鉴权由中继在 connect 帧注入 params.auth.token 完成（token 不进 URL/前端）。
+// 不再用 proxy.ws 透明代理——网关新版只认 connect 帧里的 token，忽略 Authorization 头。
 server.on("upgrade", (req, socket, head) => {
   if (!isAuthed(req)) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     socket.destroy();
     return;
   }
-  // 剥离入站 X-Forwarded-* / Forwarded / X-Real-IP（Railway edge 注入），否则
-  // gateway 判 isLocalClient=false，Control UI 会被强制 device pairing。见上方 stripForwardedHeaders。
-  stripForwardedHeaders(req.headers);
-  // Reverse-proxy the WS upgrade straight to the gateway. Each frontend client
-  // gets its own gateway connection (connect handshake + subscriptions), so
-  // per-client event routing works correctly. (Replaces the old ws-hub
-  // multiplexer, which merged all clients into one gateway connection and
-  // broadcast events — breaking openclaw's per-client subscription model.)
-  proxy.ws(req, socket, head);
+  // 每个前端连接单开一条到网关的 WS（1:1，非多路复用），保证 per-client 订阅/事件路由正确；
+  // 中继从 loopback 发起、天然无 X-Forwarded-*，网关视为本地直连，无需剥离转发头。
+  wsRelay.handleUpgrade(req, socket, head);
 });
 
 // ── 优雅退出 ──────────────────────────────────────────────────────────────────

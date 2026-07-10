@@ -82,23 +82,26 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
     restoreFetch();
   }
 
-  assert.equal(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf8"), "You are a Go-backed assistant.");
-  assert.equal(fs.readFileSync(path.join(workspaceDir, "memory/profile.md"), "utf8"), "hello");
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/SOUL.md"), "utf8"), "You are a Go-backed assistant.");
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/profile.md"), "utf8"), "hello");
 });
 
 test("employee template command syncs an OpenClaw agent workspace", async () => {
   const workspaceDir = makeWorkspace();
   const rpcCalls = [];
+  const runCalls = [];
   const gatewayRpc = {
     waitUntilConnected: async () => {},
     rpcGateway: async (method, params) => {
       rpcCalls.push({ method, params });
+      if (method === "agents.list") return { ok: true, payload: { agents: [] } };
       if (method === "agents.create") {
         return { ok: true, payload: { agentId: "oneclaw-emp-1" } };
       }
       if (method === "agents.files.set") {
         return { ok: true, payload: { ok: true } };
       }
+      if (method === "agents.update") return { ok: true, payload: { ok: true } };
       throw new Error(`unexpected rpc ${method}`);
     },
   };
@@ -117,6 +120,8 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
           avatar: "👨‍💻",
           soul_md: "You are a developer assistant.",
           memory_files: [{ path: "memory/dev.md", content: "dev notes" }],
+          skills: ["github"],
+          suggested_model: "clawrouters/code",
         },
       }],
     });
@@ -129,6 +134,9 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
       instanceSecret: "secret-1",
       workspaceDir,
       gatewayRpc,
+      runCmd: async (cmd, args) => { runCalls.push({ cmd, args }); return { code: 0, output: "" }; },
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
       isGatewayReady: () => true,
       isGatewayStarting: () => false,
     });
@@ -138,13 +146,14 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
   }
 
   assert.equal(fs.existsSync(path.join(workspaceDir, "SOUL.md")), false);
-  assert.equal(rpcCalls[0].method, "agents.create");
-  assert.equal(rpcCalls[0].params.name, "oneclaw-emp-1");
-  assert.equal(rpcCalls[1].method, "agents.files.set");
+  assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.name, "oneclaw-emp-1");
   assert.deepEqual(
     rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
-    ["SOUL.md", "memory/dev.md"],
+    ["SOUL.md"],
   );
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-1/memory/dev.md"), "utf8"), "dev notes");
+  assert.equal(rpcCalls.some((call) => call.method === "agents.update" && call.params.model === "clawrouters/code"), true);
+  assert.deepEqual(runCalls[0].args, ["skills", "install", "github", "--agent", "oneclaw-emp-1"]);
 });
 
 test("command polling applies employee template commands without waiting for heartbeat", async () => {
@@ -154,6 +163,7 @@ test("command polling applies employee template commands without waiting for hea
     waitUntilConnected: async () => {},
     rpcGateway: async (method, params) => {
       rpcCalls.push({ method, params });
+      if (method === "agents.list") return { ok: true, payload: { agents: [] } };
       if (method === "agents.create") return { ok: true, payload: { agentId: "oneclaw-emp-poll" } };
       if (method === "agents.files.set") return { ok: true, payload: { ok: true } };
       throw new Error(`unexpected rpc ${method}`);
@@ -193,12 +203,36 @@ test("command polling applies employee template commands without waiting for hea
     restoreFetch();
   }
 
-  assert.equal(rpcCalls[0].method, "agents.create");
-  assert.equal(rpcCalls[0].params.name, "oneclaw-emp-poll");
+  assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.name, "oneclaw-emp-poll");
   assert.deepEqual(
     rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
-    ["SOUL.md", "memory/polled.md"],
+    ["SOUL.md"],
   );
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-poll/memory/polled.md"), "utf8"), "poll notes");
+});
+
+test("leased command is acknowledged only after successful execution", async () => {
+  const workspaceDir = makeWorkspace();
+  let acknowledgements = 0;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{ id: "cmd-lease", type: "restart", status: "leased" }] });
+    if (url.includes("/agent/commands/cmd-lease/ack")) {
+      acknowledgements += 1;
+      assert.deepEqual(JSON.parse(opts.body), { status: "succeeded", retryable: false });
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1", instanceId: "runtime-1", instanceSecret: "secret-1", workspaceDir,
+      restartGateway: async () => ({ ok: true }), gatewayRpc: { restart() {} }, isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+  assert.equal(acknowledgements, 1);
 });
 
 test("command polling installs and removes employee skills", async () => {
@@ -400,6 +434,8 @@ test("command polling applies regular channel config updates", async () => {
         payload: {
           action: "update_channel",
           employee_id: "emp-1",
+          openclaw_agent_id: "oneclaw-emp-1",
+          account_id: "oneclaw-emp-1",
           channel: "telegram",
           state: {
             enabled: true,
@@ -434,10 +470,12 @@ test("command polling applies regular channel config updates", async () => {
   }
 
   const cfg = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
-  assert.equal(cfg.channels.telegram.enabled, true);
-  assert.equal(cfg.channels.telegram.botToken, "telegram-token");
-  assert.equal(cfg.channels.telegram.dmPolicy, "allowlist");
-  assert.deepEqual(cfg.channels.telegram.allowFrom, ["tg-owner"]);
+  const account = cfg.channels.telegram.accounts["oneclaw-emp-1"];
+  assert.equal(account.enabled, true);
+  assert.equal(account.botToken, "telegram-token");
+  assert.equal(account.dmPolicy, "allowlist");
+  assert.deepEqual(account.allowFrom, ["tg-owner"]);
+  assert.deepEqual(cfg.bindings, [{ agentId: "oneclaw-emp-1", match: { channel: "telegram", accountId: "oneclaw-emp-1" } }]);
   assert.equal(restartCalls, 1);
 });
 
@@ -601,8 +639,8 @@ test("fetchPersonality reads Go API snake_case response and writes workspace fil
     restoreFetch();
   }
 
-  assert.equal(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf8"), "Use Go API contract.");
-  assert.equal(fs.readFileSync(path.join(workspaceDir, "memory/go.md"), "utf8"), "snake_case");
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/SOUL.md"), "utf8"), "Use Go API contract.");
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/go.md"), "utf8"), "snake_case");
 });
 
 test("channel bind command stops polling after session expires", async () => {
@@ -845,6 +883,7 @@ test("wechat bind command binds the real plugin account id to the employee agent
             action: "bind_channel",
             employee_id: "emp-1",
             openclaw_agent_id: "agent-1",
+            account_id: "agent-1",
             channel: "wechat",
             state: {
               binding: {
@@ -1310,6 +1349,7 @@ test("unbind channel command removes runtime binding and restarts gateway", asyn
             action: "unbind_channel",
             employee_id: "emp-1",
             openclaw_agent_id: "agent-1",
+            account_id: "agent-1",
             channel: "whatsapp",
             state: { status: "unbound", enabled: false },
           },
@@ -1320,7 +1360,7 @@ test("unbind channel command removes runtime binding and restarts gateway", asyn
       unbindCalls += 1;
       const body = JSON.parse(opts.body);
       assert.equal(body.channel, "whatsapp");
-      assert.equal(body.accountId, "emp-1");
+      assert.equal(body.accountId, "agent-1");
       assert.equal(body.agentId, "agent-1");
       return jsonResponse({ ok: true, result: { removed: true } });
     }

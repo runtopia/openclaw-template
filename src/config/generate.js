@@ -226,41 +226,37 @@ export function generateConfigDirect(opts) {
   const DM_OPEN  = "open";
   const ALLOW_ALL = ["*"];
   const channels = {};
+  const bindings = [];
 
   if (env.TELEGRAM_BOT_TOKEN?.trim()) {
     channels.telegram = {
       enabled: true,
-      botToken: env.TELEGRAM_BOT_TOKEN.trim(),
-      dmPolicy: DM_OPEN,
-      allowFrom: ALLOW_ALL,
-      groupPolicy: "allowlist",
+      accounts: { main: { enabled: true, botToken: env.TELEGRAM_BOT_TOKEN.trim(), dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL, groupPolicy: "allowlist" } },
     };
+    bindings.push({ agentId: "main", match: { channel: "telegram", accountId: "main" } });
   }
   if (env.DISCORD_BOT_TOKEN?.trim()) {
     channels.discord = {
       enabled: true,
-      accounts: { default: { token: env.DISCORD_BOT_TOKEN.trim() } },
-      dm: { policy: DM_OPEN, allowFrom: ALLOW_ALL },
-      groupPolicy: "allowlist",
+      accounts: { main: { enabled: true, token: env.DISCORD_BOT_TOKEN.trim(), dm: { policy: DM_OPEN, allowFrom: ALLOW_ALL }, groupPolicy: "allowlist" } },
     };
+    bindings.push({ agentId: "main", match: { channel: "discord", accountId: "main" } });
     plugins.entries.discord = { enabled: true };
   }
   if (env.SLACK_BOT_TOKEN?.trim() && env.SLACK_APP_TOKEN?.trim()) {
     channels.slack = {
       enabled: true,
-      botToken: env.SLACK_BOT_TOKEN.trim(),
-      appToken: env.SLACK_APP_TOKEN.trim(),
+      accounts: { main: { enabled: true, botToken: env.SLACK_BOT_TOKEN.trim(), appToken: env.SLACK_APP_TOKEN.trim() } },
     };
+    bindings.push({ agentId: "main", match: { channel: "slack", accountId: "main" } });
     plugins.entries.slack = { enabled: true };
   }
   if (env.FEISHU_APP_ID?.trim() && env.FEISHU_APP_SECRET?.trim()) {
     channels.feishu = {
       enabled: true,
-      appId: env.FEISHU_APP_ID.trim(),
-      appSecret: env.FEISHU_APP_SECRET.trim(),
-      dmPolicy: DM_OPEN,
-      allowFrom: ALLOW_ALL,
+      accounts: { main: { enabled: true, appId: env.FEISHU_APP_ID.trim(), appSecret: env.FEISHU_APP_SECRET.trim(), dmPolicy: DM_OPEN, allowFrom: ALLOW_ALL } },
     };
+    bindings.push({ agentId: "main", match: { channel: "feishu", accountId: "main" } });
     plugins.entries.feishu = { enabled: true };
   }
   if (truthy(env.WHATSAPP_ENABLED)) {
@@ -294,7 +290,7 @@ export function generateConfigDirect(opts) {
   const tools = { profile: "full" };
 
   // ── 组装最终配置 ──────────────────────────────────────────────
-  const cfg = { gateway, session, tools, models, agents: { defaults: agentDefaults }, plugins, channels };
+  const cfg = { gateway, session, tools, models, agents: { defaults: agentDefaults }, plugins, channels, bindings };
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));

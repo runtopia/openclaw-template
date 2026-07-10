@@ -33,6 +33,10 @@ export function readChannelBindings(cfg = {}) {
 }
 
 export function applyChannelBinding(cfg, { channel, accountId, agentId }) {
+  return applyChannelAccountBinding(cfg, { channel, accountId, agentId, account: { enabled: true } });
+}
+
+export function applyChannelAccountBinding(cfg, { channel, accountId, agentId, account = {} }) {
   assertBindableChannel(channel);
   if (typeof accountId !== "string" || !accountId.trim()) throw new Error("accountId required");
   if (typeof agentId !== "string" || !agentId.trim()) throw new Error("agentId required");
@@ -43,6 +47,7 @@ export function applyChannelBinding(cfg, { channel, accountId, agentId }) {
   if (!cfg.channels[channel].accounts || typeof cfg.channels[channel].accounts !== "object") cfg.channels[channel].accounts = {};
   cfg.channels[channel].accounts[accountId] = {
     ...(cfg.channels[channel].accounts[accountId] || {}),
+    ...account,
     enabled: true,
   };
 
@@ -61,18 +66,30 @@ export function removeChannelBinding(cfg, { channel, accountId, agentId }) {
   if (typeof agentId !== "string" || !agentId.trim()) throw new Error("agentId required");
 
   const result = { removed: false, channel, accountId, agentId };
-  if (!Array.isArray(cfg.bindings)) return result;
+  if (!Array.isArray(cfg.bindings)) cfg.bindings = [];
 
   const matches = cfg.bindings.filter(
     (b) => b?.match?.channel === channel && b?.match?.accountId === accountId && b?.agentId === agentId
   );
-  if (matches.length === 0) return result;
-
   cfg.bindings = cfg.bindings.filter(
     (b) => !(b?.match?.channel === channel && b?.match?.accountId === accountId && b?.agentId === agentId)
   );
-  if (cfg.channels?.[channel]?.accounts && typeof cfg.channels[channel].accounts === "object") {
+  const channelConfig = cfg.channels?.[channel];
+  const hasAccount = !!(channelConfig?.accounts && typeof channelConfig.accounts === "object" && channelConfig.accounts[accountId]);
+  const ownsAccount = hasAccount && (matches.length > 0 || accountId === agentId);
+  const isLegacySingleAccount = !!(channelConfig && (!channelConfig.accounts || typeof channelConfig.accounts !== "object"));
+  if (matches.length === 0 && !ownsAccount && !isLegacySingleAccount) return result;
+  if (channelConfig?.accounts && typeof channelConfig.accounts === "object") {
     delete cfg.channels[channel].accounts[accountId];
   }
-  return { ...result, removed: true };
+  const remainingAccounts = channelConfig?.accounts && typeof channelConfig.accounts === "object"
+    ? Object.keys(channelConfig.accounts)
+    : [];
+  let channelRemoved = false;
+  if (isLegacySingleAccount || remainingAccounts.length === 0) {
+    delete cfg.channels[channel];
+    channelRemoved = true;
+    if (cfg.plugins?.entries?.[channel]) cfg.plugins.entries[channel].enabled = false;
+  }
+  return { ...result, removed: true, ...(channelRemoved ? { channelRemoved: true } : {}) };
 }

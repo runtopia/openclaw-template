@@ -2,6 +2,8 @@ import express from "express";
 import { execFile as _execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
+import path from "node:path";
+import { agentWorkspace } from "../agents/workspace.js";
 
 const execFile = promisify(_execFile);
 
@@ -149,7 +151,8 @@ export function createSkillsRouter() {
     // Try to resolve the skill directory via CLI; fall back to convention path
     let skillDir = await resolveSkillDir(agentId, slug);
     if (!skillDir) {
-      skillDir = `/data/agents/${agentId}/skills/${slug}`;
+      const root = process.env.OPENCLAW_WORKSPACE_ROOT?.trim() || process.env.OPENCLAW_WORKSPACE_DIR?.trim() || "/data/workspace";
+      skillDir = path.join(agentWorkspace(root, agentId), "skills", slug);
     }
 
     try {

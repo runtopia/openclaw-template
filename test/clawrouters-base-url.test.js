@@ -77,6 +77,18 @@ test("direct config and repair key use CLAWROUTERS_BASE_URL", () => {
   });
 });
 
+test("direct config binds environment token channels to main account", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-channel-config-"));
+  const configPath = path.join(tmp, "openclaw.json");
+  const cfg = generateConfigDirect({
+    configPath, workspaceDir: path.join(tmp, "workspace", "agents", "main"), gatewayToken: "gateway-test",
+    env: { CLAWROUTERS_API_KEY: "cr_test", TELEGRAM_BOT_TOKEN: "telegram-token", SLACK_BOT_TOKEN: "xoxb", SLACK_APP_TOKEN: "xapp" },
+  });
+  assert.equal(cfg.channels.telegram.accounts.main.botToken, "telegram-token");
+  assert.equal(cfg.channels.slack.accounts.main.botToken, "xoxb");
+  assert.equal(cfg.bindings.filter((binding) => binding.agentId === "main").length, 2);
+});
+
 test("existing openclaw.json runtime defaults are patched from CLAWROUTERS_BASE_URL", () => {
   const cfg = {
     models: {

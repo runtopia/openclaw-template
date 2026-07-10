@@ -33,6 +33,7 @@ import { createAuth } from "./proxy/auth.js";
 import { createBrowserSessionManager } from "./proxy/browser-session.js";
 import { createReverseProxy } from "./proxy/reverse-proxy.js";
 import { createGatewayWsRelay } from "./proxy/ws-relay.js";
+import { agentWorkspace, migrateAgentWorkspaces } from "./agents/workspace.js";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ const PROXY_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 600000);
 
 const STATE_DIR = process.env.OPENCLAW_STATE_DIR?.trim() || path.join(os.homedir(), ".openclaw");
 const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE_DIR?.trim() || path.join(STATE_DIR, "workspace");
+const MAIN_WORKSPACE_DIR = agentWorkspace(WORKSPACE_DIR, "main");
 const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
 
 const OPENCLAW_ENTRY = process.env.OPENCLAW_ENTRY?.trim() || "/usr/local/lib/node_modules/openclaw/dist/entry.js";
@@ -132,7 +134,7 @@ function runCmd(cmd, args, opts = {}) {
   return new Promise((resolve) => {
     const proc = childProcess.spawn(cmd, args, {
       ...opts,
-      env: { ...process.env, OPENCLAW_STATE_DIR: STATE_DIR, OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR },
+      env: { ...process.env, OPENCLAW_STATE_DIR: STATE_DIR, OPENCLAW_WORKSPACE_DIR: MAIN_WORKSPACE_DIR },
     });
     let out = "";
     proc.stdout?.on("data", (d) => (out += d.toString("utf8")));
@@ -147,6 +149,7 @@ function runCmd(cmd, args, opts = {}) {
 function ensureConfig() {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+  fs.mkdirSync(MAIN_WORKSPACE_DIR, { recursive: true });
   fs.mkdirSync(path.join(STATE_DIR, "credentials"), { recursive: true });
   cleanupStalePreinstalledExtensions(STATE_DIR);
 
@@ -189,7 +192,7 @@ function ensureConfig() {
   console.log("[sidecar] generating openclaw.json...");
   generateConfigDirect({
     configPath: CONFIG_PATH,
-    workspaceDir: WORKSPACE_DIR,
+    workspaceDir: MAIN_WORKSPACE_DIR,
     gatewayToken: GATEWAY_TOKEN,
     port: GATEWAY_PORT,
     publicPort: PORT,
@@ -209,12 +212,12 @@ function ensureConfig() {
 // 引导文件（幂等：已有文件不会被覆盖）。
 async function ensureWorkspaceFiles() {
   if (!isConfigured()) return;
-  const soul = path.join(WORKSPACE_DIR, "SOUL.md");
-  const agents = path.join(WORKSPACE_DIR, "AGENTS.md");
+  const soul = path.join(MAIN_WORKSPACE_DIR, "SOUL.md");
+  const agents = path.join(MAIN_WORKSPACE_DIR, "AGENTS.md");
   // 只要 SOUL.md 存在就认为 workspace 已初始化，跳过 setup CLI 调用
   if (fs.existsSync(soul) && fs.existsSync(agents)) return;
   console.log("[sidecar] running openclaw setup to populate workspace files...");
-  const result = await runCmd(OPENCLAW_NODE, clawArgs(["setup", "--workspace", WORKSPACE_DIR]));
+  const result = await runCmd(OPENCLAW_NODE, clawArgs(["setup", "--workspace", MAIN_WORKSPACE_DIR]));
   console.log(`[sidecar] setup exit=${result.code}`);
   if (result.output) console.log(result.output);
 }
@@ -222,12 +225,13 @@ async function ensureWorkspaceFiles() {
 // ── Gateway manager ───────────────────────────────────────────────────────────
 
 ensureConfig();
+migrateAgentWorkspaces({ workspaceRoot: WORKSPACE_DIR, configPath: CONFIG_PATH });
 
 const gateway = createGatewayManager({
   OPENCLAW_NODE,
   clawArgs,
   stateDir: STATE_DIR,
-  workspaceDir: WORKSPACE_DIR,
+  workspaceDir: MAIN_WORKSPACE_DIR,
   internalGatewayPort: GATEWAY_PORT,
   internalGatewayHost: GATEWAY_HOST,
   gatewayToken: GATEWAY_TOKEN,

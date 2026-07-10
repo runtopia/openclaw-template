@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getActiveChannels } from "../src/channels/manifest.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { getActiveChannels, reconcileAllChannels } from "../src/channels/manifest.js";
 
 // 回归:已配置实例上启用微信走的是 reconcileAllChannels(只看 CHANNEL_MANIFEST)。
 // 微信若不在 manifest 里,WECHAT_ENABLED=1 在重新部署后不会激活通道。
@@ -36,4 +39,14 @@ test("whatsapp 仍可用(回归)", () => {
   assert.equal(shape.dmPolicy, "pairing");
   assert.deepEqual(shape.allowFrom, []);
   assert.equal(shape.groupPolicy, "disabled");
+});
+
+test("discord environment reconciliation writes one main account without nested accounts", async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "channel-manifest-"));
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({ channels: {}, plugins: { entries: {} } }));
+  await reconcileAllChannels({ stateDir, env: { DISCORD_BOT_TOKEN: "discord-token" } });
+  const cfg = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
+  assert.equal(cfg.channels.discord.accounts.main.token, "discord-token");
+  assert.equal(cfg.channels.discord.accounts.main.accounts, undefined);
+  assert.deepEqual(cfg.bindings, [{ agentId: "main", match: { channel: "discord", accountId: "main" } }]);
 });

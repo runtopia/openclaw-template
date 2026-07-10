@@ -3,8 +3,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildRuntimeChannelAccessPolicy, mergeChannelPolicy } from "../channels/access-policy.js";
-import { CHANNEL_MANIFEST, setChannelConfig } from "../channels/manifest.js";
+import { CHANNEL_MANIFEST, setChannelAccountConfig, setChannelConfig } from "../channels/manifest.js";
 import { approvePairingRequest, listPairingRequests, normalizePairingChannel, resolveOpenClawEntryFromClawArgs } from "../channels/pairing-store.js";
+import { agentWorkspace, safeAgentFilePath } from "../agents/workspace.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
@@ -25,6 +26,7 @@ export function createOneclawIntegration({
 	channelBindingPollMs = 1500,
 }) {
   const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
+  const mainWorkspace = agentWorkspace(workspaceDir, "main");
   if (!platformApiUrl || !instanceId || !instanceSecret) {
     return {
       start() {},
@@ -146,12 +148,12 @@ export function createOneclawIntegration({
     try {
       const systemPrompt = personality?.systemPrompt || personality?.system_prompt;
       if (systemPrompt) {
-        const soulPath = path.join(workspaceDir, "SOUL.md");
-        fs.mkdirSync(workspaceDir, { recursive: true });
+        const soulPath = path.join(mainWorkspace, "SOUL.md");
+        fs.mkdirSync(mainWorkspace, { recursive: true });
         fs.writeFileSync(soulPath, systemPrompt, "utf8");
         console.log(`[personality] applied system prompt`);
       }
-      applyMemoryFiles(template?.memoryFiles || template?.memory_files);
+      applyMemoryFiles(template?.memoryFiles || template?.memory_files, mainWorkspace);
     } catch (err) {
       console.error(`[personality] apply error: ${err.message}`);
     }
@@ -159,7 +161,7 @@ export function createOneclawIntegration({
 
   async function applyTemplateFromEnv(templateId) {
     if (!templateId) return false;
-    const soulPath = path.join(workspaceDir, "SOUL.md");
+    const soulPath = path.join(mainWorkspace, "SOUL.md");
     if (fs.existsSync(soulPath) && fs.readFileSync(soulPath, "utf8").length > 100) {
       console.log("[template] SOUL.md already exists, skipping");
       return true;
@@ -173,11 +175,11 @@ export function createOneclawIntegration({
       if (!template) { console.error("[template] not found"); return false; }
       if (template.soulMd || template.soul_md) {
         const soulMd = template.soulMd || template.soul_md;
-        fs.mkdirSync(workspaceDir, { recursive: true });
+        fs.mkdirSync(mainWorkspace, { recursive: true });
         fs.writeFileSync(soulPath, soulMd, "utf8");
         console.log(`[template] wrote SOUL.md (${soulMd.length} chars)`);
       }
-      applyMemoryFiles(template.memoryFiles || template.memory_files);
+      applyMemoryFiles(template.memoryFiles || template.memory_files, mainWorkspace);
       return true;
     } catch (err) {
       console.error(`[template] apply error: ${err.message}`);
@@ -248,8 +250,22 @@ export function createOneclawIntegration({
   async function applyAgentCommands(commands) {
     if (!Array.isArray(commands) || commands.length === 0) return;
     for (const cmd of commands) {
-      await applyAgentCommand(cmd);
+      try {
+        await applyAgentCommand(cmd);
+        if (cmd?.status === "leased") await acknowledgeCommand(cmd, { status: "succeeded", retryable: false });
+      } catch (err) {
+        const retryable = /gateway|disconnected|timeout|unavailable|ECONN/i.test(String(err?.message || err));
+        if (cmd?.status === "leased") await acknowledgeCommand(cmd, { status: "failed", retryable, error: String(err?.message || err) });
+      }
     }
+  }
+
+  async function acknowledgeCommand(command, result) {
+    const res = await apiFetch(`/agent/commands/${encodeURIComponent(command.id)}/ack?instance_id=${encodeURIComponent(instanceId)}`, {
+      method: "POST",
+      body: JSON.stringify(result),
+    });
+    if (!res.ok) throw new Error(`command acknowledgement failed: ${res.status}`);
   }
 
   function start(openclawVersion) {
@@ -274,11 +290,11 @@ export function createOneclawIntegration({
     activeChannelBindings.clear();
   }
 
-  function applyMemoryFiles(memoryFiles) {
+  function applyMemoryFiles(memoryFiles, targetWorkspace = mainWorkspace) {
     if (!Array.isArray(memoryFiles)) return;
     for (const file of memoryFiles) {
       if (file.path && file.content) {
-        const filePath = path.join(workspaceDir, file.path);
+        const filePath = safeAgentFilePath(targetWorkspace, file.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
         fs.writeFileSync(filePath, file.content, "utf8");
         console.log(`[template] applied ${file.path}`);
@@ -332,13 +348,13 @@ export function createOneclawIntegration({
     }
     const soulMd = payload.soul_md || payload.soulMd;
     if (soulMd) {
-      const soulPath = path.join(workspaceDir, "SOUL.md");
-      fs.mkdirSync(workspaceDir, { recursive: true });
+      const soulPath = path.join(mainWorkspace, "SOUL.md");
+      fs.mkdirSync(mainWorkspace, { recursive: true });
       fs.writeFileSync(soulPath, soulMd, "utf8");
       console.log(`[command] wrote SOUL.md (${soulMd.length} chars)`);
     }
     // Go 后端 command 使用 payload.memory_files；保留 memoryFiles 读取，方便旧队列平滑过渡。
-    applyMemoryFiles(payload.memory_files || payload.memoryFiles);
+    applyMemoryFiles(payload.memory_files || payload.memoryFiles, mainWorkspace);
   }
 
   async function applyEmployeeAgentTemplate(payload, employeeId) {
@@ -355,19 +371,39 @@ export function createOneclawIntegration({
       }
       for (const file of payload.memory_files || payload.memoryFiles || []) {
         if (!file?.path || typeof file.content !== "string") continue;
-        await callGateway("agents.files.set", { agentId, name: file.path, content: file.content });
+        if (file.path === "MEMORY.md") {
+          await callGateway("agents.files.set", { agentId, name: "MEMORY.md", content: file.content });
+          continue;
+        }
+        const filePath = safeAgentFilePath(agentWorkspace(workspaceDir, agentId), file.path);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, file.content, "utf8");
+      }
+      const suggestedModel = String(payload.suggested_model || payload.suggestedModel || "").trim();
+      if (suggestedModel) {
+        await callGateway("agents.update", { agentId, model: suggestedModel });
+      }
+      for (const slug of Array.isArray(payload.skills) ? payload.skills : []) {
+        if (!slug || typeof runCmd !== "function" || typeof clawArgs !== "function" || !OPENCLAW_NODE) continue;
+        const result = await runCmd(OPENCLAW_NODE, clawArgs(["skills", "install", String(slug), "--agent", agentId]));
+        if (result.code !== 0) throw new Error(result.output || `failed to install template skill ${slug}`);
       }
       console.log(`[command] synced employee agent ${employeeId} -> ${agentId}`);
     } catch (err) {
       console.error(`[command] employee agent sync failed: ${err.message}`);
+      throw err;
     }
   }
 
   async function ensureEmployeeAgent(payload, employeeId) {
     const preferredAgentId = String(payload.openclaw_agent_id || payload.agent_id || "").trim();
-    if (preferredAgentId) return preferredAgentId;
-    const stableName = `oneclaw-${employeeId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-    const workspace = path.posix.join(workspaceDir, "agents", employeeId.replace(/[^a-zA-Z0-9_-]/g, "-"));
+    const stableName = preferredAgentId || `oneclaw-${employeeId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    if (stableName === "main") return "main";
+    const workspace = agentWorkspace(workspaceDir, stableName);
+    const listed = await callGateway("agents.list", {}, { tolerateError: true });
+    const agents = listed?.agents || listed?.result?.agents || listed?.payload?.agents || [];
+    const existing = agents.find((agent) => agent?.id === stableName || agent?.agentId === stableName || agent?.name === stableName);
+    if (existing) return existing.id || existing.agentId || stableName;
     const createFrame = await callGateway("agents.create", {
       name: stableName,
       workspace,
@@ -378,10 +414,7 @@ export function createOneclawIntegration({
     if (createFrame?.agentId) return createFrame.agentId;
     if (createFrame?.result?.agentId) return createFrame.result.agentId;
     if (createFrame?.payload?.agentId) return createFrame.payload.agentId;
-    const listFrame = await callGateway("agents.list", {}, { tolerateError: true });
-    const agents = listFrame?.result?.agents || listFrame?.payload?.agents || [];
-    const found = agents.find((agent) => agent?.id === stableName || agent?.agentId === stableName || agent?.name === stableName);
-    return found?.id || found?.agentId || stableName;
+    return stableName;
   }
 
   async function deleteEmployeeAgent(payload) {
@@ -396,6 +429,7 @@ export function createOneclawIntegration({
       console.log(`[command] deleted employee agent ${agentId}`);
     } catch (err) {
       console.warn(`[command] delete employee agent failed: ${err.message}`);
+      throw err;
     }
   }
 
@@ -413,6 +447,7 @@ export function createOneclawIntegration({
       console.log(`[command] installed skill ${slug} for ${agentId || "main"}`);
     } catch (err) {
       console.error(`[command] install skill ${slug} failed: ${err.message}`);
+      throw err;
     }
   }
 
@@ -448,7 +483,7 @@ export function createOneclawIntegration({
         } catch {}
       }
     }
-    return path.join(workspaceDir || "/data/workspace", "agents", agentId, "skills", slug);
+    return path.join(agentWorkspace(workspaceDir || "/data/workspace", agentId), "skills", slug);
   }
 
   async function restartRuntimeGateway(command) {
@@ -691,7 +726,10 @@ export function createOneclawIntegration({
       ...secrets,
     }, access);
     delete incoming.access;
-    setChannelConfig(runtimeChannel, incoming, { stateDir: stateDir || path.dirname(workspaceDir) });
+    const employeeId = String(payload?.employee_id || payload?.employeeId || "").trim();
+    const agentId = runtimeAgentId(payload, employeeId);
+    const accountId = String(payload?.account_id || payload?.accountId || agentId).trim();
+    setChannelAccountConfig(runtimeChannel, accountId, agentId, incoming, { stateDir: stateDir || path.dirname(workspaceDir) });
     if (typeof restartGateway === "function") {
       const result = await restartGateway({ waitReady: false });
       if (!result?.coalesced) gatewayRpc?.restart?.();
@@ -923,6 +961,7 @@ export function createOneclawIntegration({
       });
     } catch (err) {
       console.warn(`[channel-bind] failed to unbind runtime channel ${runtimeChannel}: ${err.message}`);
+      throw err;
     }
   }
 
@@ -945,8 +984,7 @@ export function createOneclawIntegration({
 
   function runtimeChannelAccountId(channel, employeeId, runtimeAccountId) {
     const accountId = String(runtimeAccountId || "").trim();
-    if (channel === "wechat" && accountId) return accountId;
-    return employeeId;
+    return accountId || employeeId;
   }
 
   function runtimeAccountIdFromPayload(payload, channel, employeeId) {
@@ -954,6 +992,8 @@ export function createOneclawIntegration({
     const runtimeAccountId = String(
       payload?.runtime_account_id ||
       payload?.runtimeAccountId ||
+      payload?.account_id ||
+      payload?.accountId ||
       stateConfig.account_id ||
       stateConfig.accountId ||
       "",

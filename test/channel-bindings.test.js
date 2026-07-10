@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readChannelBindings, applyChannelBinding, removeChannelBinding } from "../src/channels/bindings.js";
+import { readChannelBindings, applyChannelBinding, applyChannelAccountBinding, removeChannelBinding } from "../src/channels/bindings.js";
 
 test("readChannelBindings returns enabled channels, accounts, and bindings", () => {
   const cfg = {
@@ -107,4 +107,20 @@ test("removeChannelBinding leaves config unchanged for wrong agent", () => {
   assert.deepEqual(cfg.bindings, [
     { agentId: "agent-a", match: { channel: "telegram", accountId: "emp1" } },
   ]);
+});
+
+test("token channel accounts bind independently and final unbind cleans channel plugin", () => {
+  const cfg = { channels: {}, bindings: [], plugins: { entries: { slack: { enabled: true } } } };
+  applyChannelAccountBinding(cfg, { channel: "slack", accountId: "agent-a", agentId: "agent-a", account: { botToken: "a", appToken: "aa" } });
+  applyChannelAccountBinding(cfg, { channel: "slack", accountId: "agent-b", agentId: "agent-b", account: { botToken: "b", appToken: "bb" } });
+
+  removeChannelBinding(cfg, { channel: "slack", accountId: "agent-a", agentId: "agent-a" });
+  assert.equal(cfg.channels.slack.accounts["agent-b"].botToken, "b");
+  assert.equal(cfg.bindings.length, 1);
+
+  const result = removeChannelBinding(cfg, { channel: "slack", accountId: "agent-b", agentId: "agent-b" });
+  assert.equal(result.channelRemoved, true);
+  assert.equal(cfg.channels.slack, undefined);
+  assert.equal(cfg.plugins.entries.slack.enabled, false);
+  assert.deepEqual(cfg.bindings, []);
 });

@@ -20,6 +20,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { patchConfig, setIn } from "../config/edit.js";
 import { mergeChannelPolicy } from "./access-policy.js";
+import { applyChannelAccountBinding } from "./bindings.js";
 
 function truthy(v) {
   const s = (v || "").trim().toLowerCase();
@@ -66,7 +67,7 @@ export const CHANNEL_MANIFEST = [
     reconcileShape(env) {
       return {
         enabled: true,
-        accounts: { default: { token: env.DISCORD_BOT_TOKEN.trim() } },
+        token: env.DISCORD_BOT_TOKEN.trim(),
         dm: { policy: DM_OPEN, allowFrom: ALLOW_ALL },
         groupPolicy: "allowlist",
       };
@@ -209,11 +210,31 @@ export function setChannelConfig(channelId, cfgObj, ctx) {
   console.log(`[reconcile] channels.${channelId} written directly to openclaw.json`);
 }
 
+export function setChannelAccountConfig(channelId, accountId, agentId, cfgObj, ctx) {
+  const { stateDir } = ctx;
+  if (!stateDir || !accountId || !agentId) throw new Error("stateDir, accountId and agentId are required");
+  const configPath = path.join(stateDir, "openclaw.json");
+  if (!fs.existsSync(configPath)) throw new Error(`${configPath} does not exist`);
+  patchConfig(configPath, (cfg) => {
+    const ch = CHANNEL_MANIFEST.find((candidate) => candidate.id === channelId);
+    const existing = cfg.channels?.[channelId]?.accounts?.[accountId] || {};
+    applyChannelAccountBinding(cfg, {
+      channel: channelId,
+      accountId,
+      agentId,
+      account: mergeChannelPolicy(existing, cfgObj),
+    });
+    if (ch?.pluginId) setIn(cfg, `plugins.entries.${ch.pluginId}`, { enabled: true });
+  });
+  console.log(`[reconcile] channels.${channelId}.accounts.${accountId} written directly to openclaw.json`);
+}
+
 function reconcileChannel(ch, ctx) {
   console.log(`[reconcile] refreshing channels.${ch.id} while preserving existing access policy`);
   if (ch.needsPairingClear) clearPairingStore(ch.id, ctx.stateDir);
   const shape = ch.reconcileShape(ctx.env || process.env);
-  setChannelConfig(ch.id, shape, ctx);
+  if (ch.kind === "token") setChannelAccountConfig(ch.id, "main", "main", shape, ctx);
+  else setChannelConfig(ch.id, shape, ctx);
 }
 
 // reconcileAllChannels — synchronous now (no more subprocess awaiting).

@@ -932,10 +932,10 @@ test("refreshed WeChat QR is reported through the original binding session", asy
         }],
       });
     }
-    if (url === "http://gateway.local/repair/wechat-login/start") {
+    if (url === "http://gateway-refresh.local/repair/wechat-login/start") {
       return jsonResponse({ ok: true, status: "scan", connected: false, qrUrl: oldQrUrl });
     }
-    if (url === "http://gateway.local/repair/wechat-login") {
+    if (url === "http://gateway-refresh.local/repair/wechat-login") {
       statusCalls += 1;
       if (statusCalls === 1) {
         return jsonResponse({ ok: true, status: "scan", connected: false, qrUrl: newQrUrl });
@@ -947,7 +947,7 @@ test("refreshed WeChat QR is reported through the original binding session", asy
         connectedAccountId: "wechat-real-account",
       });
     }
-    if (url === "http://gateway.local/repair/bind-channel") {
+    if (url === "http://gateway-refresh.local/repair/bind-channel") {
       return jsonResponse({ ok: true });
     }
     if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
@@ -963,7 +963,7 @@ test("refreshed WeChat QR is reported through the original binding session", asy
       instanceId: "runtime-1",
       instanceSecret: "secret-1",
       workspaceDir,
-      gatewayTarget: "http://gateway.local",
+      gatewayTarget: "http://gateway-refresh.local",
       gatewayToken: "gateway-token",
       isGatewayReady: () => true,
       isGatewayStarting: () => false,
@@ -976,10 +976,12 @@ test("refreshed WeChat QR is reported through the original binding session", asy
     restoreFetch();
   }
 
-  const qrReports = channelStates.filter((state) => state.status === "pending" && state.qr_url);
+  const qrReports = channelStates.filter((state) => (
+    state.session_id === "bind-refresh" && state.status === "pending" && state.qr_url
+  ));
   assert.deepEqual(qrReports.map((state) => state.qr_url), [oldQrUrl, newQrUrl]);
   assert.deepEqual(qrReports.map((state) => state.session_id), ["bind-refresh", "bind-refresh"]);
-  assert.equal(channelStates.some((state) => state.status === "ready"), true);
+  assert.equal(channelStates.some((state) => state.session_id === "bind-refresh" && state.status === "ready"), true);
 });
 
 test("cancel bind command stops active channel polling", async () => {

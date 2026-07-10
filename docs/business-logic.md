@@ -317,7 +317,7 @@ flowchart TD
     D --> E["启动本地绑定 session"]
     E --> F{"channel"}
     F -- "whatsapp" --> G["gateway RPC web.login.start/wait"]
-    F -- "wechat" --> H["插件 HTTP /plugins/openclaw-weixin/qr-start 或复用缓存 QR"]
+    F -- "wechat" --> H["插件 HTTP qr-start/status/stop"]
     H -. "旧插件兜底" .-> M["openclaw channels login --channel openclaw-weixin"]
     G --> I["生成、刷新或复用二维码"]
     H --> I
@@ -329,12 +329,14 @@ flowchart TD
 
 绑定生命周期：
 
-- session 只在 `expires_at` 前刷新。
-- 微信插件如果没有返回 `qrExpiresAt`/`expiresAt`，模板认为该二维码可继续复用；只有插件明确返回过期时间且已过期时，才重新调用 `qr-start`。
-- 到期后本地停止刷新，并上报 `expired`。
+- Go API 下发的 `binding.expires_at` 是整次绑定的唯一截止时间，会从 template 透传到微信插件 HTTP session；刷新单张二维码不会延长总截止时间。
+- 微信插件在截止时间前自动刷新失效二维码；补丁通过 `onQrRefreshed` 更新 HTTP session，`qr-status` 返回最新 `qrDataUrl`，template 再用原 `session_id` 上报 Go API。
+- 微信上游没有提供准确的单张二维码过期时间时不伪造 `qr_expires_at`，改用 `qrUpdatedAt` 标识二维码版本更新时间。
+- 到期后 template 停止轮询、调用插件 `qr-stop` 取消后台 waiter，并上报 `expired`。正在执行的上游长轮询可以结束，但其结果会被丢弃，不能再触发刷新或成功回写。
 - 用户取消绑定时，Go API 入队 `cancel_bind_channel`，模板停止本地 session。
-- 微信取消时会额外调用 `wechat-login/stop` 停止登录进程。
+- 微信取消时会额外调用 `wechat-login/stop`；HTTP 快速路径先按 `sessionKey` 调用插件 `qr-stop`，CLI fallback 则终止登录子进程。
 - WhatsApp 使用 `accountId=employee_id` 隔离多员工账号。
+- WhatsApp 的 `web.login.wait` 会返回最新二维码；取消后晚到的单次 wait 结果由 template 的 `session.cancelled` 守卫丢弃。
 
 ### 4.7 修复助手
 

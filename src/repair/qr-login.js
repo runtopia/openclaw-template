@@ -376,12 +376,13 @@ export function mountQrLogin(router, deps) {
       qrUrl: wechatPluginSession.qrUrl,
       qrDataUrl: wechatPluginSession.qrUrl,
       qrExpiresAt: wechatPluginSession.qrExpiresAt || null,
+      qrUpdatedAt: wechatPluginSession.qrUpdatedAt || null,
       sessionKey: wechatPluginSession.sessionKey,
       message: message || wechatPluginSession.message || null,
     };
   }
 
-  async function startWechatPluginLogin(accountId, force) {
+  async function startWechatPluginLogin(accountId, force, expiresAt) {
     if (!force && sameWechatPluginSession(accountId) && !wechatPluginSessionQrExpired()) {
       try {
         return await getWechatPluginLoginState();
@@ -398,7 +399,11 @@ export function mountQrLogin(router, deps) {
     }
     const data = await fetchWechatPluginJson("/qr-start", {
       method: "POST",
-      body: { ...(accountId ? { accountId } : {}), ...(force ? { force: true } : {}) },
+      body: {
+        ...(accountId ? { accountId } : {}),
+        ...(force ? { force: true } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
+      },
       attempts: WECHAT_PLUGIN_QR_START_ATTEMPTS,
     });
     const qrUrl = data.qrDataUrl || data.qrUrl || null;
@@ -409,6 +414,7 @@ export function mountQrLogin(router, deps) {
       accountId: accountId || null,
       qrUrl,
       qrExpiresAt,
+      qrUpdatedAt: data.qrUpdatedAt || data.qr_updated_at || null,
       message: data.message || null,
       updatedAt: Date.now(),
     };
@@ -419,6 +425,7 @@ export function mountQrLogin(router, deps) {
       qrUrl,
       qrDataUrl: qrUrl,
       qrExpiresAt,
+      qrUpdatedAt: wechatPluginSession.qrUpdatedAt,
       sessionKey: wechatPluginSession.sessionKey,
       message: data.message || null,
     };
@@ -428,8 +435,11 @@ export function mountQrLogin(router, deps) {
     if (!wechatPluginSession?.sessionKey) return null;
     const query = `?sessionKey=${encodeURIComponent(wechatPluginSession.sessionKey)}`;
     const data = await fetchWechatPluginJson(`/qr-status${query}`, { method: "GET", attempts: 1 });
+    const refreshedQrUrl = data.qrDataUrl || data.qrUrl || null;
+    if (refreshedQrUrl) wechatPluginSession.qrUrl = refreshedQrUrl;
     const qrExpiresAt = wechatPluginQrExpiresAt(data) || wechatPluginSession.qrExpiresAt || null;
     wechatPluginSession.qrExpiresAt = qrExpiresAt;
+    wechatPluginSession.qrUpdatedAt = data.qrUpdatedAt || data.qr_updated_at || wechatPluginSession.qrUpdatedAt || null;
     if (data.status === "connected") {
       return {
         ok: true,
@@ -440,6 +450,7 @@ export function mountQrLogin(router, deps) {
         qrUrl: wechatPluginSession.qrUrl,
         qrDataUrl: wechatPluginSession.qrUrl,
         qrExpiresAt,
+        qrUpdatedAt: wechatPluginSession.qrUpdatedAt,
         sessionKey: wechatPluginSession.sessionKey,
         message: data.message || "已将此 OpenClaw 连接到微信。",
       };
@@ -452,6 +463,7 @@ export function mountQrLogin(router, deps) {
         qrUrl: wechatPluginSession.qrUrl,
         qrDataUrl: wechatPluginSession.qrUrl,
         qrExpiresAt,
+        qrUpdatedAt: wechatPluginSession.qrUpdatedAt,
         sessionKey: wechatPluginSession.sessionKey,
         message: data.error || data.message || "微信扫码登录失败",
       };
@@ -463,6 +475,7 @@ export function mountQrLogin(router, deps) {
       qrUrl: wechatPluginSession.qrUrl,
       qrDataUrl: wechatPluginSession.qrUrl,
       qrExpiresAt,
+      qrUpdatedAt: wechatPluginSession.qrUpdatedAt,
       sessionKey: wechatPluginSession.sessionKey,
       message: data.message || wechatPluginSession.message,
     };
@@ -471,9 +484,11 @@ export function mountQrLogin(router, deps) {
   router.post("/wechat-login/start", requireRepairAuth, async (req, res) => {
     const accountId = typeof req.body?.accountId === "string" && req.body.accountId.trim()
       ? req.body.accountId.trim() : undefined;
+    const expiresAt = typeof req.body?.expiresAt === "string" && req.body.expiresAt.trim()
+      ? req.body.expiresAt.trim() : undefined;
     if (canUseWechatPluginHttp()) {
       try {
-        const started = await startWechatPluginLogin(accountId, req.body?.force === true);
+        const started = await startWechatPluginLogin(accountId, req.body?.force === true, expiresAt);
         if (started.preparing) {
           return res.status(202).json({ ok: true, status: "starting", qrUrl: null, qrDataUrl: null, connected: false, message: "WeChat gateway is starting. Retrying shortly." });
         }
@@ -504,6 +519,7 @@ export function mountQrLogin(router, deps) {
           qrUrl: wechatPluginSession.qrUrl,
           qrDataUrl: wechatPluginSession.qrUrl,
           qrExpiresAt: wechatPluginSession.qrExpiresAt || null,
+          qrUpdatedAt: wechatPluginSession.qrUpdatedAt || null,
           sessionKey: wechatPluginSession.sessionKey,
           message: err.message,
         });
@@ -512,7 +528,19 @@ export function mountQrLogin(router, deps) {
     res.json({ ok: true, ...getWechatLoginState() });
   });
 
-  router.post("/wechat-login/stop", requireRepairAuth, (_req, res) => {
+  router.post("/wechat-login/stop", requireRepairAuth, async (_req, res) => {
+    const sessionKey = wechatPluginSession?.sessionKey;
+    if (canUseWechatPluginHttp() && sessionKey) {
+      try {
+        await fetchWechatPluginJson("/qr-stop", {
+          method: "POST",
+          body: { sessionKey },
+          attempts: 1,
+        });
+      } catch (err) {
+        console.warn(`[wechat-login] plugin HTTP QR stop failed: ${err.message}`);
+      }
+    }
     wechatPluginSession = null;
     stopWechatLogin();
     res.json({ ok: true, ...getWechatLoginState() });

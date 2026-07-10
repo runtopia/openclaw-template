@@ -58,11 +58,12 @@ function createWechatRepairApp(overrides = {}) {
 test("wechat login start uses plugin HTTP route and returns QR immediately", async (t) => {
   const originalFetch = globalThis.fetch;
   const pluginCalls = [];
+  const expiresAt = new Date(Date.now() + 300_000).toISOString();
   globalThis.fetch = async (url, opts = {}) => {
     if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-start") {
       pluginCalls.push({ url: String(url), opts });
       assert.equal(opts.headers.Authorization, "Bearer gateway-token");
-      assert.deepEqual(JSON.parse(opts.body), { accountId: "emp1" });
+      assert.deepEqual(JSON.parse(opts.body), { accountId: "emp1", expiresAt });
       return jsonResponse({
         sessionKey: "wechat-session-1",
         qrDataUrl: "https://liteapp.weixin.qq.com/q/test?qrcode=abc&bot_type=3",
@@ -84,7 +85,7 @@ test("wechat login start uses plugin HTTP route and returns QR immediately", asy
   const res = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accountId: "emp1" }),
+    body: JSON.stringify({ accountId: "emp1", expiresAt }),
   });
   const data = await res.json();
 
@@ -95,6 +96,87 @@ test("wechat login start uses plugin HTTP route and returns QR immediately", asy
   assert.equal(data.qrExpiresAt, "2026-07-09T11:20:00.000Z");
   assert.equal(data.sessionKey, "wechat-session-1");
   assert.equal(pluginCalls.length, 1);
+});
+
+test("wechat login status publishes a refreshed plugin QR", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const initialQrUrl = "https://liteapp.weixin.qq.com/q/initial?qrcode=old&bot_type=3";
+  const refreshedQrUrl = "https://liteapp.weixin.qq.com/q/refreshed?qrcode=new&bot_type=3";
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-start") {
+      return jsonResponse({ sessionKey: "wechat-session-refresh", qrDataUrl: initialQrUrl });
+    }
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-status?sessionKey=wechat-session-refresh") {
+      return jsonResponse({
+        status: "pending",
+        qrDataUrl: refreshedQrUrl,
+        qrUpdatedAt: "2026-07-10T03:00:00.000Z",
+      });
+    }
+    return originalFetch(url, opts);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    stopWechatLogin();
+  });
+
+  const server = await listen(createWechatRepairApp());
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: "emp1" }),
+  });
+  const statusRes = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login`);
+  const statusData = await statusRes.json();
+
+  assert.equal(statusRes.status, 200);
+  assert.equal(statusData.qrUrl, refreshedQrUrl);
+  assert.equal(statusData.qrDataUrl, refreshedQrUrl);
+  assert.equal(statusData.qrUpdatedAt, "2026-07-10T03:00:00.000Z");
+});
+
+test("wechat login stop cancels the active plugin session", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const pluginStopCalls = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-start") {
+      return jsonResponse({
+        sessionKey: "wechat-session-stop",
+        qrDataUrl: "https://liteapp.weixin.qq.com/q/stop?qrcode=abc&bot_type=3",
+      });
+    }
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-stop") {
+      pluginStopCalls.push({ url: String(url), opts });
+      return jsonResponse({ success: true, status: "cancelled" });
+    }
+    return originalFetch(url, opts);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    stopWechatLogin();
+  });
+
+  const server = await listen(createWechatRepairApp());
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: "emp1" }),
+  });
+  const stopRes = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/stop`, {
+    method: "POST",
+  });
+
+  assert.equal(stopRes.status, 200);
+  assert.equal(pluginStopCalls.length, 1);
+  assert.deepEqual(JSON.parse(pluginStopCalls[0].opts.body), {
+    sessionKey: "wechat-session-stop",
+  });
 });
 
 test("wechat login start reuses active plugin QR for the same account", async (t) => {

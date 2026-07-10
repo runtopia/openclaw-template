@@ -904,6 +904,84 @@ test("wechat bind command binds the real plugin account id to the employee agent
   assert.equal(restartCalls.length, 0);
 });
 
+test("refreshed WeChat QR is reported through the original binding session", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  const expiresAt = new Date(startAt + 2_000).toISOString();
+  const oldQrUrl = "https://wechat.example/qr-old";
+  const newQrUrl = "https://wechat.example/qr-new";
+  const channelStates = [];
+  let statusCalls = 0;
+  let integration;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [{
+          id: "cmd-bind-wechat-refresh",
+          type: "update_config",
+          payload: {
+            action: "bind_channel",
+            employee_id: "emp-1",
+            openclaw_agent_id: "agent-1",
+            channel: "wechat",
+            state: { binding: { session_id: "bind-refresh", expires_at: expiresAt } },
+          },
+        }],
+      });
+    }
+    if (url === "http://gateway.local/repair/wechat-login/start") {
+      return jsonResponse({ ok: true, status: "scan", connected: false, qrUrl: oldQrUrl });
+    }
+    if (url === "http://gateway.local/repair/wechat-login") {
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        return jsonResponse({ ok: true, status: "scan", connected: false, qrUrl: newQrUrl });
+      }
+      return jsonResponse({
+        ok: true,
+        status: "connected",
+        connected: true,
+        connectedAccountId: "wechat-real-account",
+      });
+    }
+    if (url === "http://gateway.local/repair/bind-channel") {
+      return jsonResponse({ ok: true });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      channelStates.push(JSON.parse(opts.body));
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } finally {
+    integration?.stop();
+    restoreFetch();
+  }
+
+  const qrReports = channelStates.filter((state) => state.status === "pending" && state.qr_url);
+  assert.deepEqual(qrReports.map((state) => state.qr_url), [oldQrUrl, newQrUrl]);
+  assert.deepEqual(qrReports.map((state) => state.session_id), ["bind-refresh", "bind-refresh"]);
+  assert.equal(channelStates.some((state) => state.status === "ready"), true);
+});
+
 test("cancel bind command stops active channel polling", async () => {
   const workspaceDir = makeWorkspace();
   const startAt = Date.now();
@@ -985,6 +1063,81 @@ test("cancel bind command stops active channel polling", async () => {
   } finally {
     restoreFetch();
   }
+});
+
+test("late WhatsApp wait result is ignored after binding cancellation", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  const channelStates = [];
+  let heartbeatCalls = 0;
+  let resolveLateWait;
+  let markWaitStarted;
+  const waitStarted = new Promise((resolve) => { markWaitStarted = resolve; });
+  const lateWait = new Promise((resolve) => { resolveLateWait = resolve; });
+  let integration;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+      heartbeatCalls += 1;
+      const action = heartbeatCalls === 1 ? "bind_channel" : "cancel_bind_channel";
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [{
+          id: `cmd-${action}`,
+          type: "update_config",
+          payload: {
+            action,
+            employee_id: "emp-1",
+            channel: "whatsapp",
+            state: {
+              binding: {
+                session_id: "bind-late-wa",
+                expires_at: new Date(startAt + 2_000).toISOString(),
+              },
+            },
+          },
+        }],
+      });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/start") {
+      return jsonResponse({ ok: true, connected: false, qrDataUrl: "qr-start" });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/wait") {
+      markWaitStarted();
+      return lateWait;
+    }
+    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+      channelStates.push(JSON.parse(opts.body));
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await waitStarted;
+    await integration.sendHeartbeat();
+    resolveLateWait(jsonResponse({ ok: true, connected: false, qrDataUrl: "qr-too-late" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    integration?.stop();
+    restoreFetch();
+  }
+
+  assert.equal(channelStates.some((state) => state.qr_url === "qr-too-late"), false);
+  assert.equal(channelStates.some((state) => state.status === "expired"), true);
 });
 
 test("cancel wechat bind command stops wrapper login process", async () => {

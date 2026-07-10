@@ -742,6 +742,7 @@ test("wechat bind command enables openclaw-weixin config before starting login",
     channels: {},
   }));
   const startAt = Date.now();
+  const bindingExpiresAt = new Date(startAt + 1_000).toISOString();
   const channelStates = [];
   const restoreFetch = withFetch((url, opts = {}) => {
     if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
@@ -768,7 +769,7 @@ test("wechat bind command enables openclaw-weixin config before starting login",
               },
               binding: {
                 session_id: "bind-1",
-                expires_at: new Date(startAt + 1_000).toISOString(),
+                expires_at: bindingExpiresAt,
               },
             },
           },
@@ -781,6 +782,10 @@ test("wechat bind command enables openclaw-weixin config before starting login",
       assert.equal(cfg.channels["openclaw-weixin"].enabled, true);
       assert.equal(cfg.channels["openclaw-weixin"].dmPolicy, "allowlist");
       assert.deepEqual(cfg.channels["openclaw-weixin"].allowFrom, ["wx-owner"]);
+      assert.deepEqual(JSON.parse(opts.body), {
+        accountId: "emp-1",
+        expiresAt: bindingExpiresAt,
+      });
       return jsonResponse({
         ok: true,
         status: "scan",

@@ -758,6 +758,7 @@ export function createOneclawIntegration({
       agentId: runtimeAgentId(payload, employeeId),
       sessionId,
       expiresAt,
+      expiresAtRaw,
       started: false,
       currentQrUrl: null,
       cancelled: false,
@@ -877,7 +878,10 @@ export function createOneclawIntegration({
   async function pollWechatBinding(session) {
     if (!session.started) {
       session.started = true;
-      return repairFetch("wechat-login/start", "POST", { accountId: session.employeeId });
+      return repairFetch("wechat-login/start", "POST", {
+        accountId: session.employeeId,
+        expiresAt: session.expiresAtRaw,
+      });
     }
     return repairFetch("wechat-login", "GET");
   }

@@ -138,7 +138,7 @@ async function waitInBackground(sessionKey) {
     }
   } catch (err) {
     const current = sessions.get(sessionKey);
-    if (current) {
+    if (current === session && !current.cancelled && Date.now() < current.expiresAt) {
       current.status = "failed";
       current.error = String(err);
       current.qrDataUrl = null;
@@ -371,7 +371,7 @@ export function patchLoginQrSource(source) {
     );
     const isCancelled = () => opts.isCancelled?.() === true;
     const cancelLogin = () => {
-        activeLogins.delete(opts.sessionKey);
+        if (activeLogins.get(opts.sessionKey) === activeLogin) activeLogins.delete(opts.sessionKey);
         return { connected: false, cancelled: true, message: "登录已取消。" };
     };`,
     "deadline",

@@ -78,6 +78,8 @@ test("patch injects WeChat gateway HTTP route registration into published packag
     assert.match(loginQr, /opts\.isCancelled/);
     assert.match(loginQr, /opts\.deadlineAt/);
     assert.match(loginQr, /opts\.onQrRefreshed/);
+    assert.match(loginQr, /activeLogins\.get\(opts\.sessionKey\) === activeLogin/);
+    assert.match(route, /current === session && !current\.cancelled/);
 
     const firstIndex = index;
     const firstRoute = route;

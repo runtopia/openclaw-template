@@ -106,6 +106,7 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
     },
   };
   const restoreFetch = withFetch((url) => {
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
     assert.equal(url, "https://oneclaw.example.com/api/v1/agent/heartbeat");
     return jsonResponse({
       instance_id: "runtime-1",
@@ -120,7 +121,7 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
           avatar: "👨‍💻",
           soul_md: "You are a developer assistant.",
           memory_files: [{ path: "memory/dev.md", content: "dev notes" }],
-          skills: ["github"],
+          skill_specs: [{ slug: "github", source: "clawhub" }],
           suggested_model: "clawrouters/code",
         },
       }],
@@ -156,6 +157,146 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
   assert.deepEqual(runCalls[0].args, ["skills", "install", "github", "--agent", "oneclaw-emp-1"]);
 });
 
+test("employee template resolves builtin skills without sending them to ClawHub", async () => {
+  const workspaceDir = makeWorkspace();
+  const runCalls = [];
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method) => {
+      if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "oneclaw-emp-builtin" }] } };
+      if (method === "agents.files.set") return { ok: true, payload: { ok: true } };
+      if (method === "skills.status") return { ok: true, payload: { skills: [{ name: "github" }] } };
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-builtin",
+        type: "apply_template",
+        payload: { employee_id: "emp-builtin", skill_specs: [{ slug: "github", source: "clawhub" }] },
+      }] });
+    }
+    if (url.includes("/agent/skills/github")) {
+      assert.equal(opts.method, "GET");
+      return jsonResponse({ slug: "github", source: "builtin" });
+    }
+    if (url.includes("/agent/commands/cmd-builtin/ack")) return jsonResponse({ acknowledged: true });
+    if (url.includes("/agent/event")) return jsonResponse({ accepted: true });
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayRpc,
+      runCmd: async (_cmd, args) => { runCalls.push(args); return { code: 0, output: "" }; },
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(runCalls.some((args) => args[0] === "skills" && args[1] === "install"), false);
+});
+
+test("builtin skill install fails when runtime status does not confirm the skill", async () => {
+  const workspaceDir = makeWorkspace();
+  let acknowledgement;
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method) => {
+      if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "oneclaw-emp-missing" }] } };
+      if (method === "skills.status") return { ok: true, payload: { skills: [] } };
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-builtin-missing",
+        status: "leased",
+        type: "install_skill",
+        payload: { employee_id: "emp-missing", skill_slug: "github", source: "clawhub" },
+      }] });
+    }
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    if (url.includes("/agent/commands/cmd-builtin-missing/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayRpc,
+      runCmd: async () => ({ code: 0, output: "" }),
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(acknowledgement.status, "failed");
+  assert.match(acknowledgement.error, /not available/);
+});
+
+test("employee template downloads custom skills instead of sending their slug to ClawHub", async () => {
+  const workspaceDir = makeWorkspace();
+  const runCalls = [];
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method) => {
+      if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "oneclaw-emp-custom" }] } };
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url) => {
+    if (url.includes("/agent/commands?")) {
+      return jsonResponse({ commands: [{ id: "cmd-custom", type: "apply_template", payload: { employee_id: "emp-custom", skills: ["merge-upstream"] } }] });
+    }
+    if (url.includes("/agent/skills/merge-upstream/archive")) return new Response(Buffer.from("zip-data"), { status: 200 });
+    if (url.includes("/agent/skills/merge-upstream")) return jsonResponse({ slug: "merge-upstream", source: "custom", version: "1.0.0" });
+    if (url.includes("/agent/commands/cmd-custom/ack")) return jsonResponse({ acknowledged: true });
+    if (url.includes("/agent/event")) return jsonResponse({ accepted: true });
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api", instanceId: "runtime-1", instanceSecret: "secret-1", workspaceDir, gatewayRpc,
+      runCmd: async (cmd, args) => { runCalls.push({ cmd, args }); return { code: 0, output: "" }; },
+      clawArgs: (args) => args, OPENCLAW_NODE: "node", isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  const install = runCalls.find((call) => call.args?.[0] === "skills" && call.args?.[1] === "install");
+  assert.ok(install);
+  assert.equal(install.args.includes("merge-upstream"), true);
+  assert.equal(install.args.includes("--as"), true);
+  assert.equal(runCalls.some((call) => call.args?.[2] === "merge-upstream"), false);
+  assert.equal(fs.existsSync(install.args[2]), false);
+});
+
 test("command polling applies employee template commands without waiting for heartbeat", async () => {
   const workspaceDir = makeWorkspace();
   const rpcCalls = [];
@@ -171,6 +312,7 @@ test("command polling applies employee template commands without waiting for hea
   };
   const restoreFetch = withFetch((url, opts = {}) => {
     assert.equal(opts.method, "GET");
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
     assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
     return jsonResponse({
       instance_id: "runtime-1",
@@ -252,10 +394,11 @@ test("command polling installs and removes employee skills", async () => {
   };
   const restoreFetch = withFetch((url, opts = {}) => {
     assert.equal(opts.method, "GET");
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
     assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
     return jsonResponse({
       commands: [
-        { id: "cmd-install", type: "install_skill", payload: { employee_id: "emp-skill", skill_slug: "github" } },
+        { id: "cmd-install", type: "install_skill", payload: { employee_id: "emp-skill", skill_slug: "github", source: "clawhub" } },
         { id: "cmd-remove", type: "remove_skill", payload: { employee_id: "emp-skill", skill_slug: "github" } },
       ],
     });

@@ -1,6 +1,7 @@
 // OneClaw platform integration.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { buildRuntimeChannelAccessPolicy, mergeChannelPolicy } from "../channels/access-policy.js";
 import { CHANNEL_MANIFEST, setChannelAccountConfig, setChannelConfig } from "../channels/manifest.js";
@@ -383,10 +384,12 @@ export function createOneclawIntegration({
       if (suggestedModel) {
         await callGateway("agents.update", { agentId, model: suggestedModel });
       }
-      for (const slug of Array.isArray(payload.skills) ? payload.skills : []) {
-        if (!slug || typeof runCmd !== "function" || typeof clawArgs !== "function" || !OPENCLAW_NODE) continue;
-        const result = await runCmd(OPENCLAW_NODE, clawArgs(["skills", "install", String(slug), "--agent", agentId]));
-        if (result.code !== 0) throw new Error(result.output || `failed to install template skill ${slug}`);
+      const requestedSkills = Array.isArray(payload.skill_specs)
+        ? payload.skill_specs
+        : (Array.isArray(payload.skills) ? payload.skills : []);
+      for (const requestedSkill of requestedSkills) {
+        const spec = await resolveRuntimeSkillSpec(requestedSkill);
+        await installSkillForAgent(spec, agentId, payload.credentials);
       }
       console.log(`[command] synced employee agent ${employeeId} -> ${agentId}`);
     } catch (err) {
@@ -435,20 +438,89 @@ export function createOneclawIntegration({
 
   async function installEmployeeSkill(payload) {
     const slug = String(payload.skill_slug || payload.skillSlug || payload.slug || "").trim();
-    if (!slug || typeof runCmd !== "function" || typeof clawArgs !== "function" || !OPENCLAW_NODE) return;
+    if (!slug) return;
     const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     try {
       const agentId = employeeId ? await ensureEmployeeAgent(payload, employeeId) : String(payload.agent_id || payload.agentId || "main").trim();
-      const args = ["skills", "install", slug, "--agent", agentId || "main"];
-      if (payload.version) args.push("--version", String(payload.version));
-      if (payload.force === true) args.push("--force");
-      const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
-      if (result.code !== 0) throw new Error(result.output || `openclaw skills install exited ${result.code}`);
+      const spec = await resolveRuntimeSkillSpec({
+        slug,
+        source: payload.source,
+        version: payload.version,
+        force: payload.force,
+      });
+      await installSkillForAgent(spec, agentId || "main", payload.credentials);
       console.log(`[command] installed skill ${slug} for ${agentId || "main"}`);
     } catch (err) {
       console.error(`[command] install skill ${slug} failed: ${err.message}`);
       throw err;
     }
+  }
+
+  async function resolveRuntimeSkillSpec(value) {
+    const inline = typeof value === "string" ? { slug: value } : (value || {});
+    const slug = String(inline.slug || inline.skill_slug || "").trim();
+    if (!slug) throw new Error("skill slug is required");
+    const res = await apiFetch(`/agent/skills/${encodeURIComponent(slug)}?instance_id=${encodeURIComponent(instanceId)}`, { method: "GET" });
+    const spec = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(spec.error || `skill ${slug} resolution failed: ${res.status}`);
+    return {
+      ...spec,
+      slug: spec.slug || slug,
+      ...(inline.version ? { version: inline.version } : {}),
+      ...(inline.force === true ? { force: true } : {}),
+    };
+  }
+
+  async function installSkillForAgent(spec, agentId, credentials) {
+    const source = String(spec?.source || "").trim();
+    const slug = String(spec?.slug || "").trim();
+    if (!slug || !source) throw new Error("skill slug and source are required");
+    if (source === "builtin") {
+      const frame = await callGateway("skills.status", { agentId });
+      const skills = frame?.skills || frame?.result?.skills || frame?.payload?.skills || [];
+      if (!Array.isArray(skills) || !skills.some((skill) => skill?.name === slug || skill?.slug === slug || skill?.skillKey === slug)) {
+        throw new Error(`builtin skill ${slug} is not available in this runtime`);
+      }
+      if (credentials && Object.keys(credentials).length > 0) {
+        await callGateway("skills.update", { skillKey: slug, ...credentials });
+      }
+      console.log(`[command] builtin skill ${slug} available for ${agentId}`);
+      return;
+    }
+    if (typeof runCmd !== "function" || typeof clawArgs !== "function" || !OPENCLAW_NODE) {
+      throw new Error("OpenClaw CLI unavailable");
+    }
+    if (source === "custom") {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-skill-"));
+      const zipPath = path.join(tempRoot, `${slug}.zip`);
+      const extractPath = path.join(tempRoot, "contents");
+      try {
+        const query = new URLSearchParams({ instance_id: instanceId });
+        if (spec.version) query.set("version", String(spec.version));
+        const res = await apiFetch(`/agent/skills/${encodeURIComponent(slug)}/archive?${query}`, { method: "GET" });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `custom skill ${slug} download failed: ${res.status}`);
+        }
+        fs.mkdirSync(extractPath, { recursive: true });
+        fs.writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
+        const unpack = await runCmd("unzip", ["-o", zipPath, "-d", extractPath]);
+        if (unpack.code !== 0) throw new Error(unpack.output || `failed to extract custom skill ${slug}`);
+        const args = ["skills", "install", extractPath, "--as", slug, "--agent", agentId];
+        if (spec.force === true) args.push("--force");
+        const installed = await runCmd(OPENCLAW_NODE, clawArgs(args));
+        if (installed.code !== 0) throw new Error(installed.output || `failed to install custom skill ${slug}`);
+        return;
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    }
+    if (source !== "clawhub") throw new Error(`unsupported skill source: ${source}`);
+    const args = ["skills", "install", slug, "--agent", agentId];
+    if (spec.version) args.push("--version", String(spec.version));
+    if (spec.force === true) args.push("--force");
+    const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
+    if (result.code !== 0) throw new Error(result.output || `openclaw skills install exited ${result.code}`);
   }
 
   async function removeEmployeeSkill(payload) {

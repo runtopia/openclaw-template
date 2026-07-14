@@ -344,8 +344,7 @@ export function createOneclawIntegration({
     if (command?.type !== "apply_template") return;
     const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     if (employeeId) {
-      await applyEmployeeAgentTemplate(payload, employeeId);
-      return;
+      return applyEmployeeAgentTemplate(payload, employeeId);
     }
     const soulMd = payload.soul_md || payload.soulMd;
     if (soulMd) {
@@ -358,44 +357,113 @@ export function createOneclawIntegration({
     applyMemoryFiles(payload.memory_files || payload.memoryFiles, mainWorkspace);
   }
 
+  function renderManagedResponsibilities(soulMd, responsibilities) {
+    const start = "<!-- ONECLAW:RESPONSIBILITIES:START -->";
+    const end = "<!-- ONECLAW:RESPONSIBILITIES:END -->";
+    const managedPattern = /\n?<!-- ONECLAW:RESPONSIBILITIES:START -->[\s\S]*?<!-- ONECLAW:RESPONSIBILITIES:END -->\n?/g;
+    const base = String(soulMd || "").replace(managedPattern, "\n").trim();
+    const items = responsibilities
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .map((item) => `- ${item}`);
+    if (items.length === 0) return base;
+    const section = `${start}\n## Core Responsibilities\n${items.join("\n")}\n${end}`;
+    return base ? `${base}\n\n${section}\n` : `${section}\n`;
+  }
+
+  function normalizeTemplateSkillRequirements(payload) {
+    if (Array.isArray(payload.skill_requirements)) return payload.skill_requirements;
+    if (Array.isArray(payload.skillRequirements)) return payload.skillRequirements;
+    if (Array.isArray(payload.skill_specs)) return payload.skill_specs;
+    if (Array.isArray(payload.skills)) return payload.skills.map((slug) => ({ slug, required: false, install_policy: "recommend" }));
+    return [];
+  }
+
+  function boundedComponentError(err) {
+    return String(err?.message || err || "component failed").slice(0, 500);
+  }
+
   async function applyEmployeeAgentTemplate(payload, employeeId) {
     if (!gatewayRpc?.rpcGateway) {
       console.warn("[command] gateway rpc unavailable; cannot sync employee agent");
       return;
     }
-    try {
-      await gatewayRpc.waitUntilConnected?.(10_000);
-      const agentId = await ensureEmployeeAgent(payload, employeeId);
-      const soulMd = payload.soul_md || payload.soulMd;
-      if (soulMd) {
-        await callGateway("agents.files.set", { agentId, name: "SOUL.md", content: soulMd });
+    await gatewayRpc.waitUntilConnected?.(10_000);
+    const agentId = await ensureEmployeeAgent(payload, employeeId);
+    const result = {
+      employee_id: employeeId,
+      template_version: Number(payload.template_version || payload.templateVersion || 1),
+      overall_status: "active",
+      components: {
+        soul: { status: "skipped" },
+        responsibilities: { status: "skipped" },
+        memory: { status: "skipped" },
+        skills: [],
+      },
+    };
+
+    const soulMd = String(payload.soul_md || payload.soulMd || "");
+    const responsibilities = Array.isArray(payload.responsibilities) ? payload.responsibilities : [];
+    if (soulMd || responsibilities.length > 0) {
+      try {
+        const content = renderManagedResponsibilities(soulMd, responsibilities);
+        await callGateway("agents.files.set", { agentId, name: "SOUL.md", content });
+        if (soulMd) result.components.soul = { status: "active" };
+        if (responsibilities.length > 0) result.components.responsibilities = { status: "active" };
+      } catch (err) {
+        const error = boundedComponentError(err);
+        if (soulMd) result.components.soul = { status: "failed", error };
+        if (responsibilities.length > 0) result.components.responsibilities = { status: "failed", error };
       }
-      for (const file of payload.memory_files || payload.memoryFiles || []) {
-        if (!file?.path || typeof file.content !== "string") continue;
-        if (file.path === "MEMORY.md") {
-          await callGateway("agents.files.set", { agentId, name: "MEMORY.md", content: file.content });
-          continue;
-        }
-        const filePath = safeAgentFilePath(agentWorkspace(workspaceDir, agentId), file.path);
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, file.content, "utf8");
-      }
-      const suggestedModel = String(payload.suggested_model || payload.suggestedModel || "").trim();
-      if (suggestedModel) {
-        await callGateway("agents.update", { agentId, model: suggestedModel });
-      }
-      const requestedSkills = Array.isArray(payload.skill_specs)
-        ? payload.skill_specs
-        : (Array.isArray(payload.skills) ? payload.skills : []);
-      for (const requestedSkill of requestedSkills) {
-        const spec = await resolveRuntimeSkillSpec(requestedSkill);
-        await installSkillForAgent(spec, agentId, payload.credentials);
-      }
-      console.log(`[command] synced employee agent ${employeeId} -> ${agentId}`);
-    } catch (err) {
-      console.error(`[command] employee agent sync failed: ${err.message}`);
-      throw err;
     }
+
+    const memoryFiles = payload.memory_files || payload.memoryFiles || [];
+    if (Array.isArray(memoryFiles) && memoryFiles.length > 0) {
+      const failures = [];
+      for (const file of memoryFiles) {
+        if (!file?.path || typeof file.content !== "string") continue;
+        try {
+          if (file.path === "MEMORY.md") {
+            await callGateway("agents.files.set", { agentId, name: "MEMORY.md", content: file.content });
+            continue;
+          }
+          const filePath = safeAgentFilePath(agentWorkspace(workspaceDir, agentId), file.path);
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+          fs.writeFileSync(filePath, file.content, "utf8");
+        } catch (err) {
+          failures.push(boundedComponentError(err));
+        }
+      }
+      result.components.memory = failures.length > 0
+        ? { status: "failed", error: failures.join("; ").slice(0, 500) }
+        : { status: "active" };
+    }
+
+    const requestedSkills = normalizeTemplateSkillRequirements(payload);
+    for (const requirement of requestedSkills) {
+      const slug = String(requirement?.slug || requirement?.skill_slug || requirement || "").trim();
+      if (!slug) continue;
+      if (requirement?.install_policy === "manual") {
+        result.components.skills.push({ slug, status: "manual" });
+        continue;
+      }
+      try {
+        const spec = await resolveRuntimeSkillSpec(requirement);
+        await installSkillForAgent(spec, agentId, payload.credentials);
+        result.components.skills.push({ slug, status: "active" });
+      } catch (err) {
+        const error = boundedComponentError(err);
+        result.components.skills.push({ slug, status: "failed", required: requirement?.required === true, error });
+        console.warn(`[command] employee skill ${slug} sync failed: ${error}`);
+      }
+    }
+
+    const componentResults = [result.components.soul, result.components.responsibilities, result.components.memory, ...result.components.skills];
+    if (componentResults.some((component) => component?.status === "failed" || component?.status === "needs_configuration")) {
+      result.overall_status = "degraded";
+    }
+    console.log(`[command] synced employee agent ${employeeId} -> ${agentId} (${result.overall_status})`);
+    return result;
   }
 
   async function ensureEmployeeAgent(payload, employeeId) {
@@ -410,7 +478,7 @@ export function createOneclawIntegration({
     const createFrame = await callGateway("agents.create", {
       name: stableName,
       workspace,
-      model: payload.suggested_model || payload.suggestedModel || "clawrouters/auto",
+      model: "clawrouters/auto",
       emoji: payload.avatar || "",
       avatar: "",
     }, { tolerateError: true });

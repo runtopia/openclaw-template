@@ -148,13 +148,81 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
 
   assert.equal(fs.existsSync(path.join(workspaceDir, "SOUL.md")), false);
   assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.name, "oneclaw-emp-1");
+  assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.model, "clawrouters/auto");
   assert.deepEqual(
     rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
     ["SOUL.md"],
   );
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-1/memory/dev.md"), "utf8"), "dev notes");
-  assert.equal(rpcCalls.some((call) => call.method === "agents.update" && call.params.model === "clawrouters/code"), true);
+  assert.equal(rpcCalls.some((call) => call.method === "agents.update"), false);
   assert.deepEqual(runCalls[0].args, ["skills", "install", "github", "--agent", "oneclaw-emp-1"]);
+});
+
+test("employee sync preserves content when an optional skill fails", async () => {
+  const workspaceDir = makeWorkspace();
+  const fileWrites = [];
+  let acknowledgement;
+  let skillResolutionCalls = 0;
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method, params) => {
+      if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "oneclaw-emp-degraded" }] } };
+      if (method === "agents.files.set") {
+        fileWrites.push(params);
+        return { ok: true, payload: { ok: true } };
+      }
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-degraded",
+        status: "leased",
+        type: "apply_template",
+        payload: {
+          employee_id: "emp-degraded",
+          template_version: 2,
+          soul_md: "You are a developer.",
+          responsibilities: ["Review pull requests"],
+          memory_files: [{ path: "memory/review.md", content: "Checklist" }],
+          skill_requirements: [{ slug: "missing-skill", required: false, install_policy: "recommend" }],
+        },
+      }] });
+    }
+    if (url.includes("/agent/skills/missing-skill")) {
+      skillResolutionCalls += 1;
+      return jsonResponse({ error: "Skill not found" }, 404);
+    }
+    if (url.includes("/agent/commands/cmd-degraded/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayRpc,
+      runCmd: async () => ({ code: 0, output: "" }),
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(skillResolutionCalls, 1);
+  assert.equal(acknowledgement.status, "succeeded");
+  assert.match(fileWrites.find((write) => write.name === "SOUL.md").content, /ONECLAW:RESPONSIBILITIES:START/);
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-degraded/memory/review.md"), "utf8"), "Checklist");
 });
 
 test("employee template resolves builtin skills without sending them to ClawHub", async () => {

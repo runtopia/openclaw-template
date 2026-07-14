@@ -252,10 +252,11 @@ export function createOneclawIntegration({
     if (!Array.isArray(commands) || commands.length === 0) return;
     for (const cmd of commands) {
       try {
-        await applyAgentCommand(cmd);
+        const result = await applyAgentCommand(cmd);
+        if (result?.employee_id && result?.components) await reportEmployeeTemplateSync(result);
         if (cmd?.status === "leased") await acknowledgeCommand(cmd, { status: "succeeded", retryable: false });
       } catch (err) {
-        const retryable = /gateway|disconnected|timeout|unavailable|ECONN/i.test(String(err?.message || err));
+        const retryable = err?.retryable === true || /gateway|disconnected|timeout|unavailable|ECONN/i.test(String(err?.message || err));
         if (cmd?.status === "leased") await acknowledgeCommand(cmd, { status: "failed", retryable, error: String(err?.message || err) });
       }
     }
@@ -267,6 +268,19 @@ export function createOneclawIntegration({
       body: JSON.stringify(result),
     });
     if (!res.ok) throw new Error(`command acknowledgement failed: ${res.status}`);
+  }
+
+  async function reportEmployeeTemplateSync(result) {
+    const employeeId = encodeURIComponent(result.employee_id);
+    const res = await apiFetch(`/agent/employees/${employeeId}/template-sync`, {
+      method: "PUT",
+      body: JSON.stringify({ instance_id: instanceId, ...result }),
+    });
+    if (!res.ok) {
+      const err = new Error(`template sync result reporting failed: ${res.status}`);
+      err.retryable = true;
+      throw err;
+    }
   }
 
   function start(openclawVersion) {

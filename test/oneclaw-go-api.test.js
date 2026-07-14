@@ -162,6 +162,7 @@ test("employee sync preserves content when an optional skill fails", async () =>
   const workspaceDir = makeWorkspace();
   const fileWrites = [];
   let acknowledgement;
+  let syncResult;
   let skillResolutionCalls = 0;
   const gatewayRpc = {
     waitUntilConnected: async () => {},
@@ -198,6 +199,11 @@ test("employee sync preserves content when an optional skill fails", async () =>
       acknowledgement = JSON.parse(opts.body);
       return jsonResponse({ acknowledged: true });
     }
+    if (url.includes("/agent/employees/emp-degraded/template-sync")) {
+      assert.equal(opts.method, "PUT");
+      syncResult = JSON.parse(opts.body);
+      return jsonResponse({ accepted: true });
+    }
     throw new Error(`unexpected fetch: ${url}`);
   });
 
@@ -221,6 +227,8 @@ test("employee sync preserves content when an optional skill fails", async () =>
 
   assert.equal(skillResolutionCalls, 1);
   assert.equal(acknowledgement.status, "succeeded");
+  assert.equal(syncResult.overall_status, "degraded");
+  assert.equal(syncResult.components.skills[0].status, "failed");
   assert.match(fileWrites.find((write) => write.name === "SOUL.md").content, /ONECLAW:RESPONSIBILITIES:START/);
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-degraded/memory/review.md"), "utf8"), "Checklist");
 });

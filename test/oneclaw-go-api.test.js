@@ -298,6 +298,7 @@ test("employee template resolves builtin skills without sending them to ClawHub"
 
 test("builtin skill install fails when runtime status does not confirm the skill", async () => {
   const workspaceDir = makeWorkspace();
+  fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({ agents: { list: [{ id: "oneclaw-emp-missing", skills: [] }] } }));
   let acknowledgement;
   const gatewayRpc = {
     waitUntilConnected: async () => {},
@@ -313,7 +314,7 @@ test("builtin skill install fails when runtime status does not confirm the skill
         id: "cmd-builtin-missing",
         status: "leased",
         type: "install_skill",
-        payload: { employee_id: "emp-missing", skill_slug: "github", source: "clawhub" },
+        payload: { employee_id: "emp-missing", openclaw_agent_id: "oneclaw-emp-missing", skill_slug: "github", source: "clawhub" },
       }] });
     }
     if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
@@ -329,6 +330,7 @@ test("builtin skill install fails when runtime status does not confirm the skill
       apiUrl: "https://oneclaw.example.com/api",
       instanceId: "runtime-1",
       instanceSecret: "secret-1",
+      stateDir: workspaceDir,
       workspaceDir,
       gatewayRpc,
       runCmd: async () => ({ code: 0, output: "" }),
@@ -359,6 +361,7 @@ test("builtin skill install rejects runtime entries that are not usable", async 
   for (const testCase of cases) {
     await t.test(testCase.label, async () => {
       const workspaceDir = makeWorkspace();
+      fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({ agents: { list: [{ id: "oneclaw-emp-unusable", skills: [] }] } }));
       let acknowledgement;
       const gatewayRpc = {
         waitUntilConnected: async () => {},
@@ -374,7 +377,7 @@ test("builtin skill install rejects runtime entries that are not usable", async 
             id: "cmd-builtin-unusable",
             status: "leased",
             type: "install_skill",
-            payload: { employee_id: "emp-unusable", skill_slug: "github" },
+            payload: { employee_id: "emp-unusable", openclaw_agent_id: "oneclaw-emp-unusable", skill_slug: "github" },
           }] });
         }
         if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
@@ -390,6 +393,7 @@ test("builtin skill install rejects runtime entries that are not usable", async 
           apiUrl: "https://oneclaw.example.com/api",
           instanceId: "runtime-1",
           instanceSecret: "secret-1",
+          stateDir: workspaceDir,
           workspaceDir,
           gatewayRpc,
           runCmd: async () => ({ code: 0, output: "" }),
@@ -408,6 +412,71 @@ test("builtin skill install rejects runtime entries that are not usable", async 
       assert.match(acknowledgement.error, testCase.reason);
     });
   }
+});
+
+test("builtin skill install waits for the agent allowlist hot reload", async () => {
+  const workspaceDir = makeWorkspace();
+  fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({ agents: { list: [{ id: "main", skills: [] }] } }));
+  let acknowledgement;
+  let statusCalls = 0;
+  let waitCalls = 0;
+  let configuredSkills;
+  const gatewayRpc = {
+    waitUntilConnected: async () => { waitCalls += 1; },
+    rpcGateway: async (method) => {
+      if (method === "skills.status") {
+        statusCalls += 1;
+        return {
+          ok: true,
+          payload: { skills: [{ name: "github", blockedByAgentFilter: statusCalls === 1, modelVisible: statusCalls !== 1 }] },
+        };
+      }
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-builtin-hot-reload",
+        status: "leased",
+        type: "install_skill",
+        payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
+      }] });
+    }
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    if (url.includes("/agent/commands/cmd-builtin-hot-reload/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir: workspaceDir,
+      workspaceDir,
+      gatewayRpc,
+      runCmd: async () => ({ code: 0, output: "" }),
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      skillStatusRetryMs: 0,
+    });
+    await integration.pollCommands();
+    configuredSkills = JSON.parse(fs.readFileSync(path.join(workspaceDir, "openclaw.json"), "utf8")).agents.list[0].skills;
+  } finally {
+    restoreFetch();
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+
+  assert.equal(acknowledgement.status, "succeeded");
+  assert.equal(statusCalls, 2);
+  assert.ok(waitCalls >= 2);
+  assert.deepEqual(configuredSkills, ["github"]);
 });
 
 test("employee template downloads custom skills instead of sending their slug to ClawHub", async () => {
@@ -615,8 +684,8 @@ test("command polling installs and removes employee skills", async () => {
     assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
     return jsonResponse({
       commands: [
-        { id: "cmd-install", type: "install_skill", payload: { employee_id: "emp-skill", skill_slug: "github", source: "clawhub" } },
-        { id: "cmd-remove", type: "remove_skill", payload: { employee_id: "emp-skill", skill_slug: "github" } },
+        { id: "cmd-install", type: "install_skill", payload: { employee_id: "emp-skill", openclaw_agent_id: "oneclaw-emp-skill", skill_slug: "github", source: "clawhub" } },
+        { id: "cmd-remove", type: "remove_skill", payload: { employee_id: "emp-skill", openclaw_agent_id: "oneclaw-emp-skill", skill_slug: "github" } },
       ],
     });
   });
@@ -655,6 +724,134 @@ test("command polling installs and removes employee skills", async () => {
   assert.equal(configured.name, "Skill Agent");
   assert.equal(configured.model, "clawrouters/auto");
   assert.equal(fs.existsSync(path.join(baseDir, "github")), false);
+});
+
+test("employee skill command targets persisted main mapping without creating an agent", async () => {
+  const workspaceDir = makeWorkspace();
+  fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({ agents: { list: [{ id: "main", skills: [] }] } }));
+  const runCalls = [];
+  const rpcCalls = [];
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{
+      id: "cmd-main", type: "install_skill",
+      payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
+    }] });
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
+    throw new Error(`unexpected fetch: ${url} ${opts.method}`);
+  });
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api", instanceId: "runtime-1", instanceSecret: "secret-1",
+      stateDir: workspaceDir, workspaceDir,
+      gatewayRpc: { rpcGateway: async (method) => { rpcCalls.push(method); return { ok: true, payload: {} }; } },
+      runCmd: async (_cmd, args) => { runCalls.push(args); return { code: 0, output: "ok" }; },
+      clawArgs: (args) => args, OPENCLAW_NODE: "node", isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+  assert.deepEqual(runCalls[0], ["skills", "install", "github", "--agent", "main"]);
+  assert.equal(rpcCalls.includes("agents.create"), false);
+});
+
+test("missing employee agent mapping fails without creating an agent", async () => {
+  const workspaceDir = makeWorkspace();
+  fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({ agents: { list: [] } }));
+  let acknowledgement;
+  let createCalls = 0;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{
+      id: "cmd-no-mapping", status: "leased", type: "install_skill",
+      payload: { employee_id: "emp-no-mapping", skill_slug: "github" },
+    }] });
+    if (url.includes("/agent/commands/cmd-no-mapping/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api", instanceId: "runtime-1", instanceSecret: "secret-1", workspaceDir,
+      gatewayRpc: { rpcGateway: async (method) => { if (method === "agents.create") createCalls += 1; return { ok: true, payload: {} }; } },
+      isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+  assert.equal(createCalls, 0);
+  assert.equal(acknowledgement.status, "failed");
+  assert.match(acknowledgement.error, /openclaw_agent_id is required/);
+});
+
+test("builtin install stages the agent allowlist before eligibility check", async () => {
+  const workspaceDir = makeWorkspace();
+  const configPath = path.join(workspaceDir, "openclaw.json");
+  fs.writeFileSync(configPath, JSON.stringify({ agents: { list: [{ id: "main", skills: [] }] } }));
+  let statusSawStagedSkill = false;
+  const restoreFetch = withFetch((url) => {
+    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{
+      id: "cmd-stage", type: "install_skill",
+      payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
+    }] });
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api", instanceId: "runtime-1", instanceSecret: "secret-1",
+      stateDir: workspaceDir, workspaceDir,
+      gatewayRpc: { rpcGateway: async (method) => {
+        if (method === "skills.status") {
+          statusSawStagedSkill = JSON.parse(fs.readFileSync(configPath, "utf8")).agents.list[0].skills.includes("github");
+          return { ok: true, payload: { skills: [{ name: "github", blockedByAgentFilter: !statusSawStagedSkill }] } };
+        }
+        return { ok: true, payload: {} };
+      } },
+      isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+  assert.equal(statusSawStagedSkill, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")).agents.list[0].skills, ["github"]);
+});
+
+test("unavailable builtin rolls back the staged allowlist", async () => {
+  const workspaceDir = makeWorkspace();
+  const configPath = path.join(workspaceDir, "openclaw.json");
+  fs.writeFileSync(configPath, JSON.stringify({ agents: { list: [{ id: "main", skills: ["calendar"] }] } }));
+  let statusSawStagedSkill = false;
+  const restoreFetch = withFetch((url) => {
+    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{
+      id: "cmd-rollback", type: "install_skill",
+      payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
+    }] });
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api", instanceId: "runtime-1", instanceSecret: "secret-1",
+      stateDir: workspaceDir, workspaceDir,
+      gatewayRpc: { rpcGateway: async (method) => {
+        if (method === "skills.status") {
+          statusSawStagedSkill = JSON.parse(fs.readFileSync(configPath, "utf8")).agents.list[0].skills.includes("github");
+          return { ok: true, payload: { skills: [{ name: "github", missing: { bins: ["gh"] } }] } };
+        }
+        return { ok: true, payload: {} };
+      } },
+      isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+  assert.equal(statusSawStagedSkill, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")).agents.list[0].skills, ["calendar"]);
 });
 
 test("command polling restarts gateway and reports runtime logs", async () => {

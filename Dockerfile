@@ -9,9 +9,27 @@ RUN mkdir -p /out \
   && GOBIN=/out go install github.com/steipete/gifgrep/cmd/gifgrep@v0.3.0 \
   && GOBIN=/out go install github.com/steipete/ordercli/cmd/ordercli@v0.1.0 \
   && GOBIN=/out go install github.com/steipete/sonoscli/cmd/sonos@v0.3.3 \
+  && GOBIN=/out go install github.com/steipete/gogcli/cmd/gog@v0.9.0 \
   && GOBIN=/out go install github.com/openclaw/wacli/cmd/wacli@v0.12.0
 
-FROM node:22-bookworm
+FROM debian:bookworm-slim AS builtin-skill-himalaya
+
+ARG TARGETARCH
+ARG HIMALAYA_VERSION=1.2.0
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl \
+  && case "${TARGETARCH}" in \
+       amd64) archive_arch=x86_64; archive_sha=e04e6382e3e664ef34b01afa1a2216113194a2975d2859727647b22d9b36d4e4 ;; \
+       arm64) archive_arch=aarch64; archive_sha=643020b220991fac67726f3be11310fcf806e757feadbbab3efbddd713597872 ;; \
+       *) echo "unsupported Himalaya target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL -o /tmp/himalaya.tgz \
+       "https://github.com/pimalaya/himalaya/releases/download/v${HIMALAYA_VERSION}/himalaya.${archive_arch}-linux.tgz" \
+  && echo "${archive_sha}  /tmp/himalaya.tgz" | sha256sum -c - \
+  && mkdir -p /out \
+  && tar -xzf /tmp/himalaya.tgz -C /out himalaya
+
+FROM node:24-bookworm
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -23,8 +41,11 @@ RUN apt-get update \
     gosu \
     jq \
     procps \
+    poppler-utils \
     python3 \
+    python3-venv \
     ripgrep \
+    tesseract-ocr \
     tmux \
     unzip \
     build-essential \
@@ -59,6 +80,7 @@ ARG GEMINI_CLI_VERSION=0.50.0
 ARG MCPORTER_VERSION=0.12.3
 ARG ORACLE_VERSION=0.16.0
 ARG XURL_VERSION=1.2.2
+ARG SUMMARIZE_VERSION=0.11.1
 RUN npm install -g \
       openclaw@${OPENCLAW_VERSION} \
       clawhub@${CLAWHUB_VERSION} \
@@ -66,9 +88,15 @@ RUN npm install -g \
       @google/gemini-cli@${GEMINI_CLI_VERSION} \
       mcporter@${MCPORTER_VERSION} \
       @steipete/oracle@${ORACLE_VERSION} \
+      @steipete/summarize@${SUMMARIZE_VERSION} \
       @xdevplatform/xurl@${XURL_VERSION}
 
 COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
+COPY --from=builtin-skill-himalaya /out/himalaya /usr/local/bin/himalaya
+
+RUN python3 -m venv /opt/oneclaw-python \
+  && /opt/oneclaw-python/bin/pip install --no-cache-dir nano-pdf==0.2.1
+ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 
 # Pre-install plugins OUTSIDE the /data volume, into a fixed image path.
 # WHY here and not via `openclaw plugins install`:
@@ -124,7 +152,7 @@ COPY start.sh ./start.sh
 RUN useradd -m -s /bin/bash openclaw \
   && chown -R openclaw:openclaw /app \
   && mkdir -p /data \
-  && chmod +x /app/start.sh
+  && chmod +x /app/start.sh /app/scripts/verify-linux-template-skills.sh
 
 # Image version — pass at build time: docker build --build-arg IMAGE_VERSION=1.2.3
 ARG IMAGE_VERSION=dev

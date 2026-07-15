@@ -29,7 +29,7 @@ RUN apt-get update \
   && mkdir -p /out \
   && tar -xzf /tmp/himalaya.tgz -C /out himalaya
 
-FROM node:22-bookworm
+FROM node:24-bookworm
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

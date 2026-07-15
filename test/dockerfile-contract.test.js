@@ -38,6 +38,7 @@ test("Dockerfile preinstalls portable builtin skill dependencies", () => {
 
 test("Dockerfile includes complete Linux template skill dependencies", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  assert.match(dockerfile, /^FROM node:24-bookworm$/m);
   for (const aptPackage of ["poppler-utils", "tesseract-ocr", "python3-venv"]) {
     assert.match(dockerfile, new RegExp(`^\\s*${aptPackage}\\s*\\\\$`, "m"));
   }

@@ -1,7 +1,6 @@
 // OneClaw platform integration.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { buildRuntimeChannelAccessPolicy, mergeChannelPolicy } from "../channels/access-policy.js";
 import { CHANNEL_MANIFEST, setChannelAccountConfig, setChannelConfig } from "../channels/manifest.js";
@@ -10,6 +9,26 @@ import { agentWorkspace, safeAgentFilePath } from "../agents/workspace.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
+
+function skillUnavailableReasons(skill) {
+  const reasons = [];
+  if (skill?.disabled === true) reasons.push("disabled");
+  if (skill?.eligible === false) reasons.push("ineligible");
+  if (skill?.blockedByAllowlist === true) reasons.push("blocked by allowlist");
+  if (skill?.blockedByAgentFilter === true) reasons.push("blocked by agent filter");
+  if (skill?.modelVisible === false) reasons.push("not visible to the model");
+  if (skill?.notInjected === true) reasons.push("not injected into the agent context");
+
+  const missing = skill?.missing;
+  if (missing && typeof missing === "object") {
+    const requirements = Object.entries(missing).flatMap(([kind, values]) => {
+      if (Array.isArray(values)) return values.filter(Boolean).map((value) => `${kind}: ${value}`);
+      return values ? [`${kind}: ${values}`] : [];
+    });
+    if (requirements.length > 0) reasons.push(`missing requirements (${requirements.join(", ")})`);
+  }
+  return reasons;
+}
 
 export function normalizeOneclawApiUrl(raw) {
   const base = String(raw || "").trim().replace(/\/+$/, "");
@@ -560,8 +579,15 @@ export function createOneclawIntegration({
     if (source === "builtin") {
       const frame = await callGateway("skills.status", { agentId });
       const skills = frame?.skills || frame?.result?.skills || frame?.payload?.skills || [];
-      if (!Array.isArray(skills) || !skills.some((skill) => skill?.name === slug || skill?.slug === slug || skill?.skillKey === slug)) {
+      const skill = Array.isArray(skills)
+        ? skills.find((entry) => entry?.name === slug || entry?.slug === slug || entry?.skillKey === slug)
+        : null;
+      if (!skill) {
         throw new Error(`builtin skill ${slug} is not available in this runtime`);
+      }
+      const unavailableReasons = skillUnavailableReasons(skill);
+      if (unavailableReasons.length > 0) {
+        throw new Error(`builtin skill ${slug} is not usable: ${unavailableReasons.join("; ")}`);
       }
       if (credentials && Object.keys(credentials).length > 0) {
         await callGateway("skills.update", { skillKey: slug, ...credentials });
@@ -573,7 +599,11 @@ export function createOneclawIntegration({
       throw new Error("OpenClaw CLI unavailable");
     }
     if (source === "custom") {
-      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-skill-"));
+      const workspaceRoot = workspaceDir || process.env.OPENCLAW_WORKSPACE_DIR || "/data/workspace";
+      const tempBase = path.join(workspaceRoot, ".tmp");
+      fs.mkdirSync(tempBase, { recursive: true, mode: 0o700 });
+      fs.chmodSync(tempBase, 0o700);
+      const tempRoot = fs.mkdtempSync(path.join(tempBase, "oneclaw-skill-"));
       const zipPath = path.join(tempRoot, `${slug}.zip`);
       const extractPath = path.join(tempRoot, "contents");
       try {

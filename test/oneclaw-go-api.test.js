@@ -333,6 +333,70 @@ test("builtin skill install fails when runtime status does not confirm the skill
   assert.match(acknowledgement.error, /not available/);
 });
 
+test("builtin skill install rejects runtime entries that are not usable", async (t) => {
+  const cases = [
+    { label: "disabled", skill: { name: "github", disabled: true }, reason: /disabled/ },
+    { label: "ineligible", skill: { name: "github", eligible: false }, reason: /ineligible/ },
+    { label: "allowlist blocked", skill: { name: "github", blockedByAllowlist: true }, reason: /allowlist/ },
+    { label: "agent filtered", skill: { name: "github", blockedByAgentFilter: true }, reason: /agent filter/ },
+    { label: "model hidden", skill: { name: "github", modelVisible: false }, reason: /not visible to the model/ },
+    { label: "missing requirements", skill: { name: "github", missing: { bins: ["gh"], env: ["GITHUB_TOKEN"] } }, reason: /missing requirements.*gh.*GITHUB_TOKEN/ },
+  ];
+
+  for (const testCase of cases) {
+    await t.test(testCase.label, async () => {
+      const workspaceDir = makeWorkspace();
+      let acknowledgement;
+      const gatewayRpc = {
+        waitUntilConnected: async () => {},
+        rpcGateway: async (method) => {
+          if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "oneclaw-emp-unusable" }] } };
+          if (method === "skills.status") return { ok: true, payload: { skills: [testCase.skill] } };
+          return { ok: true, payload: { ok: true } };
+        },
+      };
+      const restoreFetch = withFetch((url, opts = {}) => {
+        if (url.includes("/agent/commands?")) {
+          return jsonResponse({ commands: [{
+            id: "cmd-builtin-unusable",
+            status: "leased",
+            type: "install_skill",
+            payload: { employee_id: "emp-unusable", skill_slug: "github" },
+          }] });
+        }
+        if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+        if (url.includes("/agent/commands/cmd-builtin-unusable/ack")) {
+          acknowledgement = JSON.parse(opts.body);
+          return jsonResponse({ acknowledged: true });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      try {
+        const integration = createOneclawIntegration({
+          apiUrl: "https://oneclaw.example.com/api",
+          instanceId: "runtime-1",
+          instanceSecret: "secret-1",
+          workspaceDir,
+          gatewayRpc,
+          runCmd: async () => ({ code: 0, output: "" }),
+          clawArgs: (args) => args,
+          OPENCLAW_NODE: "node",
+          isGatewayReady: () => true,
+          isGatewayStarting: () => false,
+        });
+        await integration.pollCommands();
+      } finally {
+        restoreFetch();
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      }
+
+      assert.equal(acknowledgement.status, "failed");
+      assert.match(acknowledgement.error, testCase.reason);
+    });
+  }
+});
+
 test("employee template downloads custom skills instead of sending their slug to ClawHub", async () => {
   const workspaceDir = makeWorkspace();
   const runCalls = [];
@@ -367,6 +431,7 @@ test("employee template downloads custom skills instead of sending their slug to
 
   const install = runCalls.find((call) => call.args?.[0] === "skills" && call.args?.[1] === "install");
   assert.ok(install);
+  assert.ok(install.args[2].startsWith(path.join(workspaceDir, ".tmp", "oneclaw-skill-")));
   assert.equal(install.args.includes("merge-upstream"), true);
   assert.equal(install.args.includes("--as"), true);
   assert.equal(runCalls.some((call) => call.args?.[2] === "merge-upstream"), false);

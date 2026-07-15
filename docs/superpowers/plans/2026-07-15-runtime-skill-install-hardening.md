@@ -15,19 +15,19 @@
 **Files:**
 - Test: `test/oneclaw-go-api.test.js`
 
-- [ ] Add a custom-skill assertion that the install source is under `<workspace>/.tmp` and is removed after the command.
-- [ ] Add table-driven builtin-skill cases for disabled, blocked, hidden, ineligible, and missing-requirement entries.
-- [ ] Run `node --test test/oneclaw-go-api.test.js` and confirm the new assertions fail for the intended reasons.
+- [x] Add a custom-skill assertion that the install source is under `<workspace>/.tmp` and is removed after the command.
+- [x] Add table-driven builtin-skill cases for disabled, blocked, hidden, ineligible, and missing-requirement entries.
+- [x] Run `node --test test/oneclaw-go-api.test.js` and confirm the new assertions fail for the intended reasons.
 
 ### Task 2: Harden runtime skill handling
 
 **Files:**
 - Modify: `src/integration/oneclaw.js`
 
-- [ ] Replace `os.tmpdir()` staging with a mode-0700 `<workspace>/.tmp` parent and a unique `oneclaw-skill-*` child.
-- [ ] Add a readiness-reason helper that treats explicit unusable fields as failures and accepts legacy name-only entries.
-- [ ] Include readiness reasons in builtin installation errors.
-- [ ] Run `node --test test/oneclaw-go-api.test.js` and confirm all cases pass.
+- [x] Replace `os.tmpdir()` staging with a mode-0700 `<workspace>/.tmp` parent and a unique `oneclaw-skill-*` child.
+- [x] Add a readiness-reason helper that treats explicit unusable fields as failures and accepts legacy name-only entries.
+- [x] Include readiness reasons in builtin installation errors.
+- [x] Run `node --test test/oneclaw-go-api.test.js` and confirm all cases pass.
 
 ### Task 3: Verify repository behavior
 
@@ -35,6 +35,6 @@
 - Verify: `src/integration/oneclaw.js`
 - Verify: `test/oneclaw-go-api.test.js`
 
-- [ ] Run `npm run lint`.
-- [ ] Run `node --test` and confirm zero failures.
-- [ ] Review `git diff --check` and the final diff for unrelated changes.
+- [x] Run `npm run lint`.
+- [x] Run `node --test` and confirm zero failures.
+- [x] Review `git diff --check` and the final diff for unrelated changes.

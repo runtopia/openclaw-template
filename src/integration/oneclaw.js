@@ -392,6 +392,15 @@ export function createOneclawIntegration({
     return updateAgentSkillAllowlist(agentId, () => skills);
   }
 
+  function readAgentSkillAllowlist(agentId) {
+    const targetAgentId = String(agentId || "").trim();
+    const configPath = path.join(stateDir || path.dirname(workspaceDir), "openclaw.json");
+    if (!targetAgentId || !fs.existsSync(configPath)) return [];
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const agent = config?.agents?.list?.find((item) => item?.id === targetAgentId || item?.agentId === targetAgentId);
+    return normalizedSkillSlugs(agent?.skills);
+  }
+
   function addAgentSkillToAllowlist(agentId, slug) {
     return updateAgentSkillAllowlist(agentId, (skills) => [...skills, slug]);
   }
@@ -613,22 +622,27 @@ export function createOneclawIntegration({
   async function installEmployeeSkill(payload) {
     const slug = String(payload.skill_slug || payload.skillSlug || payload.slug || "").trim();
     if (!slug) return;
-    const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     try {
-      const agentId = employeeId ? await ensureEmployeeAgent(payload, employeeId) : String(payload.agent_id || payload.agentId || "main").trim();
+      const agentId = requiredEmployeeAgentId(payload);
       const spec = await resolveRuntimeSkillSpec({
         slug,
         source: payload.source,
         version: payload.version,
         force: payload.force,
       });
-      await installSkillForAgent(spec, agentId || "main", payload.credentials);
-      addAgentSkillToAllowlist(agentId || "main", slug);
-      console.log(`[command] installed skill ${slug} for ${agentId || "main"}`);
+      await installSkillForAgent(spec, agentId, payload.credentials);
+      addAgentSkillToAllowlist(agentId, slug);
+      console.log(`[command] installed skill ${slug} for ${agentId}`);
     } catch (err) {
       console.error(`[command] install skill ${slug} failed: ${err.message}`);
       throw err;
     }
+  }
+
+  function requiredEmployeeAgentId(payload) {
+    const agentId = String(payload?.openclaw_agent_id || payload?.agent_id || payload?.agentId || "").trim();
+    if (!agentId) throw new Error("openclaw_agent_id is required for employee skill command");
+    return agentId;
   }
 
   async function resolveRuntimeSkillSpec(value) {
@@ -651,20 +665,27 @@ export function createOneclawIntegration({
     const slug = String(spec?.slug || "").trim();
     if (!slug || !source) throw new Error("skill slug and source are required");
     if (source === "builtin") {
-      const frame = await callGateway("skills.status", { agentId });
-      const skills = frame?.skills || frame?.result?.skills || frame?.payload?.skills || [];
-      const skill = Array.isArray(skills)
-        ? skills.find((entry) => entry?.name === slug || entry?.slug === slug || entry?.skillKey === slug)
-        : null;
-      if (!skill) {
-        throw new Error(`builtin skill ${slug} is not available in this runtime`);
-      }
-      const unavailableReasons = skillUnavailableReasons(skill);
-      if (unavailableReasons.length > 0) {
-        throw new Error(`builtin skill ${slug} is not usable: ${unavailableReasons.join("; ")}`);
-      }
-      if (credentials && Object.keys(credentials).length > 0) {
-        await callGateway("skills.update", { skillKey: slug, ...credentials });
+      const wasAllowed = readAgentSkillAllowlist(agentId).includes(slug);
+      addAgentSkillToAllowlist(agentId, slug);
+      try {
+        const frame = await callGateway("skills.status", { agentId });
+        const skills = frame?.skills || frame?.result?.skills || frame?.payload?.skills || [];
+        const skill = Array.isArray(skills)
+          ? skills.find((entry) => entry?.name === slug || entry?.slug === slug || entry?.skillKey === slug)
+          : null;
+        if (!skill) {
+          throw new Error(`builtin skill ${slug} is not available in this runtime`);
+        }
+        const unavailableReasons = skillUnavailableReasons(skill);
+        if (unavailableReasons.length > 0) {
+          throw new Error(`builtin skill ${slug} is not usable: ${unavailableReasons.join("; ")}`);
+        }
+        if (credentials && Object.keys(credentials).length > 0) {
+          await callGateway("skills.update", { skillKey: slug, ...credentials });
+        }
+      } catch (err) {
+        if (!wasAllowed) removeAgentSkillFromAllowlist(agentId, slug);
+        throw err;
       }
       console.log(`[command] builtin skill ${slug} available for ${agentId}`);
       return;
@@ -713,9 +734,7 @@ export function createOneclawIntegration({
   async function removeEmployeeSkill(payload) {
     const slug = String(payload.skill_slug || payload.skillSlug || payload.slug || "").trim();
     if (!slug) return;
-    const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
-    const agentId = String(payload.agent_id || payload.agentId || "").trim()
-      || (employeeId ? `oneclaw-${employeeId.replace(/[^a-zA-Z0-9_-]/g, "-")}` : "main");
+    const agentId = requiredEmployeeAgentId(payload);
     const skillDir = await resolveSkillDir(agentId, slug);
     if (skillDir) fs.rmSync(skillDir, { recursive: true, force: true });
     removeAgentSkillFromAllowlist(agentId, slug);

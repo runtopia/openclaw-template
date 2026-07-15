@@ -90,6 +90,11 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   const defaults = ensureObject(agents, "defaults");
   changed = setJsonValue(defaults, "heartbeat", DEFAULT_HEARTBEAT) || changed;
 
+  const skills = ensureObject(cfg, "skills");
+  const skillEntries = ensureObject(skills, "entries");
+  const codingAgent = ensureObject(skillEntries, "coding-agent");
+  changed = setJsonValue(codingAgent, "enabled", true) || changed;
+
   const hasKey = hasClawroutersKey(env);
   const provider = cfg?.models?.providers?.clawrouters;
   const memorySearch = cfg?.agents?.defaults?.memorySearch;

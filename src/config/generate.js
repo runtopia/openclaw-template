@@ -289,8 +289,12 @@ export function generateConfigDirect(opts) {
   // profile=full：无限制，等同于不设置 profile（参考官方文档）
   const tools = { profile: "full" };
 
+  // coding-agent is opt-in even when a supported CLI is available. Codex is
+  // preinstalled in the image, so make the bundled skill usable by default.
+  const skills = { entries: { "coding-agent": { enabled: true } } };
+
   // ── 组装最终配置 ──────────────────────────────────────────────
-  const cfg = { gateway, session, tools, models, agents: { defaults: agentDefaults }, plugins, channels, bindings };
+  const cfg = { gateway, session, tools, skills, models, agents: { defaults: agentDefaults }, plugins, channels, bindings };
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));

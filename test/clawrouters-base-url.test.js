@@ -65,6 +65,7 @@ test("direct config and repair key use CLAWROUTERS_BASE_URL", () => {
     "https://clawrouters-dev.example.com/api/v1",
   );
   assert.deepEqual(cfg.agents.defaults.heartbeat, { every: "2h", target: "last" });
+  assert.equal(cfg.skills.entries["coding-agent"].enabled, true);
   assert.deepEqual(cfg.agents.defaults.memorySearch, {
     enabled: true,
     sources: ["memory", "sessions"],
@@ -114,6 +115,7 @@ test("existing openclaw.json runtime defaults are patched from CLAWROUTERS_BASE_
     "https://clawrouters-dev.example.com/api/v1",
   );
   assert.deepEqual(cfg.agents.defaults.heartbeat, { every: "2h", target: "last" });
+  assert.equal(cfg.skills.entries["coding-agent"].enabled, true);
   assert.deepEqual(cfg.agents.defaults.memorySearch, {
     enabled: true,
     sources: ["memory", "sessions"],

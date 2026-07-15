@@ -1,13 +1,31 @@
+FROM golang:1.26.5-bookworm AS builtin-skill-go-tools
+
+# Go-based dependencies declared by OpenClaw's bundled skills. Keep these in a
+# builder stage so the runtime image only receives the resulting executables.
+RUN mkdir -p /out \
+  && GOBIN=/out go install github.com/Hyaxia/blogwatcher/cmd/blogwatcher@v0.0.3 \
+  && GOBIN=/out go install github.com/steipete/blucli/cmd/blu@v0.1.5 \
+  && GOBIN=/out go install github.com/steipete/eightctl/cmd/eightctl@v0.0.0-20260713021800-e05b8da853b9 \
+  && GOBIN=/out go install github.com/steipete/gifgrep/cmd/gifgrep@v0.3.0 \
+  && GOBIN=/out go install github.com/steipete/ordercli/cmd/ordercli@v0.1.0 \
+  && GOBIN=/out go install github.com/steipete/sonoscli/cmd/sonos@v0.3.3 \
+  && GOBIN=/out go install github.com/steipete/wacli/cmd/wacli@v0.12.0
+
 FROM node:22-bookworm
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    ffmpeg \
+    gh \
     git \
     gosu \
+    jq \
     procps \
     python3 \
+    ripgrep \
+    tmux \
     unzip \
     build-essential \
     # Browser dependencies for Chrome/Chromium web browsing capability
@@ -35,7 +53,22 @@ RUN apt-get update \
 # 会导致 dashboard/webchat 二轮对话及微信等通道第二条消息起报
 # "reply session initialization conflicted"。6.10 无此逻辑。
 ARG OPENCLAW_VERSION=2026.6.10
-RUN npm install -g openclaw@${OPENCLAW_VERSION}
+ARG CLAWHUB_VERSION=0.23.1
+ARG CODEX_VERSION=0.144.4
+ARG GEMINI_CLI_VERSION=0.50.0
+ARG MCPORTER_VERSION=0.12.3
+ARG ORACLE_VERSION=0.16.0
+ARG XURL_VERSION=1.2.2
+RUN npm install -g \
+      openclaw@${OPENCLAW_VERSION} \
+      clawhub@${CLAWHUB_VERSION} \
+      @openai/codex@${CODEX_VERSION} \
+      @google/gemini-cli@${GEMINI_CLI_VERSION} \
+      mcporter@${MCPORTER_VERSION} \
+      @steipete/oracle@${ORACLE_VERSION} \
+      @xdevplatform/xurl@${XURL_VERSION}
+
+COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
 
 # Pre-install plugins OUTSIDE the /data volume, into a fixed image path.
 # WHY here and not via `openclaw plugins install`:

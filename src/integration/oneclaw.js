@@ -70,6 +70,8 @@ export function createOneclawIntegration({
 	gatewayRpc,
 	runCmd, clawArgs, OPENCLAW_NODE, restartGateway, getGatewayLogs,
 	channelBindingPollMs = 1500,
+	skillStatusRetryMs = 250,
+	skillStatusAttempts = 12,
 }) {
   const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
   const mainWorkspace = agentWorkspace(workspaceDir, "main");
@@ -668,11 +670,7 @@ export function createOneclawIntegration({
       const wasAllowed = readAgentSkillAllowlist(agentId).includes(slug);
       addAgentSkillToAllowlist(agentId, slug);
       try {
-        const frame = await callGateway("skills.status", { agentId });
-        const skills = frame?.skills || frame?.result?.skills || frame?.payload?.skills || [];
-        const skill = Array.isArray(skills)
-          ? skills.find((entry) => entry?.name === slug || entry?.slug === slug || entry?.skillKey === slug)
-          : null;
+        const skill = await waitForBuiltinSkillStatus(slug, agentId);
         if (!skill) {
           throw new Error(`builtin skill ${slug} is not available in this runtime`);
         }
@@ -729,6 +727,32 @@ export function createOneclawIntegration({
     if (spec.force === true) args.push("--force");
     const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
     if (result.code !== 0) throw new Error(result.output || `openclaw skills install exited ${result.code}`);
+  }
+
+  async function waitForBuiltinSkillStatus(slug, agentId) {
+    const attempts = Math.max(1, Number(skillStatusAttempts) || 1);
+    let lastConnectionError;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        await gatewayRpc.waitUntilConnected?.(10_000);
+        const frame = await callGateway("skills.status", { agentId });
+        const skills = frame?.skills || frame?.result?.skills || frame?.payload?.skills || [];
+        const skill = Array.isArray(skills)
+          ? skills.find((entry) => entry?.name === slug || entry?.slug === slug || entry?.skillKey === slug)
+          : null;
+        lastConnectionError = undefined;
+        if (!skill || skill.blockedByAgentFilter !== true || attempt === attempts - 1) return skill;
+      } catch (err) {
+        const isConnectionError = /gateway|disconnected|timeout|unavailable|ECONN/i.test(String(err?.message || err));
+        if (!isConnectionError || attempt === attempts - 1) throw err;
+        lastConnectionError = err;
+      }
+      if (skillStatusRetryMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, skillStatusRetryMs));
+      }
+    }
+    if (lastConnectionError) throw lastConnectionError;
+    return null;
   }
 
   async function removeEmployeeSkill(payload) {

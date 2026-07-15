@@ -414,6 +414,71 @@ test("builtin skill install rejects runtime entries that are not usable", async 
   }
 });
 
+test("builtin skill install waits for the agent allowlist hot reload", async () => {
+  const workspaceDir = makeWorkspace();
+  fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({ agents: { list: [{ id: "main", skills: [] }] } }));
+  let acknowledgement;
+  let statusCalls = 0;
+  let waitCalls = 0;
+  let configuredSkills;
+  const gatewayRpc = {
+    waitUntilConnected: async () => { waitCalls += 1; },
+    rpcGateway: async (method) => {
+      if (method === "skills.status") {
+        statusCalls += 1;
+        return {
+          ok: true,
+          payload: { skills: [{ name: "github", blockedByAgentFilter: statusCalls === 1, modelVisible: statusCalls !== 1 }] },
+        };
+      }
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-builtin-hot-reload",
+        status: "leased",
+        type: "install_skill",
+        payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
+      }] });
+    }
+    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    if (url.includes("/agent/commands/cmd-builtin-hot-reload/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir: workspaceDir,
+      workspaceDir,
+      gatewayRpc,
+      runCmd: async () => ({ code: 0, output: "" }),
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      skillStatusRetryMs: 0,
+    });
+    await integration.pollCommands();
+    configuredSkills = JSON.parse(fs.readFileSync(path.join(workspaceDir, "openclaw.json"), "utf8")).agents.list[0].skills;
+  } finally {
+    restoreFetch();
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+
+  assert.equal(acknowledgement.status, "succeeded");
+  assert.equal(statusCalls, 2);
+  assert.ok(waitCalls >= 2);
+  assert.deepEqual(configuredSkills, ["github"]);
+});
+
 test("employee template downloads custom skills instead of sending their slug to ClawHub", async () => {
   const workspaceDir = makeWorkspace();
   const runCalls = [];

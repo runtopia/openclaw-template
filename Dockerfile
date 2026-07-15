@@ -9,7 +9,7 @@ RUN mkdir -p /out \
   && GOBIN=/out go install github.com/steipete/gifgrep/cmd/gifgrep@v0.3.0 \
   && GOBIN=/out go install github.com/steipete/ordercli/cmd/ordercli@v0.1.0 \
   && GOBIN=/out go install github.com/steipete/sonoscli/cmd/sonos@v0.3.3 \
-  && GOBIN=/out go install github.com/steipete/wacli/cmd/wacli@v0.12.0
+  && GOBIN=/out go install github.com/openclaw/wacli/cmd/wacli@v0.12.0
 
 FROM node:22-bookworm
 

@@ -29,4 +29,9 @@ test("Dockerfile preinstalls portable builtin skill dependencies", () => {
   for (const module of ["blogwatcher", "blucli", "eightctl", "gifgrep", "ordercli", "sonoscli", "wacli"]) {
     assert.ok(dockerfile.includes(`/${module}/`), `${module} should be built`);
   }
+  assert.ok(
+    dockerfile.includes("github.com/openclaw/wacli/cmd/wacli@v0.12.0"),
+    "wacli must use the module path declared by v0.12.0",
+  );
+  assert.ok(!dockerfile.includes("github.com/steipete/wacli/"));
 });

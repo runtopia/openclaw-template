@@ -31,6 +31,31 @@ function skillUnavailableReasons(skill) {
   return reasons;
 }
 
+function resolveExtractedSkillRoot(extractRoot) {
+  const roots = [];
+  let visited = 0;
+
+  function walk(dir, depth) {
+    if (depth > 6) throw new Error("custom skill archive is nested too deeply");
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    visited += entries.length;
+    if (visited > 1000) throw new Error("custom skill archive contains too many files");
+    if (entries.some((entry) => entry.isSymbolicLink())) {
+      throw new Error("custom skill archive must not contain symbolic links");
+    }
+    if (entries.some((entry) => entry.isFile() && entry.name === "SKILL.md")) roots.push(dir);
+    for (const entry of entries) {
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), depth + 1);
+    }
+  }
+
+  walk(extractRoot, 0);
+  if (roots.length !== 1) {
+    throw new Error(`custom skill archive must contain exactly one SKILL.md (found ${roots.length})`);
+  }
+  return roots[0];
+}
+
 export function normalizeOneclawApiUrl(raw) {
   const base = String(raw || "").trim().replace(/\/+$/, "");
   if (!base) return "";
@@ -667,7 +692,8 @@ export function createOneclawIntegration({
         fs.writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
         const unpack = await runCmd("unzip", ["-o", zipPath, "-d", extractPath]);
         if (unpack.code !== 0) throw new Error(unpack.output || `failed to extract custom skill ${slug}`);
-        const args = ["skills", "install", extractPath, "--as", slug, "--agent", agentId];
+        const skillRoot = resolveExtractedSkillRoot(extractPath);
+        const args = ["skills", "install", skillRoot, "--as", slug, "--agent", agentId];
         if (spec.force === true) args.push("--force");
         const installed = await runCmd(OPENCLAW_NODE, clawArgs(args));
         if (installed.code !== 0) throw new Error(installed.output || `failed to install custom skill ${slug}`);
@@ -737,11 +763,10 @@ export function createOneclawIntegration({
 
   async function upsertCronTask(payload) {
     if (!gatewayRpc?.rpcGateway) {
-      console.warn("[command] gateway rpc unavailable; cannot sync cron task");
-      return;
+      throw new Error("gateway rpc unavailable; cannot sync cron task");
     }
     const task = normalizeCronTaskPayload(payload?.task || payload);
-    if (!task?.managedId) return;
+    if (!task?.managedId) throw new Error("invalid cron task payload: managed task id is required");
     try {
       await gatewayRpc.waitUntilConnected?.(10_000);
       const nativeId = await resolveCronNativeId(task.managedId);
@@ -753,12 +778,14 @@ export function createOneclawIntegration({
         const { managedId, ...job } = task;
         const created = await callGateway("cron.add", job);
         const createdId = created?.id || created?.job?.id || created?.result?.id;
-        if (createdId) saveCronNativeId(managedId, createdId);
-        console.log(`[command] added cron task ${managedId}${createdId ? ` -> ${createdId}` : ""}`);
+        if (!createdId) throw new Error("cron.add did not return a task id");
+        saveCronNativeId(managedId, createdId);
+        console.log(`[command] added cron task ${managedId} -> ${createdId}`);
       }
     } catch (err) {
       console.error(`[command] cron task upsert failed: ${err.message}`);
       await sendEvent("runtime_command_failed", { type: "upsert_cron_task", task_id: task.managedId, error: err.message });
+      throw err;
     }
   }
 

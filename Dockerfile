@@ -8,6 +8,7 @@ RUN apt-get update \
     gosu \
     procps \
     python3 \
+    unzip \
     build-essential \
     # Browser dependencies for Chrome/Chromium web browsing capability
     libnss3 \

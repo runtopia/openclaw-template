@@ -434,7 +434,15 @@ test("employee template downloads custom skills instead of sending their slug to
   try {
     const integration = createOneclawIntegration({
       apiUrl: "https://oneclaw.example.com/api", instanceId: "runtime-1", instanceSecret: "secret-1", workspaceDir, gatewayRpc,
-      runCmd: async (cmd, args) => { runCalls.push({ cmd, args }); return { code: 0, output: "" }; },
+      runCmd: async (cmd, args) => {
+        runCalls.push({ cmd, args });
+        if (cmd === "unzip") {
+          const extractedRoot = args[args.indexOf("-d") + 1];
+          fs.mkdirSync(path.join(extractedRoot, "merge-upstream"), { recursive: true });
+          fs.writeFileSync(path.join(extractedRoot, "merge-upstream", "SKILL.md"), "---\nname: merge-upstream\n---\n");
+        }
+        return { code: 0, output: "" };
+      },
       clawArgs: (args) => args, OPENCLAW_NODE: "node", isGatewayReady: () => true, isGatewayStarting: () => false,
     });
     await integration.pollCommands();
@@ -445,10 +453,60 @@ test("employee template downloads custom skills instead of sending their slug to
   const install = runCalls.find((call) => call.args?.[0] === "skills" && call.args?.[1] === "install");
   assert.ok(install);
   assert.ok(install.args[2].startsWith(path.join(workspaceDir, ".tmp", "oneclaw-skill-")));
+  assert.equal(path.basename(install.args[2]), "merge-upstream");
   assert.equal(install.args.includes("merge-upstream"), true);
   assert.equal(install.args.includes("--as"), true);
   assert.equal(runCalls.some((call) => call.args?.[2] === "merge-upstream"), false);
   assert.equal(fs.existsSync(install.args[2]), false);
+});
+
+test("leased cron command reports a retryable failed acknowledgement when gateway sync fails", async () => {
+  const stateDir = makeWorkspace();
+  let acknowledgement;
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method) => {
+      if (method === "cron.list") return { ok: true, payload: { jobs: [] } };
+      if (method === "cron.add") throw new Error("gateway unavailable");
+      throw new Error(`unexpected rpc ${method}`);
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/agent/commands?")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-cron-failed",
+        status: "leased",
+        type: "upsert_cron_task",
+        payload: { task: { id: "oneclaw-task-failed", name: "Failed task", schedule: { kind: "cron", expr: "0 9 * * *" }, payload: { kind: "agentTurn", message: "run" } } },
+      }] });
+    }
+    if (url.includes("/agent/event")) return jsonResponse({ accepted: true });
+    if (url.includes("/agent/commands/cmd-cron-failed/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir: path.join(stateDir, "workspace"),
+      gatewayRpc,
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(acknowledgement.status, "failed");
+  assert.equal(acknowledgement.retryable, true);
+  assert.match(acknowledgement.error, /gateway unavailable/);
 });
 
 test("command polling applies employee template commands without waiting for heartbeat", async () => {

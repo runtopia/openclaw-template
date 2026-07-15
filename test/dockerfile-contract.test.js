@@ -44,7 +44,9 @@ test("Dockerfile includes complete Linux template skill dependencies", () => {
   assert.ok(dockerfile.includes("@steipete/summarize@${SUMMARIZE_VERSION}"));
   assert.ok(dockerfile.includes("ARG SUMMARIZE_VERSION=0.11.1"));
   assert.ok(dockerfile.includes("github.com/steipete/gogcli/cmd/gog@v0.9.0"));
-  assert.ok(dockerfile.includes("--tag v1.2.0 himalaya"));
+  assert.ok(dockerfile.includes("ARG HIMALAYA_VERSION=1.2.0"));
+  assert.ok(dockerfile.includes("himalaya.${archive_arch}-linux.tgz"));
+  assert.ok(dockerfile.includes("sha256sum -c -"));
   assert.ok(dockerfile.includes("nano-pdf==0.2.1"));
   assert.ok(dockerfile.includes("/opt/oneclaw-python/bin"));
 });

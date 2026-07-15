@@ -12,9 +12,22 @@ RUN mkdir -p /out \
   && GOBIN=/out go install github.com/steipete/gogcli/cmd/gog@v0.9.0 \
   && GOBIN=/out go install github.com/openclaw/wacli/cmd/wacli@v0.12.0
 
-FROM rust:1.88-bookworm AS builtin-skill-rust-tools
+FROM debian:bookworm-slim AS builtin-skill-himalaya
 
-RUN cargo install --locked --git https://github.com/pimalaya/himalaya.git --tag v1.2.0 himalaya
+ARG TARGETARCH
+ARG HIMALAYA_VERSION=1.2.0
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl \
+  && case "${TARGETARCH}" in \
+       amd64) archive_arch=x86_64; archive_sha=e04e6382e3e664ef34b01afa1a2216113194a2975d2859727647b22d9b36d4e4 ;; \
+       arm64) archive_arch=aarch64; archive_sha=643020b220991fac67726f3be11310fcf806e757feadbbab3efbddd713597872 ;; \
+       *) echo "unsupported Himalaya target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL -o /tmp/himalaya.tgz \
+       "https://github.com/pimalaya/himalaya/releases/download/v${HIMALAYA_VERSION}/himalaya.${archive_arch}-linux.tgz" \
+  && echo "${archive_sha}  /tmp/himalaya.tgz" | sha256sum -c - \
+  && mkdir -p /out \
+  && tar -xzf /tmp/himalaya.tgz -C /out himalaya
 
 FROM node:22-bookworm
 
@@ -79,7 +92,7 @@ RUN npm install -g \
       @xdevplatform/xurl@${XURL_VERSION}
 
 COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
-COPY --from=builtin-skill-rust-tools /usr/local/cargo/bin/himalaya /usr/local/bin/himalaya
+COPY --from=builtin-skill-himalaya /out/himalaya /usr/local/bin/himalaya
 
 RUN python3 -m venv /opt/oneclaw-python \
   && /opt/oneclaw-python/bin/pip install --no-cache-dir nano-pdf==0.2.1

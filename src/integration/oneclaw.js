@@ -6,6 +6,7 @@ import { buildRuntimeChannelAccessPolicy, mergeChannelPolicy } from "../channels
 import { CHANNEL_MANIFEST, setChannelAccountConfig, setChannelConfig } from "../channels/manifest.js";
 import { approvePairingRequest, listPairingRequests, normalizePairingChannel, resolveOpenClawEntryFromClawArgs } from "../channels/pairing-store.js";
 import { agentWorkspace, safeAgentFilePath } from "../agents/workspace.js";
+import { patchConfig } from "../config/edit.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
@@ -336,6 +337,44 @@ export function createOneclawIntegration({
     }
   }
 
+  function normalizedSkillSlugs(values) {
+    return [...new Set((Array.isArray(values) ? values : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean))].sort();
+  }
+
+  function updateAgentSkillAllowlist(agentId, update) {
+    const targetAgentId = String(agentId || "").trim();
+    if (!targetAgentId) throw new Error("agent id is required for skill allowlist update");
+    const configPath = path.join(stateDir || path.dirname(workspaceDir), "openclaw.json");
+    if (!fs.existsSync(configPath)) throw new Error(`OpenClaw config is unavailable: ${configPath}`);
+    let nextSkills = [];
+    patchConfig(configPath, (config) => {
+      if (!config.agents || typeof config.agents !== "object") config.agents = {};
+      if (!Array.isArray(config.agents.list)) config.agents.list = [];
+      let agent = config.agents.list.find((item) => item?.id === targetAgentId || item?.agentId === targetAgentId);
+      if (!agent) {
+        agent = { id: targetAgentId };
+        config.agents.list.push(agent);
+      }
+      nextSkills = normalizedSkillSlugs(update(normalizedSkillSlugs(agent.skills)));
+      agent.skills = nextSkills;
+    });
+    return nextSkills;
+  }
+
+  function setAgentSkillAllowlist(agentId, skills) {
+    return updateAgentSkillAllowlist(agentId, () => skills);
+  }
+
+  function addAgentSkillToAllowlist(agentId, slug) {
+    return updateAgentSkillAllowlist(agentId, (skills) => [...skills, slug]);
+  }
+
+  function removeAgentSkillFromAllowlist(agentId, slug) {
+    return updateAgentSkillAllowlist(agentId, (skills) => skills.filter((value) => value !== slug));
+  }
+
   async function applyAgentCommand(command) {
     const payload = command?.payload || command || {};
     if (command?.type === "restart") {
@@ -491,6 +530,15 @@ export function createOneclawIntegration({
       }
     }
 
+    if (Array.isArray(payload.assigned_skill_slugs)) {
+      const failedSkills = new Set(result.components.skills
+        .filter((skill) => skill.status !== "active")
+        .map((skill) => skill.slug));
+      const assignedSkills = normalizedSkillSlugs(payload.assigned_skill_slugs)
+        .filter((slug) => !failedSkills.has(slug));
+      setAgentSkillAllowlist(agentId, assignedSkills);
+    }
+
     const componentResults = [result.components.soul, result.components.responsibilities, result.components.memory, ...result.components.skills];
     if (componentResults.some((component) => component?.status === "failed" || component?.status === "needs_configuration")) {
       result.overall_status = "degraded";
@@ -550,6 +598,7 @@ export function createOneclawIntegration({
         force: payload.force,
       });
       await installSkillForAgent(spec, agentId || "main", payload.credentials);
+      addAgentSkillToAllowlist(agentId || "main", slug);
       console.log(`[command] installed skill ${slug} for ${agentId || "main"}`);
     } catch (err) {
       console.error(`[command] install skill ${slug} failed: ${err.message}`);
@@ -641,13 +690,10 @@ export function createOneclawIntegration({
     const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     const agentId = String(payload.agent_id || payload.agentId || "").trim()
       || (employeeId ? `oneclaw-${employeeId.replace(/[^a-zA-Z0-9_-]/g, "-")}` : "main");
-    try {
-      const skillDir = await resolveSkillDir(agentId, slug);
-      if (skillDir) fs.rmSync(skillDir, { recursive: true, force: true });
-      console.log(`[command] removed skill ${slug} for ${agentId}`);
-    } catch (err) {
-      console.warn(`[command] remove skill ${slug} failed: ${err.message}`);
-    }
+    const skillDir = await resolveSkillDir(agentId, slug);
+    if (skillDir) fs.rmSync(skillDir, { recursive: true, force: true });
+    removeAgentSkillFromAllowlist(agentId, slug);
+    console.log(`[command] removed skill ${slug} for ${agentId}`);
   }
 
   async function resolveSkillDir(agentId, slug) {

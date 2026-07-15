@@ -235,6 +235,10 @@ test("employee sync preserves content when an optional skill fails", async () =>
 
 test("employee template resolves builtin skills without sending them to ClawHub", async () => {
   const workspaceDir = makeWorkspace();
+  const configPath = path.join(workspaceDir, "openclaw.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    agents: { list: [{ id: "oneclaw-emp-builtin", name: "Builtin Agent", model: "clawrouters/auto", skills: ["unassigned-builtin"] }] },
+  }));
   const runCalls = [];
   const gatewayRpc = {
     waitUntilConnected: async () => {},
@@ -250,7 +254,11 @@ test("employee template resolves builtin skills without sending them to ClawHub"
       return jsonResponse({ commands: [{
         id: "cmd-builtin",
         type: "apply_template",
-        payload: { employee_id: "emp-builtin", skill_specs: [{ slug: "github", source: "clawhub" }] },
+        payload: {
+          employee_id: "emp-builtin",
+          assigned_skill_slugs: ["github"],
+          skill_specs: [{ slug: "github", source: "clawhub" }],
+        },
       }] });
     }
     if (url.includes("/agent/skills/github")) {
@@ -267,6 +275,7 @@ test("employee template resolves builtin skills without sending them to ClawHub"
       apiUrl: "https://oneclaw.example.com/api",
       instanceId: "runtime-1",
       instanceSecret: "secret-1",
+      stateDir: workspaceDir,
       workspaceDir,
       gatewayRpc,
       runCmd: async (_cmd, args) => { runCalls.push(args); return { code: 0, output: "" }; },
@@ -281,6 +290,10 @@ test("employee template resolves builtin skills without sending them to ClawHub"
   }
 
   assert.equal(runCalls.some((args) => args[0] === "skills" && args[1] === "install"), false);
+  const configured = JSON.parse(fs.readFileSync(configPath, "utf8")).agents.list[0];
+  assert.deepEqual(configured.skills, ["github"]);
+  assert.equal(configured.name, "Builtin Agent");
+  assert.equal(configured.model, "clawrouters/auto");
 });
 
 test("builtin skill install fails when runtime status does not confirm the skill", async () => {
@@ -520,10 +533,15 @@ test("leased command is acknowledged only after successful execution", async () 
 
 test("command polling installs and removes employee skills", async () => {
   const workspaceDir = makeWorkspace();
+  const configPath = path.join(workspaceDir, "openclaw.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    agents: { list: [{ id: "oneclaw-emp-skill", name: "Skill Agent", model: "clawrouters/auto", skills: ["calendar"] }] },
+  }));
   const baseDir = path.join(workspaceDir, "agents", "emp-skill", "skills");
   fs.mkdirSync(path.join(baseDir, "github"), { recursive: true });
   const rpcCalls = [];
   const runCalls = [];
+  const allowlistsBeforeRemove = [];
   const gatewayRpc = {
     waitUntilConnected: async () => {},
     rpcGateway: async (method, params) => {
@@ -550,11 +568,13 @@ test("command polling installs and removes employee skills", async () => {
       apiUrl: "https://oneclaw.example.com/api",
       instanceId: "runtime-1",
       instanceSecret: "secret-1",
+      stateDir: workspaceDir,
       workspaceDir,
       gatewayRpc,
       runCmd: async (_cmd, args) => {
         runCalls.push(args);
         if (args.includes("list")) {
+          allowlistsBeforeRemove.push(JSON.parse(fs.readFileSync(configPath, "utf8")).agents.list[0].skills);
           return { code: 0, output: JSON.stringify({ baseDir }) };
         }
         return { code: 0, output: "ok" };
@@ -571,6 +591,11 @@ test("command polling installs and removes employee skills", async () => {
 
   assert.deepEqual(runCalls[0], ["skills", "install", "github", "--agent", "oneclaw-emp-skill"]);
   assert.deepEqual(runCalls[1], ["skills", "list", "--agent", "oneclaw-emp-skill", "--json"]);
+  assert.deepEqual(allowlistsBeforeRemove, [["calendar", "github"]]);
+  const configured = JSON.parse(fs.readFileSync(configPath, "utf8")).agents.list[0];
+  assert.deepEqual(configured.skills, ["calendar"]);
+  assert.equal(configured.name, "Skill Agent");
+  assert.equal(configured.model, "clawrouters/auto");
   assert.equal(fs.existsSync(path.join(baseDir, "github")), false);
 });
 

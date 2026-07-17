@@ -1102,6 +1102,127 @@ test("command polling syncs OneClaw cron tasks through OpenClaw native cron RPC"
   );
 });
 
+test("command polling converts Go API flat cron fields for create and update", async () => {
+  const stateDir = makeWorkspace();
+  const rpcCalls = [];
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method, params) => {
+      rpcCalls.push({ method, params });
+      if (method === "cron.list") return { ok: true, payload: { jobs: [] } };
+      if (method === "cron.add") return { ok: true, payload: { id: "native-flat-1" } };
+      if (method === "cron.get") return { ok: true, payload: { id: "native-flat-1" } };
+      if (method === "cron.update") return { ok: true, payload: { ok: true } };
+      throw new Error(`unexpected rpc ${method}`);
+    },
+  };
+  let pollCount = 0;
+  const restoreFetch = withFetch((url) => {
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/commands?limit=10");
+    pollCount += 1;
+    return jsonResponse({
+      commands: [{
+        id: `cmd-flat-${pollCount}`,
+        type: "upsert_cron_task",
+        payload: {
+          employee_id: "emp-flat",
+          openclaw_agent_id: "employee-flat",
+          task: {
+            id: "flat-task-1",
+            name: pollCount === 1 ? "接口巡检" : "接口巡检已更新",
+            prompt: "检查接口状态",
+            schedule_kind: "every",
+            every_seconds: pollCount === 1 ? 300 : 600,
+            timezone: "Asia/Shanghai",
+            delivery_mode: "internal",
+            is_enabled: true,
+          },
+        },
+      }],
+    });
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir: path.join(stateDir, "workspace"),
+      gatewayRpc,
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  const addCall = rpcCalls.find((call) => call.method === "cron.add");
+  assert.equal(addCall.params.schedule.kind, "every");
+  assert.equal(addCall.params.schedule.everyMs, 300_000);
+  assert.equal(addCall.params.payload.message, "检查接口状态");
+  assert.equal(addCall.params.agentId, "employee-flat");
+
+  const updateCall = rpcCalls.find((call) => call.method === "cron.update");
+  assert.equal(updateCall.params.id, "native-flat-1");
+  assert.equal(updateCall.params.patch.name, "flat-task-1 · 接口巡检已更新");
+  assert.equal(updateCall.params.patch.schedule.everyMs, 600_000);
+  assert.equal(updateCall.params.patch.payload.message, "检查接口状态");
+});
+
+test("failed cron deletion is acknowledged as retryable instead of false success", async () => {
+  const stateDir = makeWorkspace();
+  fs.writeFileSync(
+    path.join(stateDir, "oneclaw-cron-tasks.json"),
+    JSON.stringify({ "task-delete-1": "native-delete-1" }),
+  );
+  let acknowledgement = null;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.endsWith("/runtime/commands?limit=10")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-delete-failed",
+        status: "leased",
+        type: "delete_cron_task",
+        payload: { task_id: "task-delete-1" },
+      }] });
+    }
+    if (url.endsWith("/runtime/commands/cmd-delete-failed/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir: path.join(stateDir, "workspace"),
+      gatewayRpc: {
+        waitUntilConnected: async () => { throw new Error("gateway WS not connected"); },
+        rpcGateway: async () => { throw new Error("must not call disconnected gateway"); },
+      },
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(acknowledgement.status, "failed");
+  assert.equal(acknowledgement.retryable, true);
+  assert.match(acknowledgement.error, /gateway WS not connected/);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(stateDir, "oneclaw-cron-tasks.json"), "utf8")),
+    { "task-delete-1": "native-delete-1" },
+  );
+});
+
 test("command polling applies regular channel config updates", async () => {
   const workspaceDir = makeWorkspace();
   const stateDir = makeWorkspace();

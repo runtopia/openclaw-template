@@ -951,7 +951,10 @@ export function createOneclawIntegration({
     if (!gatewayRpc?.rpcGateway) {
       throw new Error("gateway rpc unavailable; cannot sync cron task");
     }
-    const task = normalizeCronTaskPayload(payload?.task || payload);
+    const task = normalizeCronTaskPayload(
+      payload?.task || payload,
+      payload?.openclaw_agent_id || payload?.agent_id || payload?.agentId,
+    );
     if (!task?.managedId) throw new Error("invalid cron task payload: managed task id is required");
     try {
       await gatewayRpc.waitUntilConnected?.(10_000);
@@ -978,25 +981,31 @@ export function createOneclawIntegration({
   }
 
   async function deleteCronTask(payload) {
-    if (!gatewayRpc?.rpcGateway) return;
+    if (!gatewayRpc?.rpcGateway) {
+      throw new Error("gateway rpc unavailable; cannot delete cron task");
+    }
     const taskId = String(payload?.task_id || payload?.taskId || payload?.task?.id || "").trim();
-    if (!taskId) return;
+    if (!taskId) throw new Error("invalid cron task payload: managed task id is required");
     try {
       await gatewayRpc.waitUntilConnected?.(10_000);
       const nativeId = await resolveCronNativeId(taskId);
       if (!nativeId) return;
-      await callGateway("cron.remove", { id: nativeId }, { tolerateError: true });
+      await callGateway("cron.remove", { id: nativeId });
       deleteCronNativeId(taskId);
       console.log(`[command] removed cron task ${taskId} -> ${nativeId}`);
     } catch (err) {
       console.warn(`[command] cron task remove failed: ${err.message}`);
+      // 必须让上层按 retryable=true 回执；吞掉异常会把容器内仍存在的任务误报为删除成功。
+      throw err;
     }
   }
 
   async function runCronTask(payload) {
-    if (!gatewayRpc?.rpcGateway) return;
+    if (!gatewayRpc?.rpcGateway) {
+      throw new Error("gateway rpc unavailable; cannot run cron task");
+    }
     const taskId = String(payload?.task_id || payload?.taskId || payload?.task?.id || "").trim();
-    if (!taskId) return;
+    if (!taskId) throw new Error("invalid cron task payload: managed task id is required");
     try {
       await gatewayRpc.waitUntilConnected?.(10_000);
       const nativeId = await resolveCronNativeId(taskId);
@@ -1005,6 +1014,7 @@ export function createOneclawIntegration({
       console.log(`[command] ran cron task ${taskId} -> ${nativeId}`);
     } catch (err) {
       console.error(`[command] cron task run failed: ${err.message}`);
+      throw err;
     }
   }
 
@@ -1477,21 +1487,26 @@ export function createOneclawIntegration({
   }
 }
 
-function normalizeCronTaskPayload(raw) {
+function normalizeCronTaskPayload(raw, fallbackAgentId = "") {
   if (!raw || typeof raw !== "object") return null;
   const id = String(raw.id || raw.task_id || raw.taskId || "").trim();
   if (!id) return null;
+  // Go API 的员工聚合与运行时命令使用扁平业务字段；模板内部和 OpenClaw RPC 使用嵌套字段。
+  // 在唯一入口完成转换，避免创建、更新和人格全量同步形成三套不一致的计划任务语义。
+  const apiTask = raw.schedule_kind || raw.every_seconds || raw.cron_expr || raw.prompt || raw.delivery_mode
+    ? runtimeCronCommandPayload(raw, fallbackAgentId || raw.openclaw_agent_id || raw.agent_id || raw.agentId || "main")
+    : raw;
   return {
     managedId: id,
-    name: managedCronTaskName(id, raw.name || id),
-    description: String(raw.description || "Managed by OneClaw").trim(),
-    schedule: normalizeCronSchedule(raw.schedule),
-    sessionTarget: raw.sessionTarget || raw.session_target || "isolated",
-    wakeMode: raw.wakeMode || raw.wake_mode || "now",
-    payload: normalizeCronPayload(raw.payload),
-    delivery: normalizeCronDelivery(raw.delivery),
-    agentId: raw.agentId || raw.agent_id || "main",
-    enabled: raw.enabled !== false,
+    name: managedCronTaskName(id, apiTask.name || id),
+    description: String(apiTask.description || "Managed by OneClaw").trim(),
+    schedule: normalizeCronSchedule(apiTask.schedule),
+    sessionTarget: apiTask.sessionTarget || apiTask.session_target || "isolated",
+    wakeMode: apiTask.wakeMode || apiTask.wake_mode || "now",
+    payload: normalizeCronPayload(apiTask.payload),
+    delivery: normalizeCronDelivery(apiTask.delivery),
+    agentId: apiTask.agentId || apiTask.agent_id || fallbackAgentId || "main",
+    enabled: apiTask.enabled !== false,
   };
 }
 

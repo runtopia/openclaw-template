@@ -65,13 +65,25 @@ export function normalizeOneclawApiUrl(raw) {
 }
 
 export function createOneclawIntegration({
-	apiUrl, instanceId, instanceSecret, stateDir, workspaceDir,
-	gatewayTarget, repairTarget, gatewayToken, isGatewayReady, isGatewayStarting,
-	gatewayRpc,
-	runCmd, clawArgs, OPENCLAW_NODE, restartGateway, getGatewayLogs,
-	channelBindingPollMs = 1500,
-	skillStatusRetryMs = 250,
-	skillStatusAttempts = 12,
+  apiUrl,
+  instanceId,
+  instanceSecret,
+  stateDir,
+  workspaceDir,
+  gatewayTarget,
+  repairTarget,
+  gatewayToken,
+  isGatewayReady,
+  isGatewayStarting,
+  gatewayRpc,
+  runCmd,
+  clawArgs,
+  OPENCLAW_NODE,
+  restartGateway,
+  getGatewayLogs,
+  channelBindingPollMs = 1500,
+  skillStatusRetryMs = 250,
+  skillStatusAttempts = 12,
 }) {
   const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
   const mainWorkspace = agentWorkspace(workspaceDir, "main");
@@ -91,10 +103,14 @@ export function createOneclawIntegration({
   }
 
   let heartbeatInterval = null;
-	let commandPollInterval = null;
-	let cachedPersonality = null;
-	const usageStats = { messages: 0, tokens: 0, lastModel: null };
-	const activeChannelBindings = new Map();
+  let commandPollInterval = null;
+  let cachedPersonality = null;
+  const usageStats = {
+    messages: 0,
+    tokens: 0,
+    lastModel: null,
+  };
+  const activeChannelBindings = new Map();
 
   function trackMessage(tokens = 0, model = null) {
     usageStats.messages++;
@@ -105,7 +121,12 @@ export function createOneclawIntegration({
   async function apiFetch(endpoint, opts = {}) {
     return fetch(`${platformApiUrl}${endpoint}`, {
       ...opts,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${instanceSecret}`, ...(opts.headers || {}) },
+      headers: {
+        "Content-Type": "application/json",
+        "X-OneClaw-Instance-ID": instanceId,
+        Authorization: `Bearer ${instanceSecret}`,
+        ...(opts.headers || {}),
+      },
     });
   }
 
@@ -126,65 +147,64 @@ export function createOneclawIntegration({
 
   async function sendEvent(event, data = {}) {
     try {
-      await apiFetch("/agent/event", {
+      const res = await apiFetch("/runtime/events", {
         method: "POST",
-        body: JSON.stringify({ instance_id: instanceId, event, data, timestamp: new Date().toISOString() }),
+        body: JSON.stringify({ event, data, timestamp: new Date().toISOString() }),
       });
-      console.log(`[event] sent: ${event}`);
+      if (res.ok) {
+        console.log(`[event] sent: ${event}`);
+        return true;
+      }
+      console.warn(`[event] failed: ${event} (${res.status})`);
     } catch (err) {
       console.error(`[event] error: ${err.message}`);
     }
+    return false;
   }
 
   async function reportChannelState(payload) {
-    try {
-      const res = await apiFetch("/agent/channels/state", {
-        method: "POST",
-        body: JSON.stringify({ instance_id: instanceId, ...payload }),
-      });
-      if (!res.ok) console.warn(`[channel-bind] state report failed: ${res.status}`);
-    } catch (err) {
-      console.error(`[channel-bind] state report error: ${err.message}`);
-    }
+    await sendEvent("channel_state", payload);
   }
 
   async function reportChannelAccessRequest(payload) {
-    try {
-      const res = await apiFetch("/agent/channels/access-requests", {
-        method: "POST",
-        body: JSON.stringify({ instance_id: instanceId, ...payload }),
-      });
-      if (!res.ok) console.warn(`[channel-access] request report failed: ${res.status}`);
-    } catch (err) {
-      console.error(`[channel-access] request report error: ${err.message}`);
-    }
+    await sendEvent("channel_access_request", {
+      ...payload,
+      request: {
+        id: payload.request_id,
+        subject_type: payload.subject_type,
+        subject_id: payload.subject_id,
+        subject_name: payload.subject_name,
+        requested_at: payload.requested_at,
+      },
+    });
   }
 
   async function reportStats() {
     if (usageStats.messages === 0) return;
-    try {
-      const res = await apiFetch("/agent/stats", {
-        method: "POST",
-        body: JSON.stringify({ instance_id: instanceId, secret: instanceSecret, messages: usageStats.messages, tokens: usageStats.tokens, model: usageStats.lastModel }),
-      });
-      if (res.ok) {
-        console.log(`[stats] reported: ${usageStats.messages} messages`);
-        usageStats.messages = 0;
-        usageStats.tokens = 0;
-      }
-    } catch (err) {
-      console.error(`[stats] error: ${err.message}`);
-    }
+    const sent = await sendEvent("runtime.stats", {
+      messages: usageStats.messages,
+      tokens: usageStats.tokens,
+      model: usageStats.lastModel,
+    });
+    if (!sent) return;
+    console.log(`[stats] reported: ${usageStats.messages} messages`);
+    usageStats.messages = 0;
+    usageStats.tokens = 0;
   }
 
   async function fetchPersonality() {
     try {
-      const res = await apiFetch(`/agent/personality?instance_id=${encodeURIComponent(instanceId)}`, { method: "GET" });
+      const res = await apiFetch("/runtime/personality", { method: "GET" });
       if (res.ok) {
         const data = await res.json();
-        cachedPersonality = normalizePersonality(data.personality);
+        const employees = Array.isArray(data.employees) ? data.employees : [];
+        const employee = employees.find((item) => item?.kind === "main") || employees[0] || null;
+        cachedPersonality = runtimeEmployeePersonality(employee);
         console.log(`[personality] fetched: ${cachedPersonality?.botName || "default"}`);
-        return { personality: cachedPersonality, template: normalizeTemplate(data.template) };
+        return {
+          personality: cachedPersonality,
+          template: normalizeTemplate(employee),
+        };
       }
     } catch (err) {
       console.error(`[personality] fetch error: ${err.message}`);
@@ -194,6 +214,13 @@ export function createOneclawIntegration({
 
   async function applyPersonality(personality, template = null) {
     try {
+      const runtimeEmployee = personality?.runtimeEmployee;
+      if (runtimeEmployee && gatewayRpc?.rpcGateway) {
+        const payload = runtimeEmployeeTemplatePayload(runtimeEmployee);
+        const result = await applyEmployeeAgentTemplate(payload, runtimeEmployee.id);
+        if (result?.employee_id) await reportEmployeeTemplateSync(result);
+        return;
+      }
       const systemPrompt = personality?.systemPrompt || personality?.system_prompt;
       if (systemPrompt) {
         const soulPath = path.join(mainWorkspace, "SOUL.md");
@@ -252,10 +279,9 @@ export function createOneclawIntegration({
         whatsapp: process.env.WHATSAPP_ENABLED === "1",
         wechat: process.env.WECHAT_ENABLED === "1",
       } : {};
-      const res = await apiFetch("/agent/heartbeat", {
+      const res = await apiFetch("/runtime/heartbeat", {
         method: "POST",
         body: JSON.stringify({
-          instance_id: instanceId,
           status,
           status_reason: statusReason,
           agent: {
@@ -283,7 +309,7 @@ export function createOneclawIntegration({
 
   async function pollCommands() {
     try {
-      const res = await apiFetch(`/agent/commands?instance_id=${encodeURIComponent(instanceId)}&limit=10`, { method: "GET" });
+      const res = await apiFetch("/runtime/commands?limit=10", { method: "GET" });
       if (!res.ok) {
         if (res.status !== 404) console.warn(`[commands] poll failed: ${res.status}`);
         return;
@@ -310,7 +336,7 @@ export function createOneclawIntegration({
   }
 
   async function acknowledgeCommand(command, result) {
-    const res = await apiFetch(`/agent/commands/${encodeURIComponent(command.id)}/ack?instance_id=${encodeURIComponent(instanceId)}`, {
+    const res = await apiFetch(`/runtime/commands/${encodeURIComponent(command.id)}/ack`, {
       method: "POST",
       body: JSON.stringify(result),
     });
@@ -318,24 +344,18 @@ export function createOneclawIntegration({
   }
 
   async function reportEmployeeTemplateSync(result) {
-    const employeeId = encodeURIComponent(result.employee_id);
-    const res = await apiFetch(`/agent/employees/${employeeId}/template-sync`, {
-      method: "PUT",
-      body: JSON.stringify({ instance_id: instanceId, ...result }),
+    const status = result.overall_status === "active" ? "active" : "failed";
+    await sendEvent("template_sync", {
+      employee_id: result.employee_id,
+      revision: result.template_version,
+      status,
     });
-    if (!res.ok) {
-      const err = new Error(`template sync result reporting failed: ${res.status}`);
-      err.retryable = true;
-      throw err;
-    }
   }
 
   function start(openclawVersion) {
     setTimeout(async () => {
       sendHeartbeat();
       sendEvent("instance_started", { version: openclawVersion });
-      const { personality, template } = await fetchPersonality();
-      if (personality || template) await applyPersonality(personality, template);
     }, 30_000);
     heartbeatInterval = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     // 员工雇佣、通道绑定、技能安装需要秒级生效；heartbeat 保持低频，命令用轻量轮询承接。
@@ -451,6 +471,34 @@ export function createOneclawIntegration({
     }
     if (command?.type !== "apply_template") return;
     const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
+    const templateId = String(payload.template_id || payload.templateId || "").trim();
+    const hasTemplateContent = Boolean(
+      payload.soul_md ||
+      payload.soulMd ||
+      payload.system_prompt ||
+      Array.isArray(payload.memory_files) ||
+      Array.isArray(payload.memoryFiles) ||
+      Array.isArray(payload.skill_requirements) ||
+      Array.isArray(payload.skill_specs) ||
+      Array.isArray(payload.skills) ||
+      Array.isArray(payload.cron_tasks),
+    );
+    if (employeeId && hasTemplateContent) {
+      return applyEmployeeAgentTemplate(payload, employeeId);
+    }
+    if (!hasTemplateContent && (employeeId || templateId)) {
+      const runtimeEmployee = await fetchRuntimeEmployee(employeeId);
+      if (runtimeEmployee) {
+        const runtimePayload = runtimeEmployeeTemplatePayload(runtimeEmployee);
+        const catalogTemplate = templateId ? await fetchCatalogTemplate(templateId) : null;
+        const resolvedPayload = {
+          ...runtimePayload,
+          ...payload,
+          memory_files: payload.memory_files || catalogTemplate?.memoryFiles || [],
+        };
+        return applyEmployeeAgentTemplate(resolvedPayload, runtimeEmployee.id);
+      }
+    }
     if (employeeId) {
       return applyEmployeeAgentTemplate(payload, employeeId);
     }
@@ -461,8 +509,27 @@ export function createOneclawIntegration({
       fs.writeFileSync(soulPath, soulMd, "utf8");
       console.log(`[command] wrote SOUL.md (${soulMd.length} chars)`);
     }
-    // Go 后端 command 使用 payload.memory_files；保留 memoryFiles 读取，方便旧队列平滑过渡。
-    applyMemoryFiles(payload.memory_files || payload.memoryFiles, mainWorkspace);
+    applyMemoryFiles(payload.memory_files, mainWorkspace);
+  }
+
+  async function fetchRuntimeEmployee(employeeId = "") {
+    const res = await apiFetch("/runtime/personality", { method: "GET" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `runtime personality fetch failed: ${res.status}`);
+    }
+    const employees = Array.isArray(data.employees) ? data.employees : [];
+    if (employeeId) {
+      return employees.find((employee) => employee?.id === employeeId) || null;
+    }
+    return employees.find((employee) => employee?.kind === "main") || employees[0] || null;
+  }
+
+  async function fetchCatalogTemplate(templateId) {
+    const res = await apiFetch(`/templates/${encodeURIComponent(templateId)}`, { method: "GET" });
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => ({}));
+    return normalizeTemplate(body.template || body);
   }
 
   function renderManagedResponsibilities(soulMd, responsibilities) {
@@ -507,6 +574,7 @@ export function createOneclawIntegration({
         responsibilities: { status: "skipped" },
         memory: { status: "skipped" },
         skills: [],
+        cron_tasks: [],
       },
     };
 
@@ -558,10 +626,29 @@ export function createOneclawIntegration({
       try {
         const spec = await resolveRuntimeSkillSpec(requirement);
         await installSkillForAgent(spec, agentId, payload.credentials);
-        result.components.skills.push({ slug, status: "active" });
+        result.components.skills.push({
+          slug,
+          status: "active",
+        });
+        await sendEvent("skill_status", {
+          employee_id: employeeId,
+          slug,
+          status: "active",
+        });
       } catch (err) {
         const error = boundedComponentError(err);
-        result.components.skills.push({ slug, status: "failed", required: requirement?.required === true, error });
+        result.components.skills.push({
+          slug,
+          status: "failed",
+          required: requirement?.required === true,
+          error,
+        });
+        await sendEvent("skill_status", {
+          employee_id: employeeId,
+          slug,
+          status: "failed",
+          error,
+        });
         console.warn(`[command] employee skill ${slug} sync failed: ${error}`);
       }
     }
@@ -575,7 +662,41 @@ export function createOneclawIntegration({
       setAgentSkillAllowlist(agentId, assignedSkills);
     }
 
-    const componentResults = [result.components.soul, result.components.responsibilities, result.components.memory, ...result.components.skills];
+    const cronTasks = Array.isArray(payload.cron_tasks) ? payload.cron_tasks : [];
+    for (const cronTask of cronTasks) {
+      const taskId = String(cronTask?.id || cronTask?.task_id || "").trim();
+      if (!taskId) continue;
+      try {
+        const taskPayload = runtimeCronCommandPayload(cronTask, agentId);
+        const nativeTaskId = await upsertCronTask(taskPayload);
+        const status = taskPayload.enabled === false ? "paused" : "active";
+        result.components.cron_tasks.push({
+          task_id: taskId,
+          status,
+        });
+        await sendEvent("cron_status", {
+          employee_id: employeeId,
+          task_id: taskId,
+          openclaw_task_id: nativeTaskId,
+          status,
+        });
+      } catch (err) {
+        const error = boundedComponentError(err);
+        result.components.cron_tasks.push({
+          task_id: taskId,
+          status: "failed",
+          error,
+        });
+      }
+    }
+
+    const componentResults = [
+      result.components.soul,
+      result.components.responsibilities,
+      result.components.memory,
+      ...result.components.skills,
+      ...result.components.cron_tasks,
+    ];
     if (componentResults.some((component) => component?.status === "failed" || component?.status === "needs_configuration")) {
       result.overall_status = "degraded";
     }
@@ -624,6 +745,7 @@ export function createOneclawIntegration({
   async function installEmployeeSkill(payload) {
     const slug = String(payload.skill_slug || payload.skillSlug || payload.slug || "").trim();
     if (!slug) return;
+    const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     try {
       const agentId = requiredEmployeeAgentId(payload);
       const spec = await resolveRuntimeSkillSpec({
@@ -634,8 +756,23 @@ export function createOneclawIntegration({
       });
       await installSkillForAgent(spec, agentId, payload.credentials);
       addAgentSkillToAllowlist(agentId, slug);
+      if (employeeId) {
+        await sendEvent("skill_status", {
+          employee_id: employeeId,
+          slug,
+          status: "active",
+        });
+      }
       console.log(`[command] installed skill ${slug} for ${agentId}`);
     } catch (err) {
+      if (employeeId) {
+        await sendEvent("skill_status", {
+          employee_id: employeeId,
+          slug,
+          status: "failed",
+          error: boundedComponentError(err),
+        });
+      }
       console.error(`[command] install skill ${slug} failed: ${err.message}`);
       throw err;
     }
@@ -651,7 +788,7 @@ export function createOneclawIntegration({
     const inline = typeof value === "string" ? { slug: value } : (value || {});
     const slug = String(inline.slug || inline.skill_slug || "").trim();
     if (!slug) throw new Error("skill slug is required");
-    const res = await apiFetch(`/agent/skills/${encodeURIComponent(slug)}?instance_id=${encodeURIComponent(instanceId)}`, { method: "GET" });
+    const res = await apiFetch(`/runtime/skills/${encodeURIComponent(slug)}`, { method: "GET" });
     const spec = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(spec.error || `skill ${slug} resolution failed: ${res.status}`);
     return {
@@ -700,9 +837,7 @@ export function createOneclawIntegration({
       const zipPath = path.join(tempRoot, `${slug}.zip`);
       const extractPath = path.join(tempRoot, "contents");
       try {
-        const query = new URLSearchParams({ instance_id: instanceId });
-        if (spec.version) query.set("version", String(spec.version));
-        const res = await apiFetch(`/agent/skills/${encodeURIComponent(slug)}/archive?${query}`, { method: "GET" });
+        const res = await apiFetch(`/runtime/skills/${encodeURIComponent(slug)}/archive`, { method: "GET" });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body.error || `custom skill ${slug} download failed: ${res.status}`);
@@ -758,10 +893,18 @@ export function createOneclawIntegration({
   async function removeEmployeeSkill(payload) {
     const slug = String(payload.skill_slug || payload.skillSlug || payload.slug || "").trim();
     if (!slug) return;
+    const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     const agentId = requiredEmployeeAgentId(payload);
     const skillDir = await resolveSkillDir(agentId, slug);
     if (skillDir) fs.rmSync(skillDir, { recursive: true, force: true });
     removeAgentSkillFromAllowlist(agentId, slug);
+    if (employeeId) {
+      await sendEvent("skill_status", {
+        employee_id: employeeId,
+        slug,
+        status: "removed",
+      });
+    }
     console.log(`[command] removed skill ${slug} for ${agentId}`);
   }
 
@@ -817,6 +960,7 @@ export function createOneclawIntegration({
         const { managedId, ...patch } = task;
         await callGateway("cron.update", { id: nativeId, patch });
         console.log(`[command] updated cron task ${task.managedId} -> ${nativeId}`);
+        return nativeId;
       } else {
         const { managedId, ...job } = task;
         const created = await callGateway("cron.add", job);
@@ -824,6 +968,7 @@ export function createOneclawIntegration({
         if (!createdId) throw new Error("cron.add did not return a task id");
         saveCronNativeId(managedId, createdId);
         console.log(`[command] added cron task ${managedId} -> ${createdId}`);
+        return createdId;
       }
     } catch (err) {
       console.error(`[command] cron task upsert failed: ${err.message}`);
@@ -938,7 +1083,7 @@ export function createOneclawIntegration({
       return;
     }
     if (action === "bind_channel") {
-      startChannelBindingSession(payload);
+      await startChannelBindingSession(payload);
       return;
     }
     if (action === "cancel_bind_channel" || action === "unbind_channel") {
@@ -1069,7 +1214,7 @@ export function createOneclawIntegration({
     });
   }
 
-  function startChannelBindingSession(payload) {
+  async function startChannelBindingSession(payload) {
     const channel = String(payload?.channel || "").trim();
     const employeeId = String(payload?.employee_id || payload?.employeeId || "").trim();
     const binding = payload?.state?.binding || payload?.binding || {};
@@ -1081,11 +1226,19 @@ export function createOneclawIntegration({
       return;
     }
     if (channel !== "whatsapp" && channel !== "wechat") return;
-    ensureQrChannelRuntimeConfig(channel, payload);
-
     const key = bindingKey(channel, employeeId);
     const previous = activeChannelBindings.get(key);
-    if (previous) cancelChannelBindingSession(previous);
+    if (previous?.sessionId === sessionId && !previous.cancelled) {
+      return;
+    }
+    if (previous) {
+      cancelChannelBindingSession(previous);
+    }
+
+    const runtimeRestartRequired = ensureQrChannelRuntimeConfig(channel, payload);
+    if (runtimeRestartRequired) {
+      await restartRuntimeAfterChannelChange();
+    }
 
     // 本次扫码绑定是用户发起的一次性会话；expires_at 是总截止时间，
     // 到期后必须停止刷新二维码，避免用户离开页面后实例继续刷日志。
@@ -1109,7 +1262,7 @@ export function createOneclawIntegration({
   function ensureQrChannelRuntimeConfig(channel, payload) {
     const runtimeChannel = channel === "wechat" ? "openclaw-weixin" : channel;
     const manifestEntry = CHANNEL_MANIFEST.find((entry) => entry.id === runtimeChannel);
-    if (!manifestEntry?.reconcileShape) return;
+    if (!manifestEntry?.reconcileShape) return false;
     const configState = payload?.state?.config || payload?.config || {};
     const access = configState?.access;
     const runtimePolicy = access ? buildRuntimeChannelAccessPolicy(access) : {};
@@ -1119,9 +1272,23 @@ export function createOneclawIntegration({
     };
     // 正常部署由 Go 后端通过 WECHAT_ENABLED/WHATSAPP_ENABLED 启用；这里作为老容器或异常配置的兜底。
     // 若绑定时 channel/plugin 缺失，OpenClaw CLI 会停在交互式“Install plugin?”提示，导致拿不到二维码。
+    const configPath = stateDir ? path.join(stateDir, "openclaw.json") : "";
+    let runtimeRestartRequired = false;
+    if (configPath && fs.existsSync(configPath)) {
+      try {
+        const current = JSON.parse(fs.readFileSync(configPath, "utf8"));
+        const channelEnabled = current?.channels?.[runtimeChannel]?.enabled === true;
+        const pluginEnabled = !manifestEntry.pluginId || current?.plugins?.entries?.[manifestEntry.pluginId]?.enabled === true;
+        runtimeRestartRequired = !channelEnabled || !pluginEnabled;
+      } catch (err) {
+        console.warn(`[channel-bind] failed to inspect ${runtimeChannel} config: ${err.message}`);
+        runtimeRestartRequired = true;
+      }
+    }
     setChannelConfig(runtimeChannel, shape, {
       stateDir: stateDir || path.dirname(workspaceDir),
     });
+    return runtimeRestartRequired;
   }
 
   async function runChannelBindingTick(session) {
@@ -1202,10 +1369,13 @@ export function createOneclawIntegration({
 
   async function pollWhatsAppBinding(session) {
     if (!session.started) {
-      session.started = true;
-      return repairFetch("whatsapp-login/start", "POST", {
+      const data = await repairFetch("whatsapp-login/start", "POST", {
         accountId: session.employeeId,
       });
+      if (data?.preparing !== true && data?.status !== "starting") {
+        session.started = true;
+      }
+      return data;
     }
     return repairFetch("whatsapp-login/wait", "POST", {
       accountId: session.employeeId,
@@ -1388,12 +1558,100 @@ function normalizePersonality(personality) {
   };
 }
 
+function runtimeEmployeePersonality(employee) {
+  if (!employee) return null;
+  const personality = employee.personality && typeof employee.personality === "object"
+    ? employee.personality
+    : {};
+  return {
+    ...personality,
+    botName: employee.name,
+    systemPrompt: employee.system_prompt,
+    greeting: employee.greeting,
+    avatarUrl: employee.avatar_url,
+    runtimeEmployee: employee,
+  };
+}
+
+function runtimeEmployeeTemplatePayload(employee) {
+  const skills = Array.isArray(employee?.skills) ? employee.skills : [];
+  return {
+    employee_id: employee?.id,
+    openclaw_agent_id: employee?.openclaw_agent_id || (employee?.kind === "main" ? "main" : ""),
+    template_version: Number(employee?.template_revision || 1),
+    bot_name: employee?.name,
+    avatar: employee?.avatar_url || "",
+    soul_md: employee?.system_prompt || "",
+    responsibilities: parseResponsibilities(employee?.role),
+    skill_requirements: skills.map((skill) => ({
+      slug: skill.slug,
+      source: skill.source,
+      required: false,
+    })),
+    assigned_skill_slugs: skills.map((skill) => skill.slug),
+    cron_tasks: Array.isArray(employee?.cron_tasks) ? employee.cron_tasks : [],
+  };
+}
+
+function parseResponsibilities(role) {
+  const value = String(role || "").trim();
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed?.responsibilities)) return parsed.responsibilities;
+  } catch {}
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function runtimeCronCommandPayload(task, agentId) {
+  let schedule;
+  if (task.schedule_kind === "every") {
+    schedule = {
+      kind: "every",
+      everyMs: Number(task.every_seconds || 60) * 1000,
+    };
+  } else {
+    schedule = {
+      kind: "cron",
+      expr: String(task.cron_expr || "0 9 * * *"),
+      ...(task.timezone ? { tz: String(task.timezone) } : {}),
+    };
+  }
+  let delivery = {
+    mode: "none",
+  };
+  if (task.delivery_mode === "external") {
+    delivery = {
+      mode: "announce",
+      ...(task.delivery_channel ? { channel: String(task.delivery_channel) } : {}),
+      ...(task.delivery_to ? { to: String(task.delivery_to) } : {}),
+    };
+  }
+  return {
+    id: task.id || task.task_id,
+    name: task.name,
+    description: "由 OneClaw 管理",
+    schedule,
+    payload: {
+      kind: "agentTurn",
+      message: String(task.prompt || ""),
+    },
+    delivery,
+    agent_id: agentId,
+    enabled: task.enabled !== false && task.is_enabled !== false,
+  };
+}
+
 function normalizeTemplate(template) {
   if (!template) return null;
   return {
     ...template,
     templateId: template.templateId || template.template_id || template.id,
-    soulMd: template.soulMd || template.soul_md,
+    soulMd: template.soulMd || template.soul_md || template.system_prompt,
     memoryFiles: template.memoryFiles || template.memory_files,
     suggestedModel: template.suggestedModel || template.suggested_model,
   };

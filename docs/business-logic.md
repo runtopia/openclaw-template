@@ -203,13 +203,13 @@ WebSocket 升级：
 
 上报与拉取：
 
-- `POST /agent/heartbeat`：2 小时周期，也会在启动 30 秒后和 gateway ready 后立即发送。
-- `POST /agent/event`：上报 `instance_started`、runtime command 执行结果、日志快照等事件。
-- `POST /agent/stats`：上报本地累计 messages/tokens，目前只在 `trackMessage()` 被调用后才有数据。
-- `GET /agent/personality`：拉取实例人格和模板。
+- `POST /runtime/heartbeat`：2 小时周期，也会在启动 30 秒后和 gateway ready 后立即发送。
+- `POST /runtime/events`：上报 `instance_started`、runtime command 执行结果、日志快照等事件。
+- `POST /runtime/events`：上报本地累计 messages/tokens，目前只在 `trackMessage()` 被调用后才有数据。
+- `GET /runtime/personality`：拉取实例人格和模板。
 - `GET /templates/:id`：按 `ONECLAW_TEMPLATE_ID` 应用模板。
-- `GET /agent/commands`：默认每 15 秒轮询一次命令。
-- `POST /agent/channels/state`：回写二维码绑定 pending/ready/failed/expired。
+- `GET /runtime/commands`：默认每 15 秒轮询一次命令。
+- `POST /runtime/events`：回写二维码绑定 pending/ready/failed/expired。
 
 心跳 payload：
 
@@ -223,7 +223,7 @@ WebSocket 升级：
 
 ### 4.5 命令执行
 
-Runtime 从 Go API 心跳响应或 `/agent/commands` 拉取命令。模板当前处理的命令：
+Runtime 从 Go API 心跳响应或 `/runtime/commands` 拉取命令。模板当前处理的命令：
 
 - `restart`
 - `apply_template`
@@ -281,7 +281,7 @@ Runtime 从 Go API 心跳响应或 `/agent/commands` 拉取命令。模板当前
 3. 确保二维码通道 runtime 配置存在。
 4. 启动一次性绑定 session。
 5. 在 session 过期前持续拉二维码或登录状态；WeChat 同账号已有可用二维码时复用缓存，不重复生成。
-6. 每次二维码刷新或状态变化回写 `/agent/channels/state`。
+6. 每次二维码刷新或状态变化回写 `/runtime/events`。
 
 当前需要注意：
 
@@ -313,7 +313,7 @@ Runtime 从 Go API 心跳响应或 `/agent/commands` 拉取命令。模板当前
 flowchart TD
     A["用户在 OneClaw 控制台发起绑定"] --> B["oneclaw_api 保存 channels pending"]
     B --> C["oneclaw_api 入队 bind_channel 命令"]
-    C --> D["template 轮询 /agent/commands"]
+    C --> D["template 轮询 /runtime/commands"]
     D --> E["启动本地绑定 session"]
     E --> F{"channel"}
     F -- "whatsapp" --> G["gateway RPC web.login.start/wait"]
@@ -322,9 +322,9 @@ flowchart TD
     G --> I["生成、刷新或复用二维码"]
     H --> I
     M --> I
-    I --> J["POST /agent/channels/state pending + qr_url"]
+    I --> J["POST /runtime/events pending + qr_url"]
     J --> K["用户扫码"]
-    K --> L["POST /agent/channels/state ready"]
+    K --> L["POST /runtime/events ready"]
 ```
 
 绑定生命周期：
@@ -408,12 +408,12 @@ Agent API：
 
 | 模板调用 | Go API 路由 | 对齐状态 |
 | --- | --- | --- |
-| `POST /agent/heartbeat` | `POST /api/v1/agent/heartbeat` | 已对齐 |
-| `GET /agent/personality?instance_id=...` | `GET /api/v1/agent/personality` | 已对齐 |
-| `GET /agent/commands?instance_id=...&limit=10` | `GET /api/v1/agent/commands` | 已对齐 |
-| `POST /agent/channels/state` | `POST /api/v1/agent/channels/state` | 已对齐 |
-| `POST /agent/event` | `POST /api/v1/agent/event` | 已对齐，当前后端轻量接收 |
-| `POST /agent/stats` | `POST /api/v1/agent/stats` | 已对齐，当前后端轻量接收 |
+| `POST /runtime/heartbeat` | `POST /api/v1/runtime/heartbeat` | 已对齐 |
+| `GET /runtime/personality?instance_id=...` | `GET /api/v1/runtime/personality` | 已对齐 |
+| `GET /runtime/commands?instance_id=...&limit=10` | `GET /api/v1/runtime/commands` | 已对齐 |
+| `POST /runtime/events` | `POST /api/v1/runtime/events` | 已对齐 |
+| `POST /runtime/events` | `POST /api/v1/runtime/events` | 已对齐，当前后端轻量接收 |
+| `POST /runtime/events` | `POST /api/v1/runtime/events` | 已对齐，当前后端轻量接收 |
 
 定时任务不再通过平台轮询兼容层执行。Go API 通过员工接口保存任务后，下发 `upsert_cron_task`、`delete_cron_task`、`run_cron_task` 命令；模板收到后调用 OpenClaw gateway 原生 `cron.add`、`cron.update`、`cron.remove`、`cron.run`。由于 OpenClaw `cron.add` 会生成原生 job id，模板在 `stateDir/oneclaw-cron-tasks.json` 维护 OneClaw 任务 ID 到 OpenClaw job id 的映射，并使用任务名前缀作为兜底恢复线索。
 
@@ -434,7 +434,7 @@ Agent API：
 | `state.binding.expires_at` | session 截止时间 | 已对齐 |
 | `employee_id` | WhatsApp accountId / WeChat accountId | 已对齐 |
 | `channel=wechat` | 映射到 runtime `openclaw-weixin` | 已对齐 |
-| `POST /agent/channels/state` 的 `session_id` | Go API 校验当前 session | 已对齐 |
+| `POST /runtime/events` 的 `session_id` | Go API 校验当前 session | 已对齐 |
 
 基础设施扣费：
 
@@ -446,11 +446,11 @@ Agent API：
 
 1. 统计口径
 
-模板有 `trackMessage()` 和 `/agent/stats` 上报逻辑，但当前代码未看到代理层或 gateway RPC 对聊天消息调用 `trackMessage()`。因此 `messages/tokens` 统计可能长期为 0。正式计费不应依赖这里，Credits 消耗应继续以 ClawRouters 和 Go API 自身流水为准。
+模板有 `trackMessage()` 和 `/runtime/events` 上报逻辑，但当前代码未看到代理层或 gateway RPC 对聊天消息调用 `trackMessage()`。因此 `messages/tokens` 统计可能长期为 0。正式计费不应依赖这里，Credits 消耗应继续以 ClawRouters 和 Go API 自身流水为准。
 
 2. 技能状态回写
 
-Go API 会把技能安装记录置为 `installing`，template 已能执行安装/卸载命令，但尚未把执行结果回写为 `active/failed`。后续可新增 `POST /agent/skills/state` 或复用 `agent/event` 进行状态对账。
+Go API 会把技能安装记录置为 `installing`，template 已能执行安装/卸载命令，但尚未把执行结果回写为 `active/failed`。后续可新增 `POST /runtime/events` 或复用 `agent/event` 进行状态对账。
 
 ## 6. 关键业务流程
 
@@ -467,7 +467,7 @@ flowchart TD
     F -- "是" --> H["启动 OpenClaw gateway"]
     H --> I["gateway HTTP ready"]
     I --> J["启动 gateway RPC"]
-    J --> K["POST /agent/heartbeat healthy"]
+    J --> K["POST /runtime/heartbeat healthy"]
     K --> L["oneclaw_api 将实例置为 running"]
 ```
 
@@ -490,7 +490,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["Runtime 启动"] --> B["30 秒后 fetchPersonality"]
-    B --> C["GET /agent/personality"]
+    B --> C["GET /runtime/personality"]
     C --> D["写 workspace SOUL.md 和 memory files"]
     D --> E{"ONECLAW_TEMPLATE_ID 存在?"}
     E -- "是" --> F["GET /templates/:id"]
@@ -504,7 +504,7 @@ flowchart TD
 flowchart TD
     A["用户修改模板/渠道/员工"] --> B["oneclaw_api 先写 MySQL"]
     B --> C["oneclaw_api 写 Redis command queue"]
-    C --> D["模板每 15 秒 GET /agent/commands"]
+    C --> D["模板每 15 秒 GET /runtime/commands"]
     D --> E{"命令类型"}
     E -- "apply_template" --> F["写 agent SOUL.md/memory files"]
     E -- "delete_agent" --> G["调用 agents.delete"]
@@ -523,11 +523,11 @@ flowchart TD
     D --> E["模板拉取命令"]
     E --> F["启动本地 QR session"]
     F --> G["获取 QR"]
-    G --> H["POST /agent/channels/state pending"]
+    G --> H["POST /runtime/events pending"]
     H --> I{"扫码成功?"}
-    I -- "是" --> J["POST /agent/channels/state ready"]
-    I -- "否且过期" --> K["POST /agent/channels/state expired"]
-    I -- "异常" --> L["POST /agent/channels/state failed"]
+    I -- "是" --> J["POST /runtime/events ready"]
+    I -- "否且过期" --> K["POST /runtime/events expired"]
+    I -- "异常" --> L["POST /runtime/events failed"]
 ```
 
 ### 6.6 Gateway 修复

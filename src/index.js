@@ -246,7 +246,7 @@ const gatewayRpc = createGatewayRpc({
 });
 
 // ── OneClaw 心跳上报 ──────────────────────────────────────────────────────────
-// 通过 /agent/heartbeat 把 gateway 状态、平台连通性上报给 OneClaw 平台。
+// 通过 /runtime/heartbeat 把 gateway 状态、平台连通性上报给 OneClaw 平台。
 // sidecar 是心跳发出方，openclaw gateway 是被观测对象（通过 isGatewayReady）。
 
 const oneclaw = createOneclawIntegration({
@@ -393,6 +393,10 @@ const server = app.listen(PORT, () => {
         await oneclaw.sendHeartbeat();
         await ensureWorkspaceFiles();
         if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
+        const runtimeProfile = await oneclaw.fetchPersonality();
+        if (runtimeProfile.personality || runtimeProfile.template) {
+          await oneclaw.applyPersonality(runtimeProfile.personality, runtimeProfile.template);
+        }
       })
       .catch((err) => console.error(`[sidecar] gateway failed to start: ${err.message}`));
   } else {

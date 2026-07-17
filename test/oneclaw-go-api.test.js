@@ -42,10 +42,10 @@ test("normalizes OneClaw Go API base URL to /api/v1", () => {
 test("heartbeat sends Go API snake_case payload and applies queued template command", async () => {
   const workspaceDir = makeWorkspace();
   const restoreFetch = withFetch((url, opts) => {
-    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/heartbeat");
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/heartbeat");
     assert.equal(opts.headers.Authorization, "Bearer secret-1");
+    assert.equal(opts.headers["X-OneClaw-Instance-ID"], "runtime-1");
     const body = JSON.parse(opts.body);
-    assert.equal(body.instance_id, "runtime-1");
     assert.equal(body.status, "healthy");
     assert.equal(body.status_reason, "gateway_ready");
     assert.equal(body.agent.gateway_ready, true);
@@ -106,8 +106,8 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
     },
   };
   const restoreFetch = withFetch((url) => {
-    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
-    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/heartbeat");
+    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/heartbeat");
     return jsonResponse({
       instance_id: "runtime-1",
       status: "running",
@@ -158,11 +158,125 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
   assert.deepEqual(runCalls[0].args, ["skills", "install", "github", "--agent", "oneclaw-emp-1"]);
 });
 
+test("ids-only template command hydrates employee, memory, and cron from the new runtime contract", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({
+    agents: {
+      list: [{ id: "oneclaw-employee-1", skills: [] }],
+    },
+  }));
+  const rpcCalls = [];
+  const events = [];
+  let acknowledged = false;
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method, params) => {
+      rpcCalls.push({ method, params });
+      if (method === "agents.list") {
+        return { ok: true, payload: { agents: [{ id: "oneclaw-employee-1" }] } };
+      }
+      if (method === "agents.files.set") return { ok: true, payload: { ok: true } };
+      if (method === "cron.list") return { ok: true, payload: { jobs: [] } };
+      if (method === "cron.add") return { ok: true, payload: { id: "native-cron-1" } };
+      throw new Error(`unexpected rpc ${method}`);
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.endsWith("/runtime/commands?limit=10")) {
+      return jsonResponse({
+        commands: [{
+          id: "command-1",
+          status: "leased",
+          type: "apply_template",
+          payload: {
+            employee_id: "employee-1",
+            template_id: "developer",
+          },
+        }],
+      });
+    }
+    if (url.endsWith("/runtime/personality")) {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        workspace: { id: "workspace-1" },
+        employees: [{
+          id: "employee-1",
+          openclaw_agent_id: "oneclaw-employee-1",
+          kind: "hired",
+          name: "开发助手",
+          role: '["审查代码", "编写测试"]',
+          system_prompt: "你是一名开发助手。",
+          template_revision: 3,
+          status: "provisioning",
+          skills: [],
+          cron_tasks: [{
+            id: "cron-1",
+            name: "每日检查",
+            prompt: "检查待处理任务",
+            schedule_kind: "every",
+            every_seconds: 300,
+            delivery_mode: "internal",
+            enabled: true,
+          }],
+        }],
+      });
+    }
+    if (url.endsWith("/templates/developer")) {
+      return jsonResponse({
+        id: "developer",
+        memory_files: [{ path: "memory/developer.md", content: "开发规范" }],
+      });
+    }
+    if (url.endsWith("/runtime/events")) {
+      events.push(JSON.parse(opts.body));
+      return jsonResponse({ accepted: true });
+    }
+    if (url.endsWith("/runtime/commands/command-1/ack")) {
+      acknowledged = true;
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      gatewayRpc,
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+
+  const soulWrite = rpcCalls.find((call) => call.method === "agents.files.set");
+  assert.match(soulWrite.params.content, /审查代码/);
+  assert.match(soulWrite.params.content, /编写测试/);
+  assert.equal(
+    fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-employee-1/memory/developer.md"), "utf8"),
+    "开发规范",
+  );
+  const cronAdd = rpcCalls.find((call) => call.method === "cron.add");
+  assert.equal(cronAdd.params.schedule.everyMs, 300_000);
+  assert.equal(cronAdd.params.agentId, "oneclaw-employee-1");
+  const cronEvent = events.find((event) => event.event === "cron_status");
+  assert.equal(cronEvent.data.openclaw_task_id, "native-cron-1");
+  assert.equal(events.find((event) => event.event === "template_sync").data.revision, 3);
+  assert.equal(acknowledged, true);
+});
+
 test("employee sync preserves content when an optional skill fails", async () => {
   const workspaceDir = makeWorkspace();
   const fileWrites = [];
   let acknowledgement;
   let syncResult;
+  let skillResult;
   let skillResolutionCalls = 0;
   const gatewayRpc = {
     waitUntilConnected: async () => {},
@@ -176,7 +290,7 @@ test("employee sync preserves content when an optional skill fails", async () =>
     },
   };
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.includes("/agent/commands?")) {
+    if (url.includes("/runtime/commands?")) {
       return jsonResponse({ commands: [{
         id: "cmd-degraded",
         status: "leased",
@@ -191,17 +305,19 @@ test("employee sync preserves content when an optional skill fails", async () =>
         },
       }] });
     }
-    if (url.includes("/agent/skills/missing-skill")) {
+    if (url.includes("/runtime/skills/missing-skill")) {
       skillResolutionCalls += 1;
       return jsonResponse({ error: "Skill not found" }, 404);
     }
-    if (url.includes("/agent/commands/cmd-degraded/ack")) {
+    if (url.includes("/runtime/commands/cmd-degraded/ack")) {
       acknowledgement = JSON.parse(opts.body);
       return jsonResponse({ acknowledged: true });
     }
-    if (url.includes("/agent/employees/emp-degraded/template-sync")) {
-      assert.equal(opts.method, "PUT");
-      syncResult = JSON.parse(opts.body);
+    if (url.includes("/runtime/events")) {
+      assert.equal(opts.method, "POST");
+      const event = JSON.parse(opts.body);
+      if (event.event === "template_sync") syncResult = event.data;
+      if (event.event === "skill_status") skillResult = event.data;
       return jsonResponse({ accepted: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -227,8 +343,10 @@ test("employee sync preserves content when an optional skill fails", async () =>
 
   assert.equal(skillResolutionCalls, 1);
   assert.equal(acknowledgement.status, "succeeded");
-  assert.equal(syncResult.overall_status, "degraded");
-  assert.equal(syncResult.components.skills[0].status, "failed");
+  assert.equal(syncResult.status, "failed");
+  assert.equal(syncResult.revision, 2);
+  assert.equal(skillResult.status, "failed");
+  assert.equal(skillResult.slug, "missing-skill");
   assert.match(fileWrites.find((write) => write.name === "SOUL.md").content, /ONECLAW:RESPONSIBILITIES:START/);
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-degraded/memory/review.md"), "utf8"), "Checklist");
 });
@@ -250,7 +368,7 @@ test("employee template resolves builtin skills without sending them to ClawHub"
     },
   };
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.includes("/agent/commands?")) {
+    if (url.includes("/runtime/commands?")) {
       return jsonResponse({ commands: [{
         id: "cmd-builtin",
         type: "apply_template",
@@ -261,12 +379,12 @@ test("employee template resolves builtin skills without sending them to ClawHub"
         },
       }] });
     }
-    if (url.includes("/agent/skills/github")) {
+    if (url.includes("/runtime/skills/github")) {
       assert.equal(opts.method, "GET");
       return jsonResponse({ slug: "github", source: "builtin" });
     }
-    if (url.includes("/agent/commands/cmd-builtin/ack")) return jsonResponse({ acknowledged: true });
-    if (url.includes("/agent/event")) return jsonResponse({ accepted: true });
+    if (url.includes("/runtime/commands/cmd-builtin/ack")) return jsonResponse({ acknowledged: true });
+    if (url.includes("/runtime/events")) return jsonResponse({ accepted: true });
     throw new Error(`unexpected fetch: ${url}`);
   });
 
@@ -309,7 +427,7 @@ test("builtin skill install fails when runtime status does not confirm the skill
     },
   };
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.includes("/agent/commands?")) {
+    if (url.includes("/runtime/commands?")) {
       return jsonResponse({ commands: [{
         id: "cmd-builtin-missing",
         status: "leased",
@@ -317,8 +435,8 @@ test("builtin skill install fails when runtime status does not confirm the skill
         payload: { employee_id: "emp-missing", openclaw_agent_id: "oneclaw-emp-missing", skill_slug: "github", source: "clawhub" },
       }] });
     }
-    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
-    if (url.includes("/agent/commands/cmd-builtin-missing/ack")) {
+    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    if (url.includes("/runtime/commands/cmd-builtin-missing/ack")) {
       acknowledgement = JSON.parse(opts.body);
       return jsonResponse({ acknowledged: true });
     }
@@ -372,7 +490,7 @@ test("builtin skill install rejects runtime entries that are not usable", async 
         },
       };
       const restoreFetch = withFetch((url, opts = {}) => {
-        if (url.includes("/agent/commands?")) {
+        if (url.includes("/runtime/commands?")) {
           return jsonResponse({ commands: [{
             id: "cmd-builtin-unusable",
             status: "leased",
@@ -380,8 +498,8 @@ test("builtin skill install rejects runtime entries that are not usable", async 
             payload: { employee_id: "emp-unusable", openclaw_agent_id: "oneclaw-emp-unusable", skill_slug: "github" },
           }] });
         }
-        if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
-        if (url.includes("/agent/commands/cmd-builtin-unusable/ack")) {
+        if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+        if (url.includes("/runtime/commands/cmd-builtin-unusable/ack")) {
           acknowledgement = JSON.parse(opts.body);
           return jsonResponse({ acknowledged: true });
         }
@@ -435,7 +553,7 @@ test("builtin skill install waits for the agent allowlist hot reload", async () 
     },
   };
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.includes("/agent/commands?")) {
+    if (url.includes("/runtime/commands?")) {
       return jsonResponse({ commands: [{
         id: "cmd-builtin-hot-reload",
         status: "leased",
@@ -443,8 +561,8 @@ test("builtin skill install waits for the agent allowlist hot reload", async () 
         payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
       }] });
     }
-    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
-    if (url.includes("/agent/commands/cmd-builtin-hot-reload/ack")) {
+    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    if (url.includes("/runtime/commands/cmd-builtin-hot-reload/ack")) {
       acknowledgement = JSON.parse(opts.body);
       return jsonResponse({ acknowledged: true });
     }
@@ -490,13 +608,13 @@ test("employee template downloads custom skills instead of sending their slug to
     },
   };
   const restoreFetch = withFetch((url) => {
-    if (url.includes("/agent/commands?")) {
+    if (url.includes("/runtime/commands?")) {
       return jsonResponse({ commands: [{ id: "cmd-custom", type: "apply_template", payload: { employee_id: "emp-custom", skills: ["merge-upstream"] } }] });
     }
-    if (url.includes("/agent/skills/merge-upstream/archive")) return new Response(Buffer.from("zip-data"), { status: 200 });
-    if (url.includes("/agent/skills/merge-upstream")) return jsonResponse({ slug: "merge-upstream", source: "custom", version: "1.0.0" });
-    if (url.includes("/agent/commands/cmd-custom/ack")) return jsonResponse({ acknowledged: true });
-    if (url.includes("/agent/event")) return jsonResponse({ accepted: true });
+    if (url.includes("/runtime/skills/merge-upstream/archive")) return new Response(Buffer.from("zip-data"), { status: 200 });
+    if (url.includes("/runtime/skills/merge-upstream")) return jsonResponse({ slug: "merge-upstream", source: "custom", version: "1.0.0" });
+    if (url.includes("/runtime/commands/cmd-custom/ack")) return jsonResponse({ acknowledged: true });
+    if (url.includes("/runtime/events")) return jsonResponse({ accepted: true });
     throw new Error(`unexpected fetch: ${url}`);
   });
 
@@ -541,7 +659,7 @@ test("leased cron command reports a retryable failed acknowledgement when gatewa
     },
   };
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.includes("/agent/commands?")) {
+    if (url.includes("/runtime/commands?")) {
       return jsonResponse({ commands: [{
         id: "cmd-cron-failed",
         status: "leased",
@@ -549,8 +667,8 @@ test("leased cron command reports a retryable failed acknowledgement when gatewa
         payload: { task: { id: "oneclaw-task-failed", name: "Failed task", schedule: { kind: "cron", expr: "0 9 * * *" }, payload: { kind: "agentTurn", message: "run" } } },
       }] });
     }
-    if (url.includes("/agent/event")) return jsonResponse({ accepted: true });
-    if (url.includes("/agent/commands/cmd-cron-failed/ack")) {
+    if (url.includes("/runtime/events")) return jsonResponse({ accepted: true });
+    if (url.includes("/runtime/commands/cmd-cron-failed/ack")) {
       acknowledgement = JSON.parse(opts.body);
       return jsonResponse({ acknowledged: true });
     }
@@ -593,8 +711,8 @@ test("command polling applies employee template commands without waiting for hea
   };
   const restoreFetch = withFetch((url, opts = {}) => {
     assert.equal(opts.method, "GET");
-    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
-    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
+    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/commands?limit=10");
     return jsonResponse({
       instance_id: "runtime-1",
       commands: [{
@@ -638,8 +756,8 @@ test("leased command is acknowledged only after successful execution", async () 
   const workspaceDir = makeWorkspace();
   let acknowledgements = 0;
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{ id: "cmd-lease", type: "restart", status: "leased" }] });
-    if (url.includes("/agent/commands/cmd-lease/ack")) {
+    if (url.includes("/runtime/commands?")) return jsonResponse({ commands: [{ id: "cmd-lease", type: "restart", status: "leased" }] });
+    if (url.includes("/runtime/commands/cmd-lease/ack")) {
       acknowledgements += 1;
       assert.deepEqual(JSON.parse(opts.body), { status: "succeeded", retryable: false });
       return jsonResponse({ acknowledged: true });
@@ -680,8 +798,8 @@ test("command polling installs and removes employee skills", async () => {
   };
   const restoreFetch = withFetch((url, opts = {}) => {
     assert.equal(opts.method, "GET");
-    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
-    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
+    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/commands?limit=10");
     return jsonResponse({
       commands: [
         { id: "cmd-install", type: "install_skill", payload: { employee_id: "emp-skill", openclaw_agent_id: "oneclaw-emp-skill", skill_slug: "github", source: "clawhub" } },
@@ -732,11 +850,11 @@ test("employee skill command targets persisted main mapping without creating an 
   const runCalls = [];
   const rpcCalls = [];
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{
+    if (url.includes("/runtime/commands?")) return jsonResponse({ commands: [{
       id: "cmd-main", type: "install_skill",
       payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
     }] });
-    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
+    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
     throw new Error(`unexpected fetch: ${url} ${opts.method}`);
   });
   try {
@@ -761,11 +879,11 @@ test("missing employee agent mapping fails without creating an agent", async () 
   let acknowledgement;
   let createCalls = 0;
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{
+    if (url.includes("/runtime/commands?")) return jsonResponse({ commands: [{
       id: "cmd-no-mapping", status: "leased", type: "install_skill",
       payload: { employee_id: "emp-no-mapping", skill_slug: "github" },
     }] });
-    if (url.includes("/agent/commands/cmd-no-mapping/ack")) {
+    if (url.includes("/runtime/commands/cmd-no-mapping/ack")) {
       acknowledgement = JSON.parse(opts.body);
       return jsonResponse({ acknowledged: true });
     }
@@ -792,11 +910,11 @@ test("builtin install stages the agent allowlist before eligibility check", asyn
   fs.writeFileSync(configPath, JSON.stringify({ agents: { list: [{ id: "main", skills: [] }] } }));
   let statusSawStagedSkill = false;
   const restoreFetch = withFetch((url) => {
-    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{
+    if (url.includes("/runtime/commands?")) return jsonResponse({ commands: [{
       id: "cmd-stage", type: "install_skill",
       payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
     }] });
-    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
     throw new Error(`unexpected fetch: ${url}`);
   });
   try {
@@ -826,11 +944,11 @@ test("unavailable builtin rolls back the staged allowlist", async () => {
   fs.writeFileSync(configPath, JSON.stringify({ agents: { list: [{ id: "main", skills: ["calendar"] }] } }));
   let statusSawStagedSkill = false;
   const restoreFetch = withFetch((url) => {
-    if (url.includes("/agent/commands?")) return jsonResponse({ commands: [{
+    if (url.includes("/runtime/commands?")) return jsonResponse({ commands: [{
       id: "cmd-rollback", type: "install_skill",
       payload: { employee_id: "emp-main", openclaw_agent_id: "main", skill_slug: "github" },
     }] });
-    if (url.includes("/agent/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
+    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "builtin" });
     throw new Error(`unexpected fetch: ${url}`);
   });
   try {
@@ -859,7 +977,7 @@ test("command polling restarts gateway and reports runtime logs", async () => {
   const eventBodies = [];
   let restartCalls = 0;
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/commands?limit=10") {
       return jsonResponse({
         commands: [
           { id: "cmd-restart", type: "restart", payload: { reason: "manual" } },
@@ -867,7 +985,7 @@ test("command polling restarts gateway and reports runtime logs", async () => {
         ],
       });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/event") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
       eventBodies.push(JSON.parse(opts.body));
       return jsonResponse({ accepted: true });
     }
@@ -918,7 +1036,7 @@ test("command polling syncs OneClaw cron tasks through OpenClaw native cron RPC"
   };
   let pollCount = 0;
   const restoreFetch = withFetch((url) => {
-    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/commands?limit=10");
     pollCount += 1;
     if (pollCount === 1) {
       return jsonResponse({
@@ -990,7 +1108,7 @@ test("command polling applies regular channel config updates", async () => {
   let restartCalls = 0;
   fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({ channels: {}, plugins: { entries: {} } }, null, 2));
   const restoreFetch = withFetch((url) => {
-    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10");
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/commands?limit=10");
     return jsonResponse({
       commands: [{
         id: "cmd-channel",
@@ -1065,7 +1183,7 @@ test("command polling approves channel access through pairing store without repa
   process.env.OPENCLAW_CONVERSATION_RUNTIME_MODULE = sdkPath;
   globalThis.__pairingApprovals = [];
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/commands?limit=10") {
       return jsonResponse({
         commands: [{
           id: "cmd-approve-access",
@@ -1123,7 +1241,7 @@ test("command polling syncs pending channel access requests back to Go API", asy
   globalThis.__pairingLists = [];
   const reports = [];
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/commands?instance_id=runtime-1&limit=10") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/commands?limit=10") {
       return jsonResponse({
         commands: [{
           id: "cmd-sync-access",
@@ -1136,8 +1254,8 @@ test("command polling syncs pending channel access requests back to Go API", asy
         }],
       });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/access-requests") {
-      reports.push(JSON.parse(opts.body));
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
+      reports.push(JSON.parse(opts.body).data);
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch ${url}`);
@@ -1171,17 +1289,24 @@ test("command polling syncs pending channel access requests back to Go API", asy
 test("fetchPersonality reads Go API snake_case response and writes workspace files", async () => {
   const workspaceDir = makeWorkspace();
   const restoreFetch = withFetch((url, opts) => {
-    assert.equal(url, "https://oneclaw.example.com/api/v1/agent/personality?instance_id=runtime-1");
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/personality");
     return jsonResponse({
       instance_id: "runtime-1",
-      personality: {
-        bot_name: "程序员助理",
+      workspace: {
+        id: "workspace-1",
+        name: "测试工作区",
+      },
+      employees: [{
+        id: "employee-main",
+        kind: "main",
+        name: "程序员助理",
+        openclaw_agent_id: "main",
         system_prompt: "Use Go API contract.",
-      },
-      template: {
-        memory_files: [{ path: "memory/go.md", content: "snake_case" }],
-        suggested_model: "anthropic/claude-sonnet-4",
-      },
+        template_revision: 1,
+        status: "active",
+        skills: [],
+        cron_tasks: [],
+      }],
     });
   });
 
@@ -1197,14 +1322,13 @@ test("fetchPersonality reads Go API snake_case response and writes workspace fil
     const { personality, template } = await integration.fetchPersonality();
     assert.equal(personality.botName, "程序员助理");
     assert.equal(personality.systemPrompt, "Use Go API contract.");
-    assert.equal(template.suggestedModel, "anthropic/claude-sonnet-4");
+    assert.equal(template.templateRevision, undefined);
     await integration.applyPersonality(personality, template);
   } finally {
     restoreFetch();
   }
 
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/SOUL.md"), "utf8"), "Use Go API contract.");
-  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/go.md"), "utf8"), "snake_case");
 });
 
 test("channel bind command stops polling after session expires", async () => {
@@ -1214,7 +1338,7 @@ test("channel bind command stops polling after session expires", async () => {
   let waitCalls = 0;
   let stateReports = 0;
   const restoreFetch = withFetch((url, opts) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       heartbeatCalls += 1;
       return jsonResponse({
         instance_id: "runtime-1",
@@ -1244,7 +1368,7 @@ test("channel bind command stops polling after session expires", async () => {
       waitCalls += 1;
       return jsonResponse({ ok: true, connected: false, qrDataUrl: `qr-wait-${waitCalls}` });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
       stateReports += 1;
       return jsonResponse({ ok: true });
     }
@@ -1275,12 +1399,98 @@ test("channel bind command stops polling after session expires", async () => {
   assert.ok(stateReports >= 1, "should report at least one qr state");
 });
 
+test("whatsapp bind retries start after the gateway reports preparing", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  let startCalls = 0;
+  let waitCalls = 0;
+  const channelStates = [];
+  let integration;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [{
+          id: "cmd-bind-whatsapp-preparing",
+          type: "update_config",
+          payload: {
+            action: "bind_channel",
+            employee_id: "emp-1",
+            channel: "whatsapp",
+            state: {
+              binding: {
+                session_id: "bind-1",
+                expires_at: new Date(startAt + 1_000).toISOString(),
+              },
+            },
+          },
+        }],
+      });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/start") {
+      startCalls += 1;
+      if (startCalls === 1) {
+        return jsonResponse({
+          ok: true,
+          status: "starting",
+          preparing: true,
+          connected: false,
+          qrDataUrl: null,
+        }, 202);
+      }
+      return jsonResponse({
+        ok: true,
+        connected: false,
+        qrDataUrl: "data:image/png;base64,whatsapp-qr",
+      });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/wait") {
+      waitCalls += 1;
+      return jsonResponse({
+        ok: true,
+        connected: false,
+        qrDataUrl: "data:image/png;base64,whatsapp-qr",
+      });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
+      channelStates.push(JSON.parse(opts.body).data);
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 45));
+  } finally {
+    integration?.stop();
+    restoreFetch();
+  }
+
+  assert.equal(startCalls, 2);
+  assert.ok(waitCalls >= 1);
+  assert.ok(channelStates.some((state) => state.qr_url === "data:image/png;base64,whatsapp-qr"));
+});
+
 test("channel bind command uses sidecar repair target", async () => {
   const workspaceDir = makeWorkspace();
   const startAt = Date.now();
   let repairCalls = 0;
   const restoreFetch = withFetch((url, opts) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       return jsonResponse({
         instance_id: "runtime-1",
         status: "running",
@@ -1307,7 +1517,7 @@ test("channel bind command uses sidecar repair target", async () => {
       repairCalls += 1;
       return jsonResponse({ ok: true, connected: false, qrDataUrl: "qr-start" });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
       return jsonResponse({ ok: true });
     }
     assert.notEqual(url, "http://gateway.local/repair/whatsapp-login/start");
@@ -1347,7 +1557,7 @@ test("wechat bind command enables openclaw-weixin config before starting login",
   const bindingExpiresAt = new Date(startAt + 1_000).toISOString();
   const channelStates = [];
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       return jsonResponse({
         instance_id: "runtime-1",
         status: "running",
@@ -1395,8 +1605,11 @@ test("wechat bind command enables openclaw-weixin config before starting login",
         qrExpiresAt: "2026-07-09T11:20:00.000Z",
       });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
-      channelStates.push(JSON.parse(opts.body));
+    if (url === "http://gateway.local/repair/restart") {
+      return jsonResponse({ ok: true, pending: true });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
+      channelStates.push(JSON.parse(opts.body).data);
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -1435,7 +1648,7 @@ test("wechat bind command binds the real plugin account id to the employee agent
   const repairBodies = [];
   const restartCalls = [];
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       return jsonResponse({
         instance_id: "runtime-1",
         status: "running",
@@ -1475,7 +1688,7 @@ test("wechat bind command binds the real plugin account id to the employee agent
       restartCalls.push(true);
       return jsonResponse({ ok: true, pending: true });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -1517,7 +1730,7 @@ test("refreshed WeChat QR is reported through the original binding session", asy
   let statusCalls = 0;
   let integration;
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       return jsonResponse({
         instance_id: "runtime-1",
         status: "running",
@@ -1553,8 +1766,8 @@ test("refreshed WeChat QR is reported through the original binding session", asy
     if (url === "http://gateway-refresh.local/repair/bind-channel") {
       return jsonResponse({ ok: true });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
-      channelStates.push(JSON.parse(opts.body));
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
+      channelStates.push(JSON.parse(opts.body).data);
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -1593,7 +1806,7 @@ test("cancel bind command stops active channel polling", async () => {
   let heartbeatCalls = 0;
   let waitCalls = 0;
   const restoreFetch = withFetch((url) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       heartbeatCalls += 1;
       const command = heartbeatCalls === 1
         ? {
@@ -1640,7 +1853,7 @@ test("cancel bind command stops active channel polling", async () => {
       waitCalls += 1;
       return jsonResponse({ ok: true, connected: false, qrDataUrl: `qr-wait-${waitCalls}` });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -1681,7 +1894,7 @@ test("late WhatsApp wait result is ignored after binding cancellation", async ()
   const lateWait = new Promise((resolve) => { resolveLateWait = resolve; });
   let integration;
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       heartbeatCalls += 1;
       const action = heartbeatCalls === 1 ? "bind_channel" : "cancel_bind_channel";
       return jsonResponse({
@@ -1712,8 +1925,8 @@ test("late WhatsApp wait result is ignored after binding cancellation", async ()
       markWaitStarted();
       return lateWait;
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
-      channelStates.push(JSON.parse(opts.body));
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
+      channelStates.push(JSON.parse(opts.body).data);
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -1751,7 +1964,7 @@ test("cancel wechat bind command stops wrapper login process", async () => {
   let heartbeatCalls = 0;
   let stopCalls = 0;
   const restoreFetch = withFetch((url) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       heartbeatCalls += 1;
       const command = heartbeatCalls === 1
         ? {
@@ -1801,7 +2014,7 @@ test("cancel wechat bind command stops wrapper login process", async () => {
       stopCalls += 1;
       return jsonResponse({ ok: true, status: "idle" });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -1834,7 +2047,7 @@ test("wechat bind command reports plugin login failures instead of keeping stale
   const startAt = Date.now();
   const channelStates = [];
   const restoreFetch = withFetch((url, opts) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       return jsonResponse({
         instance_id: "runtime-1",
         status: "running",
@@ -1865,8 +2078,8 @@ test("wechat bind command reports plugin login failures instead of keeping stale
         message: "temporary upstream network error",
       });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
-      channelStates.push(JSON.parse(opts.body));
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
+      channelStates.push(JSON.parse(opts.body).data);
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -1901,7 +2114,7 @@ test("unbind channel command removes runtime binding and restarts gateway", asyn
   let unbindCalls = 0;
   let restartCalls = 0;
   const restoreFetch = withFetch((url, opts) => {
-    if (url === "https://oneclaw.example.com/api/v1/agent/heartbeat") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
       return jsonResponse({
         instance_id: "runtime-1",
         status: "running",
@@ -1932,7 +2145,7 @@ test("unbind channel command removes runtime binding and restarts gateway", asyn
       restartCalls += 1;
       return jsonResponse({ ok: true, pending: true });
     }
-    if (url === "https://oneclaw.example.com/api/v1/agent/channels/state") {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
       return jsonResponse({ ok: true });
     }
     throw new Error(`unexpected fetch: ${url}`);

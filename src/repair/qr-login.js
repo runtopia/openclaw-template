@@ -198,7 +198,14 @@ export function mountQrLogin(router, deps) {
   const WHATSAPP_GATEWAY_WARMUP_GRACE_MS = 1_500;
 
   function sendWhatsAppLoginPreparing(res, message = "WhatsApp gateway is starting. Retrying shortly.") {
-    return res.status(202).json({ ok: true, qrDataUrl: null, connected: false, message });
+    return res.status(202).json({
+      ok: true,
+      status: "starting",
+      preparing: true,
+      qrDataUrl: null,
+      connected: false,
+      message,
+    });
   }
 
   function startGatewayInBackground() {

@@ -15,6 +15,16 @@ export function createRepairRouter(deps) {
 }
 
 function mountCommandOps(router, deps) {
+  router.get("/personality", (_req, res) => {
+    const employees = deps?.oneclawIntegration?.getCachedEmployees?.() || [];
+    const main = employees.find((employee) => employee?.kind === "main") || employees[0] || null;
+    res.json({
+      ok: true,
+      personality: main,
+      employees,
+    });
+  });
+
   router.post("/commands/poll-now", async (_req, res) => {
     const pollCommands = deps?.oneclawIntegration?.pollCommands;
     if (typeof pollCommands !== "function") {

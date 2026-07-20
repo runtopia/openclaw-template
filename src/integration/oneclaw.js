@@ -87,7 +87,7 @@ export function createOneclawIntegration({
   getGatewayLogs,
   imageVersion = process.env.IMAGE_VERSION || "dev",
   openclawVersion = process.env.OPENCLAW_VERSION || "unknown",
-  runtimeContract = process.env.ONECLAW_RUNTIME_CONTRACT || "1",
+  runtimeContract = process.env.ONECLAW_RUNTIME_CONTRACT || "2",
   channelBindingPollMs = 1500,
   skillStatusRetryMs = 250,
   skillStatusAttempts = 12,
@@ -103,8 +103,10 @@ export function createOneclawIntegration({
       sendEvent() {},
       trackMessage() {},
       getCachedPersonality() { return null; },
+      getCachedEmployees() { return []; },
       fetchPersonality() { return Promise.resolve({ personality: null, template: null }); },
       applyPersonality() { return Promise.resolve(); },
+      reconcileAllEmployees() { return Promise.resolve([]); },
       applyTemplateFromEnv() { return Promise.resolve(false); },
     };
   }
@@ -112,6 +114,7 @@ export function createOneclawIntegration({
   let heartbeatInterval = null;
   let commandPollInterval = null;
   let cachedPersonality = null;
+  let cachedEmployees = [];
   let reportedOpenClawVersion = String(openclawVersion || "unknown");
   const usageStats = {
     messages: 0,
@@ -209,18 +212,48 @@ export function createOneclawIntegration({
       if (res.ok) {
         const data = await res.json();
         const employees = Array.isArray(data.employees) ? data.employees : [];
+        cachedEmployees = employees;
         const employee = employees.find((item) => item?.kind === "main") || employees[0] || null;
         cachedPersonality = runtimeEmployeePersonality(employee);
         console.log(`[personality] fetched: ${cachedPersonality?.botName || "default"}`);
         return {
           personality: cachedPersonality,
           template: normalizeTemplate(employee),
+          employees,
+          contractVersion: Number(data.contract_version || 1),
         };
       }
     } catch (err) {
       console.error(`[personality] fetch error: ${err.message}`);
     }
-    return { personality: null, template: null };
+    return { personality: null, template: null, employees: [], contractVersion: 1 };
+  }
+
+  async function reconcileAllEmployees(employees = null) {
+    const desiredEmployees = Array.isArray(employees) ? employees : (await fetchPersonality()).employees;
+    const results = [];
+    for (const employee of desiredEmployees) {
+      if (!employee?.id || employee.status === "deleted") continue;
+      const payload = runtimeEmployeeTemplatePayload(employee);
+      try {
+        const result = await applyEmployeeAgentTemplate(payload, employee.id);
+        if (result?.employee_id) await reportEmployeeTemplateSync(result);
+        results.push(result);
+      } catch (err) {
+        const error = boundedComponentError(err);
+        const result = {
+          employee_id: employee.id,
+          template_version: payload.template_version,
+          spec_hash: payload.spec_hash,
+          overall_status: "failed",
+          components: { reconcile: { status: "failed", error } },
+        };
+        await reportEmployeeTemplateSync(result);
+        results.push(result);
+        console.error(`[personality] employee ${employee.id} reconciliation failed: ${error}`);
+      }
+    }
+    return results;
   }
 
   async function applyPersonality(personality, template = null) {
@@ -359,10 +392,19 @@ export function createOneclawIntegration({
 
   async function reportEmployeeTemplateSync(result) {
     const status = result.overall_status === "active" ? "active" : "failed";
+    const errors = Object.entries(result.components || {})
+      .flatMap(([name, component]) => Array.isArray(component)
+        ? component.filter((item) => item?.status === "failed").map((item) => `${name}:${item.error || "failed"}`)
+        : component?.status === "failed" ? [`${name}:${component.error || "failed"}`] : [])
+      .join("; ")
+      .slice(0, 1000);
     await sendEvent("template_sync", {
       employee_id: result.employee_id,
       revision: result.template_version,
+      desired_revision: result.template_version,
+      spec_hash: result.spec_hash,
       status,
+      ...(errors ? { error: errors } : {}),
     });
   }
 
@@ -401,6 +443,82 @@ export function createOneclawIntegration({
         console.log(`[template] applied ${file.path}`);
       }
     }
+  }
+
+  function managedEmployeeStatePath(agentId) {
+    return safeAgentFilePath(agentWorkspace(workspaceDir, agentId), ".oneclaw-managed.json");
+  }
+
+  function loadManagedEmployeeState(agentId) {
+    try {
+      return JSON.parse(fs.readFileSync(managedEmployeeStatePath(agentId), "utf8"));
+    } catch {
+      return {};
+    }
+  }
+
+  function atomicWriteFile(filePath, content) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const temporary = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      fs.writeFileSync(temporary, content, "utf8");
+      fs.renameSync(temporary, filePath);
+    } finally {
+      if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
+    }
+  }
+
+  function saveManagedEmployeeState(agentId, state) {
+    atomicWriteFile(managedEmployeeStatePath(agentId), `${JSON.stringify(state, null, 2)}\n`);
+  }
+
+  async function syncEmployeeIdentity(payload, agentId) {
+    const name = String(payload.bot_name || agentId).trim() || agentId;
+    const model = String(payload.model || "").trim();
+    const avatar = String(payload.avatar || "").trim();
+    await callGatewayWithReconnectRetry("agents.update", {
+      agentId,
+      name,
+      ...(model ? { model } : {}),
+      ...(avatar ? { avatar } : {}),
+    });
+    const safeLine = (value) => String(value || "").replace(/[\r\n]+/g, " ").trim();
+    const identity = [
+      "# IDENTITY.md - Agent Identity",
+      "",
+      `- Name: ${safeLine(name)}`,
+      ...(avatar ? [`- Avatar: ${safeLine(avatar)}`] : []),
+      "",
+    ].join("\n");
+    await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "IDENTITY.md", content: identity });
+  }
+
+  async function reconcileEmployeeMemory(agentId, memoryFiles) {
+    const workspace = agentWorkspace(workspaceDir, agentId);
+    const previous = loadManagedEmployeeState(agentId);
+    const desiredPaths = [];
+    const failures = [];
+    for (const file of Array.isArray(memoryFiles) ? memoryFiles : []) {
+      const relativePath = String(file?.path || "").trim();
+      if (!relativePath || typeof file.content !== "string") continue;
+      try {
+        const filePath = safeAgentFilePath(workspace, relativePath);
+        atomicWriteFile(filePath, file.content);
+        desiredPaths.push(relativePath);
+      } catch (err) {
+        failures.push(boundedComponentError(err));
+      }
+    }
+    const desiredSet = new Set(desiredPaths);
+    for (const relativePath of Array.isArray(previous.memory_files) ? previous.memory_files : []) {
+      if (desiredSet.has(relativePath)) continue;
+      try {
+        fs.rmSync(safeAgentFilePath(workspace, relativePath), { force: true });
+      } catch (err) {
+        failures.push(boundedComponentError(err));
+      }
+    }
+    return { previous, desiredPaths, failures };
   }
 
   function normalizedSkillSlugs(values) {
@@ -488,7 +606,7 @@ export function createOneclawIntegration({
       await runCronTask(payload);
       return;
     }
-    if (command?.type !== "apply_template") return;
+    if (command?.type !== "apply_template") throw new Error(`unsupported runtime command: ${command?.type || "unknown"}`);
     const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     const templateId = String(payload.template_id || payload.templateId || "").trim();
     const hasTemplateContent = Boolean(
@@ -587,8 +705,10 @@ export function createOneclawIntegration({
     const result = {
       employee_id: employeeId,
       template_version: Number(payload.template_version || payload.templateVersion || 1),
+      spec_hash: String(payload.spec_hash || ""),
       overall_status: "active",
       components: {
+        identity: { status: "skipped" },
         soul: { status: "skipped" },
         responsibilities: { status: "skipped" },
         memory: { status: "skipped" },
@@ -597,42 +717,31 @@ export function createOneclawIntegration({
       },
     };
 
+    try {
+      await syncEmployeeIdentity(payload, agentId);
+      result.components.identity = { status: "active" };
+    } catch (err) {
+      result.components.identity = { status: "failed", error: boundedComponentError(err) };
+    }
+
     const soulMd = String(payload.soul_md || payload.soulMd || "");
     const responsibilities = Array.isArray(payload.responsibilities) ? payload.responsibilities : [];
-    if (soulMd || responsibilities.length > 0) {
-      try {
-        const content = renderManagedResponsibilities(soulMd, responsibilities);
-        await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "SOUL.md", content });
-        if (soulMd) result.components.soul = { status: "active" };
-        if (responsibilities.length > 0) result.components.responsibilities = { status: "active" };
-      } catch (err) {
-        const error = boundedComponentError(err);
-        if (soulMd) result.components.soul = { status: "failed", error };
-        if (responsibilities.length > 0) result.components.responsibilities = { status: "failed", error };
-      }
+    try {
+      const content = renderManagedResponsibilities(soulMd, responsibilities);
+      await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "SOUL.md", content });
+      result.components.soul = { status: "active" };
+      if (responsibilities.length > 0) result.components.responsibilities = { status: "active" };
+    } catch (err) {
+      const error = boundedComponentError(err);
+      result.components.soul = { status: "failed", error };
+      if (responsibilities.length > 0) result.components.responsibilities = { status: "failed", error };
     }
 
     const memoryFiles = payload.memory_files || payload.memoryFiles || [];
-    if (Array.isArray(memoryFiles) && memoryFiles.length > 0) {
-      const failures = [];
-      for (const file of memoryFiles) {
-        if (!file?.path || typeof file.content !== "string") continue;
-        try {
-          if (file.path === "MEMORY.md") {
-            await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "MEMORY.md", content: file.content });
-            continue;
-          }
-          const filePath = safeAgentFilePath(agentWorkspace(workspaceDir, agentId), file.path);
-          fs.mkdirSync(path.dirname(filePath), { recursive: true });
-          fs.writeFileSync(filePath, file.content, "utf8");
-        } catch (err) {
-          failures.push(boundedComponentError(err));
-        }
-      }
-      result.components.memory = failures.length > 0
-        ? { status: "failed", error: failures.join("; ").slice(0, 500) }
-        : { status: "active" };
-    }
+    const memoryResult = await reconcileEmployeeMemory(agentId, memoryFiles);
+    result.components.memory = memoryResult.failures.length > 0
+      ? { status: "failed", error: memoryResult.failures.join("; ").slice(0, 500) }
+      : { status: "active" };
 
     const requestedSkills = normalizeTemplateSkillRequirements(payload);
     for (const requirement of requestedSkills) {
@@ -682,6 +791,16 @@ export function createOneclawIntegration({
     }
 
     const cronTasks = Array.isArray(payload.cron_tasks) ? payload.cron_tasks : [];
+    const desiredCronIds = cronTasks.map((task) => String(task?.id || task?.task_id || "").trim()).filter(Boolean);
+    const desiredCronSet = new Set(desiredCronIds);
+    for (const staleTaskId of Array.isArray(memoryResult.previous.cron_task_ids) ? memoryResult.previous.cron_task_ids : []) {
+      if (desiredCronSet.has(staleTaskId)) continue;
+      try {
+        await deleteCronTask({ task_id: staleTaskId });
+      } catch (err) {
+        result.components.cron_tasks.push({ task_id: staleTaskId, status: "failed", error: boundedComponentError(err) });
+      }
+    }
     for (const cronTask of cronTasks) {
       const taskId = String(cronTask?.id || cronTask?.task_id || "").trim();
       if (!taskId) continue;
@@ -710,6 +829,7 @@ export function createOneclawIntegration({
     }
 
     const componentResults = [
+      result.components.identity,
       result.components.soul,
       result.components.responsibilities,
       result.components.memory,
@@ -719,6 +839,17 @@ export function createOneclawIntegration({
     if (componentResults.some((component) => component?.status === "failed" || component?.status === "needs_configuration")) {
       result.overall_status = "degraded";
     }
+    saveManagedEmployeeState(agentId, {
+      ...memoryResult.previous,
+      employee_id: employeeId,
+      desired_revision: result.template_version,
+      spec_hash: result.spec_hash,
+      language: String(payload.language || ""),
+      greeting: String(payload.greeting || ""),
+      memory_files: memoryResult.desiredPaths,
+      cron_task_ids: desiredCronIds,
+      updated_at: new Date().toISOString(),
+    });
     console.log(`[command] synced employee agent ${employeeId} -> ${agentId} (${result.overall_status})`);
     return result;
   }
@@ -732,17 +863,18 @@ export function createOneclawIntegration({
     const agents = listed?.agents || listed?.result?.agents || listed?.payload?.agents || [];
     const existing = agents.find((agent) => agent?.id === stableName || agent?.agentId === stableName || agent?.name === stableName);
     if (existing) return existing.id || existing.agentId || stableName;
+    const model = String(payload.model || payload.suggested_model || "clawrouters/auto").trim() || "clawrouters/auto";
     const createFrame = await callGateway("agents.create", {
       name: stableName,
       workspace,
-      model: "clawrouters/auto",
-      emoji: payload.avatar || "",
-      avatar: "",
-    }, { tolerateError: true });
+      model,
+      emoji: String(payload.emoji || ""),
+      avatar: String(payload.avatar || ""),
+    });
     if (createFrame?.agentId) return createFrame.agentId;
     if (createFrame?.result?.agentId) return createFrame.result.agentId;
     if (createFrame?.payload?.agentId) return createFrame.payload.agentId;
-    return stableName;
+    throw new Error(`agents.create did not return an agent id for ${stableName}`);
   }
 
   async function deleteEmployeeAgent(payload) {
@@ -1109,7 +1241,12 @@ export function createOneclawIntegration({
     return "";
   }
 
-  return { start, stop, sendHeartbeat, pollCommands, sendEvent, trackMessage, fetchPersonality, applyPersonality, applyTemplateFromEnv, getCachedPersonality: () => cachedPersonality };
+  return {
+    start, stop, sendHeartbeat, pollCommands, sendEvent, trackMessage,
+    fetchPersonality, applyPersonality, reconcileAllEmployees, applyTemplateFromEnv,
+    getCachedPersonality: () => cachedPersonality,
+    getCachedEmployees: () => cachedEmployees,
+  };
 
   async function applyUpdateConfigCommand(payload) {
     const action = payload?.action;
@@ -1623,14 +1760,22 @@ function runtimeEmployeePersonality(employee) {
 
 function runtimeEmployeeTemplatePayload(employee) {
   const skills = Array.isArray(employee?.skills) ? employee.skills : [];
+  const responsibilities = Array.isArray(employee?.responsibilities)
+    ? employee.responsibilities
+    : parseResponsibilities(employee?.role);
   return {
     employee_id: employee?.id,
     openclaw_agent_id: employee?.openclaw_agent_id || (employee?.kind === "main" ? "main" : ""),
-    template_version: Number(employee?.template_revision || 1),
+    template_version: Number(employee?.desired_revision || employee?.config_revision || employee?.template_revision || 1),
+    spec_hash: String(employee?.spec_hash || ""),
     bot_name: employee?.name,
     avatar: employee?.avatar_url || "",
+    language: employee?.language || employee?.personality?.language || "en",
+    greeting: employee?.greeting || "",
+    model: employee?.model || "",
     soul_md: employee?.system_prompt || "",
-    responsibilities: parseResponsibilities(employee?.role),
+    responsibilities,
+    memory_files: Array.isArray(employee?.memory_files) ? employee.memory_files : [],
     skill_requirements: skills.map((skill) => ({
       slug: skill.slug,
       source: skill.source,

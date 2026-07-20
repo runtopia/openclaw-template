@@ -160,13 +160,16 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
 
   assert.equal(fs.existsSync(path.join(workspaceDir, "SOUL.md")), false);
   assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.name, "oneclaw-emp-1");
-  assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.model, "clawrouters/auto");
+  assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.model, "clawrouters/code");
   assert.deepEqual(
     rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
-    ["SOUL.md"],
+    ["IDENTITY.md", "SOUL.md"],
   );
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-1/memory/dev.md"), "utf8"), "dev notes");
-  assert.equal(rpcCalls.some((call) => call.method === "agents.update"), false);
+  assert.deepEqual(
+    rpcCalls.find((call) => call.method === "agents.update").params,
+    { agentId: "oneclaw-emp-1", name: "程序员助理", avatar: "👨‍💻" },
+  );
   assert.deepEqual(runCalls[0].args, ["skills", "install", "github", "--agent", "oneclaw-emp-1"]);
 });
 
@@ -240,6 +243,7 @@ test("ids-only template command hydrates employee, memory, and cron from the new
       if (method === "agents.list") {
         return { ok: true, payload: { agents: [{ id: "oneclaw-employee-1" }] } };
       }
+      if (method === "agents.update") return { ok: true, payload: { ok: true } };
       if (method === "agents.files.set") return { ok: true, payload: { ok: true } };
       if (method === "cron.list") return { ok: true, payload: { jobs: [] } };
       if (method === "cron.add") return { ok: true, payload: { id: "native-cron-1" } };
@@ -319,7 +323,7 @@ test("ids-only template command hydrates employee, memory, and cron from the new
     restoreFetch();
   }
 
-  const soulWrite = rpcCalls.find((call) => call.method === "agents.files.set");
+  const soulWrite = rpcCalls.find((call) => call.method === "agents.files.set" && call.params.name === "SOUL.md");
   assert.match(soulWrite.params.content, /审查代码/);
   assert.match(soulWrite.params.content, /编写测试/);
   assert.equal(
@@ -333,6 +337,125 @@ test("ids-only template command hydrates employee, memory, and cron from the new
   assert.equal(cronEvent.data.openclaw_task_id, "native-cron-1");
   assert.equal(events.find((event) => event.event === "template_sync").data.revision, 3);
   assert.equal(acknowledged, true);
+});
+
+test("runtime contract v2 reconciles every employee and preserves greeting metadata", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({
+    agents: { list: [{ id: "main", skills: [] }, { id: "employee-2", skills: [] }] },
+  }));
+  const rpcCalls = [];
+  const events = [];
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method, params) => {
+      rpcCalls.push({ method, params });
+      if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "main" }, { id: "employee-2" }] } };
+      if (method === "agents.update" || method === "agents.files.set") return { ok: true, payload: { ok: true } };
+      throw new Error(`unexpected rpc ${method}`);
+    },
+  };
+  const employees = [{
+    id: "employee-main", openclaw_agent_id: "main", kind: "main", name: "主助理", language: "zh-CN",
+    greeting: "你好，我是主助理。", system_prompt: "主助理提示词", model: "clawrouters/auto",
+    desired_revision: 4, spec_hash: "a".repeat(64), memory_files: [{ path: "memory/main.md", content: "主记忆" }],
+    skills: [], cron_tasks: [], status: "provisioning",
+  }, {
+    id: "employee-2-id", openclaw_agent_id: "employee-2", kind: "hired", name: "研究助理", language: "en",
+    greeting: "Hello from the researcher.", system_prompt: "Research carefully.", model: "clawrouters/research",
+    desired_revision: 8, spec_hash: "b".repeat(64), memory_files: [{ path: "MEMORY.md", content: "research memory" }],
+    skills: [], cron_tasks: [], status: "active",
+  }];
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.endsWith("/runtime/personality")) return jsonResponse({ contract_version: 2, employees });
+    if (url.endsWith("/runtime/events")) {
+      events.push(JSON.parse(opts.body));
+      return jsonResponse({ accepted: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1", instanceId: "runtime-1", instanceSecret: "secret-1",
+      stateDir, workspaceDir, gatewayRpc, isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    const profile = await integration.fetchPersonality();
+    await integration.reconcileAllEmployees(profile.employees);
+    assert.equal(integration.getCachedEmployees()[1].greeting, "Hello from the researcher.");
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(rpcCalls.filter((call) => call.method === "agents.update").length, 2);
+  assert.equal(rpcCalls.find((call) => call.method === "agents.update" && call.params.agentId === "employee-2").params.model, "clawrouters/research");
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/main.md"), "utf8"), "主记忆");
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/employee-2/MEMORY.md"), "utf8"), "research memory");
+  const syncEvents = events.filter((event) => event.event === "template_sync");
+  assert.deepEqual(syncEvents.map((event) => event.data.spec_hash), ["a".repeat(64), "b".repeat(64)]);
+  assert.deepEqual(syncEvents.map((event) => event.data.desired_revision), [4, 8]);
+});
+
+test("employee reconciliation clears stale managed SOUL and memory files", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  const employeeWorkspace = path.join(workspaceDir, "agents", "employee-cleanup");
+  fs.mkdirSync(path.join(employeeWorkspace, "memory"), { recursive: true });
+  fs.writeFileSync(path.join(employeeWorkspace, "memory/old.md"), "old");
+  fs.writeFileSync(path.join(employeeWorkspace, ".oneclaw-managed.json"), JSON.stringify({ memory_files: ["memory/old.md"] }));
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({ agents: { list: [{ id: "employee-cleanup", skills: [] }] } }));
+  const rpcCalls = [];
+  const restoreFetch = withFetch((url) => {
+    if (url.endsWith("/runtime/events")) return jsonResponse({ accepted: true });
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1", instanceId: "runtime-1", instanceSecret: "secret-1",
+      stateDir, workspaceDir,
+      gatewayRpc: {
+        waitUntilConnected: async () => {},
+        rpcGateway: async (method, params) => {
+          rpcCalls.push({ method, params });
+          if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "employee-cleanup" }] } };
+          return { ok: true, payload: { ok: true } };
+        },
+      },
+      isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    await integration.reconcileAllEmployees([{
+      id: "cleanup-id", openclaw_agent_id: "employee-cleanup", kind: "hired", name: "Clean",
+      desired_revision: 2, spec_hash: "c".repeat(64), system_prompt: "", memory_files: [], skills: [], cron_tasks: [], status: "active",
+    }]);
+  } finally {
+    restoreFetch();
+  }
+  assert.equal(fs.existsSync(path.join(employeeWorkspace, "memory/old.md")), false);
+  assert.equal(rpcCalls.find((call) => call.method === "agents.files.set" && call.params.name === "SOUL.md").params.content, "");
+});
+
+test("unknown leased runtime commands are acknowledged as failed", async () => {
+  let acknowledgement;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.endsWith("/runtime/commands?limit=10")) return jsonResponse({ commands: [{ id: "future-1", status: "leased", type: "future_command" }] });
+    if (url.endsWith("/runtime/commands/future-1/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1", instanceId: "runtime-1", instanceSecret: "secret-1",
+      workspaceDir: makeWorkspace(), isGatewayReady: () => true, isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+  assert.equal(acknowledgement.status, "failed");
+  assert.match(acknowledgement.error, /unsupported runtime command/);
 });
 
 test("employee sync preserves content when an optional skill fails", async () => {
@@ -769,6 +892,7 @@ test("command polling applies employee template commands without waiting for hea
       rpcCalls.push({ method, params });
       if (method === "agents.list") return { ok: true, payload: { agents: [] } };
       if (method === "agents.create") return { ok: true, payload: { agentId: "oneclaw-emp-poll" } };
+      if (method === "agents.update") return { ok: true, payload: { ok: true } };
       if (method === "agents.files.set") return { ok: true, payload: { ok: true } };
       throw new Error(`unexpected rpc ${method}`);
     },
@@ -811,7 +935,7 @@ test("command polling applies employee template commands without waiting for hea
   assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.name, "oneclaw-emp-poll");
   assert.deepEqual(
     rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
-    ["SOUL.md"],
+    ["IDENTITY.md", "SOUL.md"],
   );
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-poll/memory/polled.md"), "utf8"), "poll notes");
 });

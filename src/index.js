@@ -56,7 +56,6 @@ const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
 const ONECLAW_API_URL      = process.env.ONECLAW_API_URL?.trim()      || "https://www.oneclaw.net/api/v1";
 const ONECLAW_INSTANCE_ID  = process.env.ONECLAW_INSTANCE_ID?.trim();
 const ONECLAW_INSTANCE_SECRET = process.env.ONECLAW_INSTANCE_SECRET?.trim();
-const ONECLAW_TEMPLATE_ID  = process.env.ONECLAW_TEMPLATE_ID?.trim()  || null;
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
 
@@ -392,11 +391,8 @@ const server = app.listen(PORT, () => {
         console.log("[sidecar] gateway ready");
         await oneclaw.sendHeartbeat();
         await ensureWorkspaceFiles();
-        if (ONECLAW_TEMPLATE_ID) await oneclaw.applyTemplateFromEnv(ONECLAW_TEMPLATE_ID);
         const runtimeProfile = await oneclaw.fetchPersonality();
-        if (runtimeProfile.personality || runtimeProfile.template) {
-          await oneclaw.applyPersonality(runtimeProfile.personality, runtimeProfile.template);
-        }
+        await oneclaw.reconcileAllEmployees(runtimeProfile.employees);
       })
       .catch((err) => console.error(`[sidecar] gateway failed to start: ${err.message}`));
   } else {

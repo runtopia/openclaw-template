@@ -170,6 +170,58 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
   assert.deepEqual(runCalls[0].args, ["skills", "install", "github", "--agent", "oneclaw-emp-1"]);
 });
 
+test("employee template retries the first file write after agent creation restarts the gateway", async () => {
+  const workspaceDir = makeWorkspace();
+  let fileWriteAttempts = 0;
+  let connectionWaits = 0;
+  const gatewayRpc = {
+    waitUntilConnected: async () => { connectionWaits += 1; },
+    rpcGateway: async (method) => {
+      if (method === "agents.list") return { ok: true, payload: { agents: [] } };
+      if (method === "agents.create") return { ok: true, payload: { agentId: "oneclaw-emp-restart" } };
+      if (method === "agents.files.set") {
+        fileWriteAttempts += 1;
+        if (fileWriteAttempts === 1) throw new Error("gateway WS closed");
+        return { ok: true, payload: { ok: true } };
+      }
+      throw new Error(`unexpected rpc ${method}`);
+    },
+  };
+  const restoreFetch = withFetch((url) => {
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/heartbeat");
+    return jsonResponse({
+      instance_id: "runtime-1",
+      status: "running",
+      commands: [{
+        id: "cmd-restart-race",
+        type: "apply_template",
+        payload: {
+          employee_id: "emp-restart",
+          soul_md: "You survive gateway restarts.",
+        },
+      }],
+    });
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayRpc,
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.sendHeartbeat();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.equal(fileWriteAttempts, 2);
+  assert.equal(connectionWaits, 2);
+});
+
 test("ids-only template command hydrates employee, memory, and cron from the new runtime contract", async () => {
   const stateDir = makeWorkspace();
   const workspaceDir = path.join(stateDir, "workspace");

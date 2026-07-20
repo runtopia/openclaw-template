@@ -602,7 +602,7 @@ export function createOneclawIntegration({
     if (soulMd || responsibilities.length > 0) {
       try {
         const content = renderManagedResponsibilities(soulMd, responsibilities);
-        await callGateway("agents.files.set", { agentId, name: "SOUL.md", content });
+        await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "SOUL.md", content });
         if (soulMd) result.components.soul = { status: "active" };
         if (responsibilities.length > 0) result.components.responsibilities = { status: "active" };
       } catch (err) {
@@ -619,7 +619,7 @@ export function createOneclawIntegration({
         if (!file?.path || typeof file.content !== "string") continue;
         try {
           if (file.path === "MEMORY.md") {
-            await callGateway("agents.files.set", { agentId, name: "MEMORY.md", content: file.content });
+            await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "MEMORY.md", content: file.content });
             continue;
           }
           const filePath = safeAgentFilePath(agentWorkspace(workspaceDir, agentId), file.path);
@@ -1043,6 +1043,20 @@ export function createOneclawIntegration({
       throw new Error(frame.error?.message || frame.error?.code || `${method} failed`);
     }
     return frame?.payload || frame?.result || frame;
+  }
+
+  async function callGatewayWithReconnectRetry(method, params = {}, opts = {}) {
+    try {
+      return await callGateway(method, params, opts);
+    } catch (err) {
+      const message = String(err?.message || err || "");
+      if (!/gateway ws closed|not connected|disconnected|econnrefused|gateway starting|rpc timeout/i.test(message)) {
+        throw err;
+      }
+      console.warn(`[gateway-rpc] ${method} interrupted; waiting for reconnect before retry`);
+      await gatewayRpc.waitUntilConnected?.(30_000);
+      return callGateway(method, params, opts);
+    }
   }
 
   function cronMapPath() {

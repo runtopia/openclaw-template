@@ -37,6 +37,9 @@ test("normalizes OneClaw Go API base URL to /api/v1", () => {
   assert.equal(normalizeOneclawApiUrl("https://oneclaw.example.com"), "https://oneclaw.example.com/api/v1");
   assert.equal(normalizeOneclawApiUrl("https://oneclaw.example.com/api"), "https://oneclaw.example.com/api/v1");
   assert.equal(normalizeOneclawApiUrl("https://oneclaw.example.com/api/v1/"), "https://oneclaw.example.com/api/v1");
+  assert.equal(normalizeOneclawApiUrl("https://oneclaw.example.com/api/v2/"), "https://oneclaw.example.com/api/v2");
+  assert.equal(normalizeOneclawApiUrl("https://oneclaw.example.com", "2"), "https://oneclaw.example.com/api/v2");
+  assert.throws(() => normalizeOneclawApiUrl("https://oneclaw.example.com", "latest"), /invalid OneClaw API version/);
 });
 
 test("heartbeat sends Go API snake_case payload and applies queued template command", async () => {
@@ -45,10 +48,16 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
     assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/heartbeat");
     assert.equal(opts.headers.Authorization, "Bearer secret-1");
     assert.equal(opts.headers["X-OneClaw-Instance-ID"], "runtime-1");
+    assert.equal(opts.headers["X-OneClaw-Runtime-Image"], "3.2.0");
+    assert.equal(opts.headers["X-OneClaw-OpenClaw-Version"], "2026.6.10");
+    assert.equal(opts.headers["X-OneClaw-Runtime-Contract"], "1");
     const body = JSON.parse(opts.body);
     assert.equal(body.status, "healthy");
     assert.equal(body.status_reason, "gateway_ready");
     assert.equal(body.agent.gateway_ready, true);
+    assert.equal(body.agent.runtime_image_version, "3.2.0");
+    assert.equal(body.agent.openclaw_version, "2026.6.10");
+    assert.equal(body.agent.runtime_contract_version, "1");
     assert.equal(body.agent.platforms.telegram, true);
     return jsonResponse({
       instance_id: "runtime-1",
@@ -72,6 +81,9 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
       apiUrl: "https://oneclaw.example.com/api",
       instanceId: "runtime-1",
       instanceSecret: "secret-1",
+      imageVersion: "3.2.0",
+      openclawVersion: "2026.6.10",
+      runtimeContract: "1",
       workspaceDir,
       isGatewayReady: () => true,
       isGatewayStarting: () => false,

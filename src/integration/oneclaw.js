@@ -56,12 +56,16 @@ function resolveExtractedSkillRoot(extractRoot) {
   return roots[0];
 }
 
-export function normalizeOneclawApiUrl(raw) {
+export function normalizeOneclawApiUrl(raw, apiVersion = process.env.ONECLAW_API_VERSION || "v1") {
   const base = String(raw || "").trim().replace(/\/+$/, "");
   if (!base) return "";
-  if (base.endsWith("/api/v1")) return base;
-  if (base.endsWith("/api")) return `${base}/v1`;
-  return `${base}/api/v1`;
+  if (/\/api\/v[1-9]\d*$/.test(base)) return base;
+  const normalizedVersion = String(apiVersion || "v1").trim().replace(/^v?/, "v");
+  if (!/^v[1-9]\d*$/.test(normalizedVersion)) {
+    throw new Error(`invalid OneClaw API version: ${apiVersion}`);
+  }
+  if (base.endsWith("/api")) return `${base}/${normalizedVersion}`;
+  return `${base}/api/${normalizedVersion}`;
 }
 
 export function createOneclawIntegration({
@@ -81,6 +85,9 @@ export function createOneclawIntegration({
   OPENCLAW_NODE,
   restartGateway,
   getGatewayLogs,
+  imageVersion = process.env.IMAGE_VERSION || "dev",
+  openclawVersion = process.env.OPENCLAW_VERSION || "unknown",
+  runtimeContract = process.env.ONECLAW_RUNTIME_CONTRACT || "1",
   channelBindingPollMs = 1500,
   skillStatusRetryMs = 250,
   skillStatusAttempts = 12,
@@ -105,6 +112,7 @@ export function createOneclawIntegration({
   let heartbeatInterval = null;
   let commandPollInterval = null;
   let cachedPersonality = null;
+  let reportedOpenClawVersion = String(openclawVersion || "unknown");
   const usageStats = {
     messages: 0,
     tokens: 0,
@@ -124,6 +132,9 @@ export function createOneclawIntegration({
       headers: {
         "Content-Type": "application/json",
         "X-OneClaw-Instance-ID": instanceId,
+        "X-OneClaw-Runtime-Image": String(imageVersion),
+        "X-OneClaw-OpenClaw-Version": reportedOpenClawVersion,
+        "X-OneClaw-Runtime-Contract": String(runtimeContract),
         Authorization: `Bearer ${instanceSecret}`,
         ...(opts.headers || {}),
       },
@@ -288,6 +299,9 @@ export function createOneclawIntegration({
             timestamp: new Date().toISOString(),
             uptime_seconds: process.uptime(),
             gateway_ready: gatewayReady,
+            runtime_image_version: String(imageVersion),
+            openclaw_version: reportedOpenClawVersion,
+            runtime_contract_version: String(runtimeContract),
             platforms,
           },
         }),
@@ -352,10 +366,15 @@ export function createOneclawIntegration({
     });
   }
 
-  function start(openclawVersion) {
+  function start(detectedOpenClawVersion) {
+    if (detectedOpenClawVersion) reportedOpenClawVersion = String(detectedOpenClawVersion);
     setTimeout(async () => {
       sendHeartbeat();
-      sendEvent("instance_started", { version: openclawVersion });
+      sendEvent("instance_started", {
+        version: reportedOpenClawVersion,
+        image_version: String(imageVersion),
+        runtime_contract_version: String(runtimeContract),
+      });
     }, 30_000);
     heartbeatInterval = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     // 员工雇佣、通道绑定、技能安装需要秒级生效；heartbeat 保持低频，命令用轻量轮询承接。

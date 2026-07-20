@@ -74,6 +74,7 @@ RUN apt-get update \
 # 会导致 dashboard/webchat 二轮对话及微信等通道第二条消息起报
 # "reply session initialization conflicted"。6.10 无此逻辑。
 ARG OPENCLAW_VERSION=2026.6.10
+ENV OPENCLAW_VERSION=${OPENCLAW_VERSION}
 ARG CLAWHUB_VERSION=0.23.1
 ARG CODEX_VERSION=0.144.4
 ARG GEMINI_CLI_VERSION=0.50.0
@@ -157,6 +158,7 @@ RUN useradd -m -s /bin/bash openclaw \
 # Image version — pass at build time: docker build --build-arg IMAGE_VERSION=1.2.3
 ARG IMAGE_VERSION=dev
 ENV IMAGE_VERSION=${IMAGE_VERSION}
+ENV ONECLAW_RUNTIME_CONTRACT=1
 LABEL org.opencontainers.image.version=${IMAGE_VERSION}
 
 ENV PORT=8080

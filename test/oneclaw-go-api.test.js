@@ -273,8 +273,9 @@ test("ids-only template command hydrates employee, memory, and cron from the new
           openclaw_agent_id: "oneclaw-employee-1",
           kind: "hired",
           name: "开发助手",
-          role: '["审查代码", "编写测试"]',
+          role: "审查代码\n编写测试",
           system_prompt: "你是一名开发助手。",
+          memory_files: [{ path: "memory/developer.md", content: "开发规范" }],
           template_revision: 3,
           status: "provisioning",
           skills: [],
@@ -288,12 +289,6 @@ test("ids-only template command hydrates employee, memory, and cron from the new
             enabled: true,
           }],
         }],
-      });
-    }
-    if (url.endsWith("/templates/developer")) {
-      return jsonResponse({
-        id: "developer",
-        memory_files: [{ path: "memory/developer.md", content: "开发规范" }],
       });
     }
     if (url.endsWith("/runtime/events")) {
@@ -357,18 +352,18 @@ test("runtime contract v2 reconciles every employee and preserves greeting metad
     },
   };
   const employees = [{
-    id: "employee-main", openclaw_agent_id: "main", kind: "main", name: "主助理", language: "zh-CN",
-    greeting: "你好，我是主助理。", system_prompt: "主助理提示词", model: "clawrouters/auto",
-    desired_revision: 4, spec_hash: "a".repeat(64), memory_files: [{ path: "memory/main.md", content: "主记忆" }],
+    id: "employee-main", openclaw_agent_id: "main", kind: "main", name: "主助理", personality: { language: "zh-CN" },
+    greeting: "你好，我是主助理。", system_prompt: "主助理提示词", template_revision: 4,
+    memory_files: [{ path: "memory/main.md", content: "主记忆" }],
     skills: [], cron_tasks: [], status: "provisioning",
   }, {
-    id: "employee-2-id", openclaw_agent_id: "employee-2", kind: "hired", name: "研究助理", language: "en",
-    greeting: "Hello from the researcher.", system_prompt: "Research carefully.", model: "clawrouters/research",
-    desired_revision: 8, spec_hash: "b".repeat(64), memory_files: [{ path: "MEMORY.md", content: "research memory" }],
+    id: "employee-2-id", openclaw_agent_id: "employee-2", kind: "hired", name: "研究助理", personality: { language: "en" },
+    greeting: "Hello from the researcher.", role: "Research verified sources.", system_prompt: "Research carefully.", template_revision: 8,
+    memory_files: [{ path: "MEMORY.md", content: "research memory" }],
     skills: [], cron_tasks: [], status: "active",
   }];
   const restoreFetch = withFetch((url, opts = {}) => {
-    if (url.endsWith("/runtime/personality")) return jsonResponse({ contract_version: 2, employees });
+    if (url.endsWith("/runtime/personality")) return jsonResponse({ contract_version: 2, workspace: { default_model: "clawrouters/auto" }, employees });
     if (url.endsWith("/runtime/events")) {
       events.push(JSON.parse(opts.body));
       return jsonResponse({ accepted: true });
@@ -389,12 +384,13 @@ test("runtime contract v2 reconciles every employee and preserves greeting metad
   }
 
   assert.equal(rpcCalls.filter((call) => call.method === "agents.update").length, 2);
-  assert.equal(rpcCalls.find((call) => call.method === "agents.update" && call.params.agentId === "employee-2").params.model, "clawrouters/research");
+  assert.equal(rpcCalls.find((call) => call.method === "agents.update" && call.params.agentId === "employee-2").params.model, "clawrouters/auto");
+  assert.match(rpcCalls.find((call) => call.method === "agents.files.set" && call.params.agentId === "employee-2" && call.params.name === "SOUL.md").params.content, /## Role\nResearch verified sources\./);
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/main.md"), "utf8"), "主记忆");
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/employee-2/MEMORY.md"), "utf8"), "research memory");
   const syncEvents = events.filter((event) => event.event === "template_sync");
-  assert.deepEqual(syncEvents.map((event) => event.data.spec_hash), ["a".repeat(64), "b".repeat(64)]);
-  assert.deepEqual(syncEvents.map((event) => event.data.desired_revision), [4, 8]);
+  assert.deepEqual(syncEvents.map((event) => event.data.revision), [4, 8]);
+  assert.deepEqual(syncEvents.map((event) => event.data.status), ["active", "active"]);
 });
 
 test("employee reconciliation clears stale managed SOUL and memory files", async () => {
@@ -426,7 +422,7 @@ test("employee reconciliation clears stale managed SOUL and memory files", async
     });
     await integration.reconcileAllEmployees([{
       id: "cleanup-id", openclaw_agent_id: "employee-cleanup", kind: "hired", name: "Clean",
-      desired_revision: 2, spec_hash: "c".repeat(64), system_prompt: "", memory_files: [], skills: [], cron_tasks: [], status: "active",
+      template_revision: 2, system_prompt: "", memory_files: [], skills: [], cron_tasks: [], status: "active",
     }]);
   } finally {
     restoreFetch();
@@ -486,7 +482,7 @@ test("employee sync preserves content when an optional skill fails", async () =>
           employee_id: "emp-degraded",
           template_version: 2,
           soul_md: "You are a developer.",
-          responsibilities: ["Review pull requests"],
+          role: "Review pull requests",
           memory_files: [{ path: "memory/review.md", content: "Checklist" }],
           skill_requirements: [{ slug: "missing-skill", required: false, install_policy: "recommend" }],
         },
@@ -534,7 +530,7 @@ test("employee sync preserves content when an optional skill fails", async () =>
   assert.equal(syncResult.revision, 2);
   assert.equal(skillResult.status, "failed");
   assert.equal(skillResult.slug, "missing-skill");
-  assert.match(fileWrites.find((write) => write.name === "SOUL.md").content, /ONECLAW:RESPONSIBILITIES:START/);
+  assert.match(fileWrites.find((write) => write.name === "SOUL.md").content, /## Role\nReview pull requests/);
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-degraded/memory/review.md"), "utf8"), "Checklist");
 });
 

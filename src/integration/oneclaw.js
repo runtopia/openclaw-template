@@ -211,7 +211,9 @@ export function createOneclawIntegration({
       const res = await apiFetch("/runtime/personality", { method: "GET" });
       if (res.ok) {
         const data = await res.json();
-        const employees = Array.isArray(data.employees) ? data.employees : [];
+        const defaultModel = String(data?.workspace?.default_model || "");
+        const employees = (Array.isArray(data.employees) ? data.employees : [])
+          .map((employee) => ({ ...employee, model: employee?.model || defaultModel }));
         cachedEmployees = employees;
         const employee = employees.find((item) => item?.kind === "main") || employees[0] || null;
         cachedPersonality = runtimeEmployeePersonality(employee);
@@ -244,7 +246,6 @@ export function createOneclawIntegration({
         const result = {
           employee_id: employee.id,
           template_version: payload.template_version,
-          spec_hash: payload.spec_hash,
           overall_status: "failed",
           components: { reconcile: { status: "failed", error } },
         };
@@ -401,8 +402,6 @@ export function createOneclawIntegration({
     await sendEvent("template_sync", {
       employee_id: result.employee_id,
       revision: result.template_version,
-      desired_revision: result.template_version,
-      spec_hash: result.spec_hash,
       status,
       ...(errors ? { error: errors } : {}),
     });
@@ -627,11 +626,10 @@ export function createOneclawIntegration({
       const runtimeEmployee = await fetchRuntimeEmployee(employeeId);
       if (runtimeEmployee) {
         const runtimePayload = runtimeEmployeeTemplatePayload(runtimeEmployee);
-        const catalogTemplate = templateId ? await fetchCatalogTemplate(templateId) : null;
         const resolvedPayload = {
           ...runtimePayload,
           ...payload,
-          memory_files: payload.memory_files || catalogTemplate?.memoryFiles || [],
+          memory_files: payload.memory_files || runtimePayload.memory_files,
         };
         return applyEmployeeAgentTemplate(resolvedPayload, runtimeEmployee.id);
       }
@@ -655,32 +653,13 @@ export function createOneclawIntegration({
     if (!res.ok) {
       throw new Error(data.error || `runtime personality fetch failed: ${res.status}`);
     }
-    const employees = Array.isArray(data.employees) ? data.employees : [];
+    const defaultModel = String(data?.workspace?.default_model || "");
+    const employees = (Array.isArray(data.employees) ? data.employees : [])
+      .map((employee) => ({ ...employee, model: employee?.model || defaultModel }));
     if (employeeId) {
       return employees.find((employee) => employee?.id === employeeId) || null;
     }
     return employees.find((employee) => employee?.kind === "main") || employees[0] || null;
-  }
-
-  async function fetchCatalogTemplate(templateId) {
-    const res = await apiFetch(`/templates/${encodeURIComponent(templateId)}`, { method: "GET" });
-    if (!res.ok) return null;
-    const body = await res.json().catch(() => ({}));
-    return normalizeTemplate(body.template || body);
-  }
-
-  function renderManagedResponsibilities(soulMd, responsibilities) {
-    const start = "<!-- ONECLAW:RESPONSIBILITIES:START -->";
-    const end = "<!-- ONECLAW:RESPONSIBILITIES:END -->";
-    const managedPattern = /\n?<!-- ONECLAW:RESPONSIBILITIES:START -->[\s\S]*?<!-- ONECLAW:RESPONSIBILITIES:END -->\n?/g;
-    const base = String(soulMd || "").replace(managedPattern, "\n").trim();
-    const items = responsibilities
-      .map((item) => String(item || "").trim())
-      .filter(Boolean)
-      .map((item) => `- ${item}`);
-    if (items.length === 0) return base;
-    const section = `${start}\n## Core Responsibilities\n${items.join("\n")}\n${end}`;
-    return base ? `${base}\n\n${section}\n` : `${section}\n`;
   }
 
   function normalizeTemplateSkillRequirements(payload) {
@@ -705,12 +684,10 @@ export function createOneclawIntegration({
     const result = {
       employee_id: employeeId,
       template_version: Number(payload.template_version || payload.templateVersion || 1),
-      spec_hash: String(payload.spec_hash || ""),
       overall_status: "active",
       components: {
         identity: { status: "skipped" },
         soul: { status: "skipped" },
-        responsibilities: { status: "skipped" },
         memory: { status: "skipped" },
         skills: [],
         cron_tasks: [],
@@ -724,17 +701,15 @@ export function createOneclawIntegration({
       result.components.identity = { status: "failed", error: boundedComponentError(err) };
     }
 
-    const soulMd = String(payload.soul_md || payload.soulMd || "");
-    const responsibilities = Array.isArray(payload.responsibilities) ? payload.responsibilities : [];
+    const soulMd = String(payload.soul_md || payload.soulMd || "").trim();
+    const role = String(payload.role || "").trim();
     try {
-      const content = renderManagedResponsibilities(soulMd, responsibilities);
+      const content = [soulMd, role ? `## Role\n${role}` : ""].filter(Boolean).join("\n\n");
       await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "SOUL.md", content });
       result.components.soul = { status: "active" };
-      if (responsibilities.length > 0) result.components.responsibilities = { status: "active" };
     } catch (err) {
       const error = boundedComponentError(err);
       result.components.soul = { status: "failed", error };
-      if (responsibilities.length > 0) result.components.responsibilities = { status: "failed", error };
     }
 
     const memoryFiles = payload.memory_files || payload.memoryFiles || [];
@@ -831,7 +806,6 @@ export function createOneclawIntegration({
     const componentResults = [
       result.components.identity,
       result.components.soul,
-      result.components.responsibilities,
       result.components.memory,
       ...result.components.skills,
       ...result.components.cron_tasks,
@@ -842,10 +816,6 @@ export function createOneclawIntegration({
     saveManagedEmployeeState(agentId, {
       ...memoryResult.previous,
       employee_id: employeeId,
-      desired_revision: result.template_version,
-      spec_hash: result.spec_hash,
-      language: String(payload.language || ""),
-      greeting: String(payload.greeting || ""),
       memory_files: memoryResult.desiredPaths,
       cron_task_ids: desiredCronIds,
       updated_at: new Date().toISOString(),
@@ -1760,21 +1730,15 @@ function runtimeEmployeePersonality(employee) {
 
 function runtimeEmployeeTemplatePayload(employee) {
   const skills = Array.isArray(employee?.skills) ? employee.skills : [];
-  const responsibilities = Array.isArray(employee?.responsibilities)
-    ? employee.responsibilities
-    : parseResponsibilities(employee?.role);
   return {
     employee_id: employee?.id,
     openclaw_agent_id: employee?.openclaw_agent_id || (employee?.kind === "main" ? "main" : ""),
-    template_version: Number(employee?.desired_revision || employee?.config_revision || employee?.template_revision || 1),
-    spec_hash: String(employee?.spec_hash || ""),
+    template_version: Number(employee?.template_revision || 1),
     bot_name: employee?.name,
     avatar: employee?.avatar_url || "",
-    language: employee?.language || employee?.personality?.language || "en",
-    greeting: employee?.greeting || "",
     model: employee?.model || "",
     soul_md: employee?.system_prompt || "",
-    responsibilities,
+    role: employee?.role || "",
     memory_files: Array.isArray(employee?.memory_files) ? employee.memory_files : [],
     skill_requirements: skills.map((skill) => ({
       slug: skill.slug,
@@ -1784,20 +1748,6 @@ function runtimeEmployeeTemplatePayload(employee) {
     assigned_skill_slugs: skills.map((skill) => skill.slug),
     cron_tasks: Array.isArray(employee?.cron_tasks) ? employee.cron_tasks : [],
   };
-}
-
-function parseResponsibilities(role) {
-  const value = String(role || "").trim();
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) return parsed;
-    if (Array.isArray(parsed?.responsibilities)) return parsed.responsibilities;
-  } catch {}
-  return value
-    .split(/\r?\n/)
-    .map((item) => item.replace(/^[-*]\s*/, "").trim())
-    .filter(Boolean);
 }
 
 function runtimeCronCommandPayload(task, agentId) {

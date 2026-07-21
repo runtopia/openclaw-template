@@ -385,7 +385,11 @@ test("runtime contract v2 reconciles every employee and preserves greeting metad
 
   assert.equal(rpcCalls.filter((call) => call.method === "agents.update").length, 2);
   assert.equal(rpcCalls.find((call) => call.method === "agents.update" && call.params.agentId === "employee-2").params.model, "clawrouters/auto");
-  assert.match(rpcCalls.find((call) => call.method === "agents.files.set" && call.params.agentId === "employee-2" && call.params.name === "SOUL.md").params.content, /## Role\nResearch verified sources\./);
+  const englishSoul = rpcCalls.find((call) => call.method === "agents.files.set" && call.params.agentId === "employee-2" && call.params.name === "SOUL.md").params.content;
+  assert.match(englishSoul, /## Role\nResearch verified sources\./);
+  assert.match(englishSoul, /## 回复语言\n默认使用英语回复用户/);
+  const chineseSoul = rpcCalls.find((call) => call.method === "agents.files.set" && call.params.agentId === "main" && call.params.name === "SOUL.md").params.content;
+  assert.match(chineseSoul, /## 回复语言\n默认使用简体中文回复用户/);
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/main.md"), "utf8"), "主记忆");
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/employee-2/MEMORY.md"), "utf8"), "research memory");
   const syncEvents = events.filter((event) => event.event === "template_sync");
@@ -393,7 +397,7 @@ test("runtime contract v2 reconciles every employee and preserves greeting metad
   assert.deepEqual(syncEvents.map((event) => event.data.status), ["active", "active"]);
 });
 
-test("employee reconciliation clears stale managed SOUL and memory files", async () => {
+test("employee reconciliation clears stale managed content but keeps the language policy", async () => {
   const stateDir = makeWorkspace();
   const workspaceDir = path.join(stateDir, "workspace");
   const employeeWorkspace = path.join(workspaceDir, "agents", "employee-cleanup");
@@ -428,7 +432,9 @@ test("employee reconciliation clears stale managed SOUL and memory files", async
     restoreFetch();
   }
   assert.equal(fs.existsSync(path.join(employeeWorkspace, "memory/old.md")), false);
-  assert.equal(rpcCalls.find((call) => call.method === "agents.files.set" && call.params.name === "SOUL.md").params.content, "");
+  const soul = rpcCalls.find((call) => call.method === "agents.files.set" && call.params.name === "SOUL.md").params.content;
+  assert.match(soul, /默认使用英语回复用户/);
+  assert.doesNotMatch(soul, /old/);
 });
 
 test("unknown leased runtime commands are acknowledged as failed", async () => {
@@ -958,6 +964,44 @@ test("leased command is acknowledged only after successful execution", async () 
     restoreFetch();
   }
   assert.equal(acknowledgements, 1);
+});
+
+test("leased employee deletion removes the OpenClaw agent before acknowledgement", async () => {
+  const workspaceDir = makeWorkspace();
+  const rpcCalls = [];
+  let acknowledgement;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/runtime/commands?")) return jsonResponse({ commands: [{
+      id: "cmd-delete-agent",
+      status: "leased",
+      type: "delete_agent",
+      payload: { employee_id: "emp-delete", openclaw_agent_id: "oneclaw-emp-delete" },
+    }] });
+    if (url.includes("/runtime/commands/cmd-delete-agent/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1", instanceId: "runtime-1", instanceSecret: "secret-1", workspaceDir,
+      gatewayRpc: {
+        waitUntilConnected: async () => {},
+        rpcGateway: async (method, params) => {
+          rpcCalls.push({ method, params });
+          return { ok: true, payload: { ok: true } };
+        },
+      },
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+  }
+  assert.deepEqual(rpcCalls, [{ method: "agents.delete", params: { agentId: "oneclaw-emp-delete" } }]);
+  assert.deepEqual(acknowledgement, { status: "succeeded", retryable: false });
 });
 
 test("command polling installs and removes employee skills", async () => {

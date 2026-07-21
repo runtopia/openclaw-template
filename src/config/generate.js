@@ -294,7 +294,12 @@ export function generateConfigDirect(opts) {
   const skills = { entries: { "coding-agent": { enabled: true } } };
 
   // ── 组装最终配置 ──────────────────────────────────────────────
-  const cfg = { gateway, session, tools, skills, models, agents: { defaults: agentDefaults }, plugins, channels, bindings };
+  // main 也必须显式注册；否则 OpenClaw 能用隐式默认 agent 聊天，但 agents.update 会报 main not found。
+  const agents = {
+    defaults: agentDefaults,
+    list: [{ id: "main", default: true, name: "main", workspace: workspaceDir }],
+  };
+  const cfg = { gateway, session, tools, skills, models, agents, plugins, channels, bindings };
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));

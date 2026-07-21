@@ -11,6 +11,27 @@ import { patchConfig } from "../config/edit.js";
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
 
+function normalizeEmployeeLanguage(language) {
+  return String(language || "").trim().toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+}
+
+function employeeLanguagePolicy(language) {
+  if (normalizeEmployeeLanguage(language) === "zh-CN") {
+    return "## 回复语言\n默认使用简体中文回复用户，除非用户明确要求使用其他语言。工具参数、代码、文件名和专有名词保持原样。";
+  }
+  return "## 回复语言\n默认使用英语回复用户，除非用户明确要求使用其他语言。工具参数、代码、文件名和专有名词保持原样。";
+}
+
+function employeeSoulContent(payload) {
+  const soulMd = String(payload.soul_md || payload.soulMd || "").trim();
+  const role = String(payload.role || "").trim();
+  return [
+    soulMd,
+    role ? `## Role\n${role}` : "",
+    employeeLanguagePolicy(payload.language),
+  ].filter(Boolean).join("\n\n");
+}
+
 function skillUnavailableReasons(skill) {
   const reasons = [];
   if (skill?.disabled === true) reasons.push("disabled");
@@ -701,10 +722,9 @@ export function createOneclawIntegration({
       result.components.identity = { status: "failed", error: boundedComponentError(err) };
     }
 
-    const soulMd = String(payload.soul_md || payload.soulMd || "").trim();
-    const role = String(payload.role || "").trim();
     try {
-      const content = [soulMd, role ? `## Role\n${role}` : ""].filter(Boolean).join("\n\n");
+      // 系统提示词、记忆和计划任务保持模板原文；语言规则单独追加，避免维护多份长文本。
+      const content = employeeSoulContent(payload);
       await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "SOUL.md", content });
       result.components.soul = { status: "active" };
     } catch (err) {
@@ -780,7 +800,7 @@ export function createOneclawIntegration({
       const taskId = String(cronTask?.id || cronTask?.task_id || "").trim();
       if (!taskId) continue;
       try {
-        const taskPayload = runtimeCronCommandPayload(cronTask, agentId);
+        const taskPayload = runtimeCronCommandPayload(cronTask, agentId, payload.language);
         const nativeTaskId = await upsertCronTask(taskPayload);
         const status = taskPayload.enabled === false ? "paused" : "active";
         result.components.cron_tasks.push({
@@ -1730,6 +1750,9 @@ function runtimeEmployeePersonality(employee) {
 
 function runtimeEmployeeTemplatePayload(employee) {
   const skills = Array.isArray(employee?.skills) ? employee.skills : [];
+  const personality = employee?.personality && typeof employee.personality === "object"
+    ? employee.personality
+    : {};
   return {
     employee_id: employee?.id,
     openclaw_agent_id: employee?.openclaw_agent_id || (employee?.kind === "main" ? "main" : ""),
@@ -1739,6 +1762,7 @@ function runtimeEmployeeTemplatePayload(employee) {
     model: employee?.model || "",
     soul_md: employee?.system_prompt || "",
     role: employee?.role || "",
+    language: normalizeEmployeeLanguage(personality.language),
     memory_files: Array.isArray(employee?.memory_files) ? employee.memory_files : [],
     skill_requirements: skills.map((skill) => ({
       slug: skill.slug,
@@ -1750,7 +1774,7 @@ function runtimeEmployeeTemplatePayload(employee) {
   };
 }
 
-function runtimeCronCommandPayload(task, agentId) {
+function runtimeCronCommandPayload(task, agentId, language) {
   let schedule;
   if (task.schedule_kind === "every") {
     schedule = {
@@ -1777,7 +1801,7 @@ function runtimeCronCommandPayload(task, agentId) {
   return {
     id: task.id || task.task_id,
     name: task.name,
-    description: "由 OneClaw 管理",
+    description: normalizeEmployeeLanguage(language) === "zh-CN" ? "由 OneClaw 管理" : "Managed by OneClaw",
     schedule,
     payload: {
       kind: "agentTurn",

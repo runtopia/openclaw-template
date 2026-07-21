@@ -75,6 +75,19 @@ export function migrateAgentWorkspaces({ workspaceRoot, configPath }) {
   if (!cfg.agents || typeof cfg.agents !== "object") cfg.agents = {};
   if (!cfg.agents.defaults || typeof cfg.agents.defaults !== "object") cfg.agents.defaults = {};
   cfg.agents.defaults.workspace = mainWorkspace;
+  if (!Array.isArray(cfg.agents.list)) cfg.agents.list = [];
+  let mainAgent = cfg.agents.list.find((agent) => String(agent?.id || agent?.agentId || "").trim() === "main");
+  if (!mainAgent) {
+    mainAgent = { id: "main" };
+    cfg.agents.list.unshift(mainAgent);
+  }
+  // OneClaw 的主员工固定对应 main；显式注册后 agents.update/files.set 在首次开通即可使用。
+  mainAgent.id = "main";
+  mainAgent.default = true;
+  mainAgent.workspace = mainWorkspace;
+  for (const agent of cfg.agents.list) {
+    if (agent !== mainAgent && agent?.default === true) delete agent.default;
+  }
   const migratedAgents = [];
   for (const agent of Array.isArray(cfg.agents.list) ? cfg.agents.list : []) {
     const agentId = String(agent?.id || agent?.agentId || "").trim();

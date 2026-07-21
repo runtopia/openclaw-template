@@ -124,6 +124,8 @@ ARG CACHEBUST_PLUGINS=v7
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts ./scripts
+# 2026.6.10 会保存 chat.send 图片，却未把保存路径交给当前 agent；构建时补齐并在上游修复后移除。
+RUN node /app/scripts/patch-openclaw-chat-images.js /usr/local/lib/node_modules/openclaw
 RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && cd ${OPENCLAW_PLUGINS_DIR} \
   && npm init -y >/dev/null 2>&1 \

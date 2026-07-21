@@ -85,6 +85,12 @@ test("direct config binds environment token channels to main account", () => {
     configPath, workspaceDir: path.join(tmp, "workspace", "agents", "main"), gatewayToken: "gateway-test",
     env: { CLAWROUTERS_API_KEY: "cr_test", TELEGRAM_BOT_TOKEN: "telegram-token", SLACK_BOT_TOKEN: "xoxb", SLACK_APP_TOKEN: "xapp" },
   });
+  assert.deepEqual(cfg.agents.list, [{
+    id: "main",
+    default: true,
+    name: "main",
+    workspace: path.join(tmp, "workspace", "agents", "main"),
+  }]);
   assert.equal(cfg.channels.telegram.accounts.main.botToken, "telegram-token");
   assert.equal(cfg.channels.slack.accounts.main.botToken, "xoxb");
   assert.equal(cfg.bindings.filter((binding) => binding.agentId === "main").length, 2);

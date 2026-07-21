@@ -36,5 +36,12 @@ test("migrateAgentWorkspaces moves legacy main and hired files idempotently", ()
   assert.equal(fs.readFileSync(path.join(root, "agents", "oneclaw-emp-1", "SOUL.md"), "utf8"), "legacy hired");
   const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
   assert.equal(cfg.agents.defaults.workspace, path.join(root, "agents", "main"));
-  assert.equal(cfg.agents.list[0].workspace, path.join(root, "agents", "oneclaw-emp-1"));
+  assert.deepEqual(
+    cfg.agents.list.find((agent) => agent.id === "main"),
+    { id: "main", default: true, workspace: path.join(root, "agents", "main") },
+  );
+  assert.equal(
+    cfg.agents.list.find((agent) => agent.id === "oneclaw-emp-1").workspace,
+    path.join(root, "agents", "oneclaw-emp-1"),
+  );
 });

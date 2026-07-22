@@ -198,7 +198,27 @@ export function createOneclawIntegration({
   }
 
   async function reportChannelState(payload) {
-    await sendEvent("channel_state", payload);
+    return sendEvent("channel_state", payload);
+  }
+
+  async function reportBindingState(session, payload) {
+    const state = {
+      employee_id: session.employeeId,
+      channel: session.channel,
+      session_id: session.sessionId,
+      ...payload,
+    };
+    const fingerprint = JSON.stringify({
+      status: state.status || "",
+      qr_url: state.qr_url || "",
+      qr_expires_at: state.qr_expires_at || "",
+      error: state.error || "",
+      config: state.config || null,
+    });
+    if (session.lastReportedFingerprint === fingerprint) return true;
+    const sent = await reportChannelState(state);
+    if (sent) session.lastReportedFingerprint = fingerprint;
+    return sent;
   }
 
   async function reportChannelAccessRequest(payload) {
@@ -1430,6 +1450,7 @@ export function createOneclawIntegration({
       expiresAtRaw,
       started: false,
       currentQrUrl: null,
+      lastReportedFingerprint: null,
       cancelled: false,
       timer: null,
     };
@@ -1475,11 +1496,8 @@ export function createOneclawIntegration({
     if (remaining <= 0) {
       activeChannelBindings.delete(session.key);
       await stopRuntimeQrLogin(session.channel);
-      await reportChannelState({
-        employee_id: session.employeeId,
-        channel: session.channel,
+      await reportBindingState(session, {
         status: "expired",
-        session_id: session.sessionId,
       });
       return;
     }
@@ -1501,11 +1519,8 @@ export function createOneclawIntegration({
         // which makes OpenClaw reload itself. Forcing a second wrapper restart here
         // races that in-process reload and can interrupt the freshly connected gateway.
         if (session.channel !== "wechat") await restartRuntimeAfterChannelChange();
-        await reportChannelState({
-          employee_id: session.employeeId,
-          channel: session.channel,
+        await reportBindingState(session, {
           status: "ready",
-          session_id: session.sessionId,
           config: data.connectedAccountId ? { account_id: data.connectedAccountId } : undefined,
         });
         return;
@@ -1513,22 +1528,16 @@ export function createOneclawIntegration({
       const qrUrl = data.qrDataUrl || data.qrUrl || null;
       if (qrUrl) {
         session.currentQrUrl = qrUrl;
-        await reportChannelState({
-          employee_id: session.employeeId,
-          channel: session.channel,
+        await reportBindingState(session, {
           status: "pending",
-          session_id: session.sessionId,
           qr_url: qrUrl,
           qr_expires_at: channelQrExpiresAt(data),
         });
       }
     } catch (err) {
       console.error(`[channel-bind] ${session.channel} poll error: ${err.message}`);
-      await reportChannelState({
-        employee_id: session.employeeId,
-        channel: session.channel,
+      await reportBindingState(session, {
         status: "failed",
-        session_id: session.sessionId,
         error: err.message,
       });
     }

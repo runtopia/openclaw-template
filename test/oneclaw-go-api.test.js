@@ -1835,6 +1835,71 @@ test("whatsapp bind retries start after the gateway reports preparing", async ()
   assert.ok(channelStates.some((state) => state.qr_url === "data:image/png;base64,whatsapp-qr"));
 });
 
+test("channel binding reports an unchanged QR only once", async () => {
+  const workspaceDir = makeWorkspace();
+  const startAt = Date.now();
+  const channelStates = [];
+  let integration;
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date(startAt).toISOString(),
+        commands: [{
+          id: "cmd-bind-whatsapp-dedupe",
+          type: "update_config",
+          payload: {
+            action: "bind_channel",
+            employee_id: "emp-1",
+            channel: "whatsapp",
+            state: {
+              binding: {
+                session_id: "bind-dedupe",
+                expires_at: new Date(startAt + 1_000).toISOString(),
+              },
+            },
+          },
+        }],
+      });
+    }
+    if (url === "http://gateway.local/repair/whatsapp-login/start" ||
+        url === "http://gateway.local/repair/whatsapp-login/wait") {
+      return jsonResponse({
+        ok: true,
+        connected: false,
+        qrDataUrl: "data:image/png;base64,unchanged",
+      });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
+      channelStates.push(JSON.parse(opts.body).data);
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      channelBindingPollMs: 10,
+    });
+    await integration.sendHeartbeat();
+    await new Promise((resolve) => setTimeout(resolve, 55));
+  } finally {
+    integration?.stop();
+    restoreFetch();
+  }
+
+  assert.equal(channelStates.filter((state) => state.status === "pending").length, 1);
+});
+
 test("channel bind command uses sidecar repair target", async () => {
   const workspaceDir = makeWorkspace();
   const startAt = Date.now();

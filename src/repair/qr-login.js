@@ -196,6 +196,7 @@ export function mountQrLogin(router, deps) {
   //   POST /whatsapp-login/wait  → { qrDataUrl, connected, message }  (pass currentQrDataUrl in body)
   const WHATSAPP_GATEWAY_RPC_WAIT_MS = 10_000;
   const WHATSAPP_GATEWAY_WARMUP_GRACE_MS = 1_500;
+  const WHATSAPP_LOGIN_OPERATION_TIMEOUT_MS = 10_000;
 
   function sendWhatsAppLoginPreparing(res, message = "WhatsApp gateway is starting. Retrying shortly.") {
     return res.status(202).json({
@@ -261,7 +262,7 @@ export function mountQrLogin(router, deps) {
     const accountId = typeof req.body?.accountId === "string" && req.body.accountId.trim()
       ? req.body.accountId.trim() : undefined;
     // accountId = employee id → per-agent whatsapp account (multi-account).
-    await whatsappLoginRpc(res, "web.login.start", { force, timeoutMs: 30_000, ...(accountId ? { accountId } : {}) });
+    await whatsappLoginRpc(res, "web.login.start", { force, timeoutMs: WHATSAPP_LOGIN_OPERATION_TIMEOUT_MS, ...(accountId ? { accountId } : {}) });
   });
 
   router.post("/whatsapp-login/wait", requireRepairAuth, async (req, res) => {
@@ -270,7 +271,7 @@ export function mountQrLogin(router, deps) {
     // DEFAULT_ACCOUNT_ID → 查不到 start(accountId) 建的会话 → "No active login"。
     const accountId = typeof req.body?.accountId === "string" && req.body.accountId.trim()
       ? req.body.accountId.trim() : undefined;
-    await whatsappLoginRpc(res, "web.login.wait", { timeoutMs: 30_000, ...(currentQrDataUrl ? { currentQrDataUrl } : {}), ...(accountId ? { accountId } : {}) });
+    await whatsappLoginRpc(res, "web.login.wait", { timeoutMs: WHATSAPP_LOGIN_OPERATION_TIMEOUT_MS, ...(currentQrDataUrl ? { currentQrDataUrl } : {}), ...(accountId ? { accountId } : {}) });
   });
 
   router.get("/whatsapp-login/status", requireRepairAuth, (_req, res) => {
@@ -295,6 +296,8 @@ export function mountQrLogin(router, deps) {
   // 老插件或路由不可用时再回退到 `openclaw channels login --channel openclaw-weixin`。
   const WECHAT_PLUGIN_QR_START_ATTEMPTS = 2;
   const WECHAT_PLUGIN_RETRY_DELAY_MS = 350;
+  const WECHAT_PLUGIN_STARTUP_WAIT_MS = deps.wechatPluginStartupWaitMs ?? 12_000;
+  const WECHAT_PLUGIN_STARTUP_POLL_MS = deps.wechatPluginStartupPollMs ?? 500;
   let wechatPluginSession = null;
   let wechatPluginHttpUnavailable = false;
 
@@ -404,15 +407,27 @@ export function mountQrLogin(router, deps) {
         return { preparing: true };
       }
     }
-    const data = await fetchWechatPluginJson("/qr-start", {
-      method: "POST",
-      body: {
-        ...(accountId ? { accountId } : {}),
-        ...(force ? { force: true } : {}),
-        ...(expiresAt ? { expiresAt } : {}),
-      },
-      attempts: WECHAT_PLUGIN_QR_START_ATTEMPTS,
-    });
+    const body = {
+      ...(accountId ? { accountId } : {}),
+      ...(force ? { force: true } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
+    };
+    const startupDeadline = Date.now() + WECHAT_PLUGIN_STARTUP_WAIT_MS;
+    let data;
+    while (true) {
+      try {
+        data = await fetchWechatPluginJson("/qr-start", {
+          method: "POST",
+          body,
+          attempts: WECHAT_PLUGIN_QR_START_ATTEMPTS,
+        });
+        break;
+      } catch (err) {
+        if (err?.status !== 404 || Date.now() >= startupDeadline) throw err;
+        console.log("[wechat-login] plugin QR route is not registered yet; waiting for gateway startup");
+        await sleep(Math.min(WECHAT_PLUGIN_STARTUP_POLL_MS, Math.max(1, startupDeadline - Date.now())));
+      }
+    }
     const qrUrl = data.qrDataUrl || data.qrUrl || null;
     if (!qrUrl) throw new Error(data.error || data.message || "wechat plugin did not return qrDataUrl");
     const qrExpiresAt = wechatPluginQrExpiresAt(data);

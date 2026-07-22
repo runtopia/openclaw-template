@@ -265,7 +265,45 @@ test("wechat login start retries transient plugin QR failures once", async (t) =
   assert.equal(attempts, 2);
 });
 
-test("wechat login start disables plugin HTTP route after 404 and falls back to CLI", async (t) => {
+test("wechat login start waits for the plugin route during gateway startup", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-start") {
+      attempts += 1;
+      if (attempts < 3) return jsonResponse({ error: "Not Found" }, 404);
+      return jsonResponse({
+        sessionKey: "wechat-session-late-route",
+        qrDataUrl: "https://liteapp.weixin.qq.com/q/late?qrcode=abc&bot_type=3",
+      });
+    }
+    return originalFetch(url, opts);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    stopWechatLogin();
+  });
+
+  const server = await listen(createWechatRepairApp({
+    wechatPluginStartupWaitMs: 50,
+    wechatPluginStartupPollMs: 1,
+  }));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const res = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: "emp1" }),
+  });
+  const data = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(data.qrUrl, "https://liteapp.weixin.qq.com/q/late?qrcode=abc&bot_type=3");
+  assert.equal(attempts, 3);
+});
+
+test("wechat login start disables plugin HTTP route after the startup window and falls back to CLI", async (t) => {
   const originalFetch = globalThis.fetch;
   let pluginCalls = 0;
   globalThis.fetch = async (url, opts = {}) => {
@@ -280,7 +318,10 @@ test("wechat login start disables plugin HTTP route after 404 and falls back to 
     stopWechatLogin();
   });
 
-  const server = await listen(createWechatRepairApp());
+  const server = await listen(createWechatRepairApp({
+    wechatPluginStartupWaitMs: 5,
+    wechatPluginStartupPollMs: 1,
+  }));
   t.after(() => server.close());
   const { port } = server.address();
 
@@ -295,5 +336,5 @@ test("wechat login start disables plugin HTTP route after 404 and falls back to 
     assert.equal(data.ok, true);
   }
 
-  assert.equal(pluginCalls, 1);
+  assert.ok(pluginCalls > 1);
 });

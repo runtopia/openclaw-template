@@ -139,6 +139,7 @@ test("whatsapp login waits for gateway rpc and returns qr when startup finishes 
         rpcCalled = true;
         assert.equal(method, "web.login.start");
         assert.equal(params.accountId, "emp1");
+        assert.equal(params.timeoutMs, 10_000);
         return { ok: true, payload: { qrDataUrl: "data:image/png;base64,abc", connected: false } };
       },
     },

@@ -1407,7 +1407,7 @@ export function createOneclawIntegration({
     await reportChannelState({
       employee_id: employeeId,
       channel,
-      status: action === "unbind_channel" ? "unbound" : "expired",
+      status: "unbound",
       session_id: payload?.state?.binding?.session_id || payload?.session_id || "",
     });
   }
@@ -1507,6 +1507,14 @@ export function createOneclawIntegration({
         ? await pollWhatsAppBinding(session)
         : await pollWechatBinding(session);
       if (session.cancelled) return;
+      if (data?.status === "expired" || data?.status === "cancelled") {
+        activeChannelBindings.delete(session.key);
+        await stopRuntimeQrLogin(session.channel);
+        await reportBindingState(session, {
+          status: "expired",
+        });
+        return;
+      }
       if (data?.status === "error" || data?.status === "failed" || data?.error) {
         throw new Error(data.error || data.message || `${session.channel} login failed`);
       }
@@ -1536,10 +1544,13 @@ export function createOneclawIntegration({
       }
     } catch (err) {
       console.error(`[channel-bind] ${session.channel} poll error: ${err.message}`);
+      activeChannelBindings.delete(session.key);
+      await stopRuntimeQrLogin(session.channel);
       await reportBindingState(session, {
         status: "failed",
         error: err.message,
       });
+      return;
     }
 
     if (!session.cancelled && activeChannelBindings.get(session.key) === session) {

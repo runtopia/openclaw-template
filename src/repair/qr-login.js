@@ -332,7 +332,10 @@ export function mountQrLogin(router, deps) {
         });
         const raw = await res.text();
         const elapsed = Date.now() - startedAt;
-        console.log(`[wechat-login] plugin ${opts.method || "GET"} ${pathname} attempt=${attempt} status=${res.status} elapsed=${elapsed}ms`);
+        const isStatusPoll = (opts.method || "GET") === "GET" && pathname.startsWith("/qr-status");
+        if (!isStatusPoll || !res.ok) {
+          console.log(`[wechat-login] plugin ${opts.method || "GET"} ${pathname} attempt=${attempt} status=${res.status} elapsed=${elapsed}ms`);
+        }
         let data = {};
         try {
           data = raw ? JSON.parse(raw) : {};
@@ -397,6 +400,10 @@ export function mountQrLogin(router, deps) {
       try {
         return await getWechatPluginLoginState();
       } catch (err) {
+        if (err?.status === 404) {
+          wechatPluginSession = null;
+          throw err;
+        }
         return cachedWechatPluginLoginState(err.message);
       }
     }
@@ -462,7 +469,23 @@ export function mountQrLogin(router, deps) {
     const qrExpiresAt = wechatPluginQrExpiresAt(data) || wechatPluginSession.qrExpiresAt || null;
     wechatPluginSession.qrExpiresAt = qrExpiresAt;
     wechatPluginSession.qrUpdatedAt = data.qrUpdatedAt || data.qr_updated_at || wechatPluginSession.qrUpdatedAt || null;
-    if (data.status === "connected") {
+    const pluginStatus = String(data.status || "").toLowerCase();
+    if (pluginStatus === "expired" || pluginStatus === "cancelled") {
+      const terminalSession = wechatPluginSession;
+      wechatPluginSession = null;
+      return {
+        ok: true,
+        status: "expired",
+        connected: false,
+        qrUrl: null,
+        qrDataUrl: null,
+        qrExpiresAt,
+        qrUpdatedAt: terminalSession.qrUpdatedAt,
+        sessionKey: terminalSession.sessionKey,
+        message: data.error || data.message || "二维码已失效，请刷新后重试。",
+      };
+    }
+    if (pluginStatus === "connected") {
       return {
         ok: true,
         status: "connected",
@@ -477,7 +500,7 @@ export function mountQrLogin(router, deps) {
         message: data.message || "已将此 OpenClaw 连接到微信。",
       };
     }
-    if (data.status === "failed") {
+    if (pluginStatus === "failed") {
       return {
         ok: true,
         status: "error",
@@ -533,17 +556,21 @@ export function mountQrLogin(router, deps) {
       try {
         return res.json(await getWechatPluginLoginState());
       } catch (err) {
-        console.warn(`[wechat-login] plugin HTTP QR status failed, using last state: ${err.message}`);
+        const terminalSession = wechatPluginSession;
+        wechatPluginSession = null;
+        console.warn(`[wechat-login] plugin HTTP QR status failed; expiring cached QR: ${err.message}`);
         return res.json({
           ok: true,
-          status: "scan",
+          status: "expired",
           connected: false,
-          qrUrl: wechatPluginSession.qrUrl,
-          qrDataUrl: wechatPluginSession.qrUrl,
-          qrExpiresAt: wechatPluginSession.qrExpiresAt || null,
-          qrUpdatedAt: wechatPluginSession.qrUpdatedAt || null,
-          sessionKey: wechatPluginSession.sessionKey,
-          message: err.message,
+          qrUrl: null,
+          qrDataUrl: null,
+          qrExpiresAt: terminalSession?.qrExpiresAt || null,
+          qrUpdatedAt: terminalSession?.qrUpdatedAt || null,
+          sessionKey: terminalSession?.sessionKey || null,
+          message: err?.status === 404
+            ? "二维码会话已失效，请刷新后重试。"
+            : (err.message || "二维码状态获取失败，请刷新后重试。"),
         });
       }
     }

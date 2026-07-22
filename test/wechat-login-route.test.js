@@ -138,6 +138,78 @@ test("wechat login status publishes a refreshed plugin QR", async (t) => {
   assert.equal(statusData.qrUpdatedAt, "2026-07-10T03:00:00.000Z");
 });
 
+test("wechat login status expires a terminal plugin QR", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-start") {
+      return jsonResponse({
+        sessionKey: "wechat-session-expired",
+        qrDataUrl: "https://liteapp.weixin.qq.com/q/expired?qrcode=old&bot_type=3",
+      });
+    }
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-status?sessionKey=wechat-session-expired") {
+      return jsonResponse({ status: "expired", message: "登录超时，请重试。" });
+    }
+    return originalFetch(url);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    stopWechatLogin();
+  });
+
+  const server = await listen(createWechatRepairApp());
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: "emp1" }),
+  });
+  const statusRes = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login`);
+  const statusData = await statusRes.json();
+
+  assert.equal(statusData.status, "expired");
+  assert.equal(statusData.qrUrl, null);
+  assert.equal(statusData.connected, false);
+});
+
+test("wechat login status expires a QR whose plugin session disappeared", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-start") {
+      return jsonResponse({
+        sessionKey: "wechat-session-missing",
+        qrDataUrl: "https://liteapp.weixin.qq.com/q/missing?qrcode=old&bot_type=3",
+      });
+    }
+    if (String(url) === "http://gateway.local/plugins/openclaw-weixin/qr-status?sessionKey=wechat-session-missing") {
+      return jsonResponse({ error: "session not found or expired" }, 404);
+    }
+    return originalFetch(url);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    stopWechatLogin();
+  });
+
+  const server = await listen(createWechatRepairApp());
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: "emp1" }),
+  });
+  const statusRes = await originalFetch(`http://127.0.0.1:${port}/repair/wechat-login`);
+  const statusData = await statusRes.json();
+
+  assert.equal(statusData.status, "expired");
+  assert.equal(statusData.qrUrl, null);
+  assert.match(statusData.message, /失效/);
+});
+
 test("wechat login stop cancels the active plugin session", async (t) => {
   const originalFetch = globalThis.fetch;
   const pluginStopCalls = [];

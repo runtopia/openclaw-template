@@ -2370,7 +2370,7 @@ test("late WhatsApp wait result is ignored after binding cancellation", async ()
   }
 
   assert.equal(channelStates.some((state) => state.qr_url === "qr-too-late"), false);
-  assert.equal(channelStates.some((state) => state.status === "expired"), true);
+  assert.equal(channelStates.some((state) => state.status === "unbound"), true);
 });
 
 test("cancel wechat bind command stops wrapper login process", async () => {

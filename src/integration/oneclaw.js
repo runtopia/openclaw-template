@@ -413,7 +413,8 @@ export function createOneclawIntegration({
   }
 
   async function reportEmployeeTemplateSync(result) {
-    const status = result.overall_status === "active" ? "active" : "failed";
+    // 可选技能或计划任务失败只代表局部降级，员工主体仍可正常聊天和工作。
+    const status = result.overall_status === "failed" ? "failed" : "active";
     const errors = Object.entries(result.components || {})
       .flatMap(([name, component]) => Array.isArray(component)
         ? component.filter((item) => item?.status === "failed").map((item) => `${name}:${item.error || "failed"}`)
@@ -424,6 +425,7 @@ export function createOneclawIntegration({
       employee_id: result.employee_id,
       revision: result.template_version,
       status,
+      sync_status: result.overall_status,
       ...(errors ? { error: errors } : {}),
     });
   }
@@ -823,14 +825,20 @@ export function createOneclawIntegration({
       }
     }
 
-    const componentResults = [
+    const criticalComponents = [
       result.components.identity,
       result.components.soul,
       result.components.memory,
-      ...result.components.skills,
+      ...result.components.skills.filter((skill) => skill.required === true),
+    ];
+    const optionalComponents = [
+      ...result.components.skills.filter((skill) => skill.required !== true),
       ...result.components.cron_tasks,
     ];
-    if (componentResults.some((component) => component?.status === "failed" || component?.status === "needs_configuration")) {
+    const isUnhealthy = (component) => component?.status === "failed" || component?.status === "needs_configuration";
+    if (criticalComponents.some(isUnhealthy)) {
+      result.overall_status = "failed";
+    } else if (optionalComponents.some(isUnhealthy)) {
       result.overall_status = "degraded";
     }
     saveManagedEmployeeState(agentId, {

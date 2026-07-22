@@ -532,7 +532,8 @@ test("employee sync preserves content when an optional skill fails", async () =>
 
   assert.equal(skillResolutionCalls, 1);
   assert.equal(acknowledgement.status, "succeeded");
-  assert.equal(syncResult.status, "failed");
+  assert.equal(syncResult.status, "active");
+  assert.equal(syncResult.sync_status, "degraded");
   assert.equal(syncResult.revision, 2);
   assert.equal(skillResult.status, "failed");
   assert.equal(skillResult.slug, "missing-skill");

@@ -77,6 +77,22 @@ function resolveExtractedSkillRoot(extractRoot) {
   return roots[0];
 }
 
+function resolveCustomSkillConfigKey(skillRoot, spec, fallbackSlug) {
+  const manifest = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
+  const frontmatter = manifest.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\s*\r?\n|$)/)?.[1] || "";
+  const metadataSkillKey = frontmatter.match(/["']skillKey["']\s*:\s*["']([^"']+)["']/)?.[1];
+  const declaredSkillKey = frontmatter.match(/^\s*skillKey\s*:\s*["']?([^"'\s#]+)["']?\s*(?:#.*)?$/m)?.[1];
+  const declaredName = frontmatter.match(/^\s*name\s*:\s*["']?([^"'\s#]+)["']?\s*(?:#.*)?$/m)?.[1];
+  return String(
+    metadataSkillKey
+      || declaredSkillKey
+      || declaredName
+      || spec?.skill_key
+      || spec?.skillKey
+      || fallbackSlug,
+  ).trim();
+}
+
 export function normalizeOneclawApiUrl(raw, apiVersion = process.env.ONECLAW_API_VERSION || "v1") {
   const base = String(raw || "").trim().replace(/\/+$/, "");
   if (!base) return "";
@@ -1019,7 +1035,8 @@ export function createOneclawIntegration({
         if (spec.force === true) args.push("--force");
         const installed = await runCmd(OPENCLAW_NODE, clawArgs(args));
         if (installed.code !== 0) throw new Error(installed.output || `failed to install custom skill ${slug}`);
-        await applyInstalledSkillCredentials(slug, credentials);
+        const configKey = resolveCustomSkillConfigKey(skillRoot, spec, slug);
+        await applyInstalledSkillCredentials(configKey, credentials);
         return;
       } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });

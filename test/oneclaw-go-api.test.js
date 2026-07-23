@@ -814,7 +814,12 @@ test("employee template downloads custom skills instead of sending their slug to
       }] });
     }
     if (url.includes("/runtime/skills/merge-upstream/archive")) return new Response(Buffer.from("zip-data"), { status: 200 });
-    if (url.includes("/runtime/skills/merge-upstream")) return jsonResponse({ slug: "merge-upstream", source: "custom", version: "1.0.0" });
+    if (url.includes("/runtime/skills/merge-upstream")) return jsonResponse({
+      slug: "merge-upstream",
+      source: "custom",
+      name: "catalog-display-name",
+      version: "1.0.0",
+    });
     if (url.includes("/runtime/commands/cmd-custom/ack")) return jsonResponse({ acknowledged: true });
     if (url.includes("/runtime/events")) return jsonResponse({ accepted: true });
     throw new Error(`unexpected fetch: ${url}`);
@@ -828,7 +833,7 @@ test("employee template downloads custom skills instead of sending their slug to
         if (cmd === "unzip") {
           const extractedRoot = args[args.indexOf("-d") + 1];
           fs.mkdirSync(path.join(extractedRoot, "merge-upstream"), { recursive: true });
-          fs.writeFileSync(path.join(extractedRoot, "merge-upstream", "SKILL.md"), "---\nname: merge-upstream\n---\n");
+          fs.writeFileSync(path.join(extractedRoot, "merge-upstream", "SKILL.md"), "---\nname: manifest-skill-key\n---\n");
         }
         return { code: 0, output: "" };
       },
@@ -848,7 +853,7 @@ test("employee template downloads custom skills instead of sending their slug to
   assert.equal(runCalls.some((call) => call.args?.[2] === "merge-upstream"), false);
   assert.equal(fs.existsSync(install.args[2]), false);
   assert.deepEqual(rpcCalls.find((call) => call.method === "skills.update")?.params, {
-    skillKey: "merge-upstream",
+    skillKey: "manifest-skill-key",
     env: { SKILL_TOKEN: "secret" },
   });
 });

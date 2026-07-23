@@ -1,3 +1,5 @@
+ARG OP_VERSION=2.35.0
+
 FROM golang:1.26.5-bookworm AS builtin-skill-go-tools
 
 # Go-based dependencies declared by OpenClaw's bundled skills. Keep these in a
@@ -28,6 +30,8 @@ RUN apt-get update \
   && echo "${archive_sha}  /tmp/himalaya.tgz" | sha256sum -c - \
   && mkdir -p /out \
   && tar -xzf /tmp/himalaya.tgz -C /out himalaya
+
+FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword
 
 FROM node:24-bookworm
 
@@ -94,6 +98,7 @@ RUN npm install -g \
 
 COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
 COPY --from=builtin-skill-himalaya /out/himalaya /usr/local/bin/himalaya
+COPY --from=builtin-skill-onepassword /usr/local/bin/op /usr/local/bin/op
 
 RUN python3 -m venv /opt/oneclaw-python \
   && /opt/oneclaw-python/bin/pip install --no-cache-dir nano-pdf==0.2.1

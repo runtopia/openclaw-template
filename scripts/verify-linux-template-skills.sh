@@ -3,7 +3,7 @@ set -euo pipefail
 
 required_bins=(
   ffmpeg gh jq rg tmux unzip
-  summarize gog himalaya nano-pdf
+  summarize gog himalaya nano-pdf op
 )
 
 for binary in "${required_bins[@]}"; do
@@ -22,7 +22,7 @@ const fs = require("node:fs");
 const data = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const skills = Array.isArray(data) ? data : (data.skills || data.result?.skills || []);
 const supported = new Set([
-  "coding-agent", "github", "gog", "himalaya", "nano-pdf", "summarize", "weather",
+  "1password", "coding-agent", "github", "gog", "himalaya", "nano-pdf", "summarize", "weather",
   "notion", "slack", "discord", "feishu", "blogwatcher", "gifgrep", "wacli",
 ]);
 const failures = [];

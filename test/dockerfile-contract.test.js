@@ -48,6 +48,9 @@ test("Dockerfile includes complete Linux template skill dependencies", () => {
   assert.ok(dockerfile.includes("ARG HIMALAYA_VERSION=1.2.0"));
   assert.ok(dockerfile.includes("himalaya.${archive_arch}-linux.tgz"));
   assert.ok(dockerfile.includes("sha256sum -c -"));
+  assert.ok(dockerfile.includes("ARG OP_VERSION=2.35.0"));
+  assert.ok(dockerfile.includes("FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword"));
+  assert.ok(dockerfile.includes("COPY --from=builtin-skill-onepassword /usr/local/bin/op /usr/local/bin/op"));
   assert.ok(dockerfile.includes("nano-pdf==0.2.1"));
   assert.ok(dockerfile.includes("/opt/oneclaw-python/bin"));
 });

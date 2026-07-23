@@ -761,6 +761,7 @@ export function createOneclawIntegration({
       : { status: "active" };
 
     const requestedSkills = normalizeTemplateSkillRequirements(payload);
+    const skillCredentials = payload.skill_credentials || payload.skillCredentials || {};
     for (const requirement of requestedSkills) {
       const slug = String(requirement?.slug || requirement?.skill_slug || requirement || "").trim();
       if (!slug) continue;
@@ -770,7 +771,7 @@ export function createOneclawIntegration({
       }
       try {
         const spec = await resolveRuntimeSkillSpec(requirement);
-        await installSkillForAgent(spec, agentId, payload.credentials);
+        await installSkillForAgent(spec, agentId, skillCredentials[slug]);
         result.components.skills.push({
           slug,
           status: "active",

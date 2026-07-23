@@ -792,16 +792,26 @@ test("builtin skill install waits for the agent allowlist hot reload", async () 
 test("employee template downloads custom skills instead of sending their slug to ClawHub", async () => {
   const workspaceDir = makeWorkspace();
   const runCalls = [];
+  const rpcCalls = [];
   const gatewayRpc = {
     waitUntilConnected: async () => {},
-    rpcGateway: async (method) => {
+    rpcGateway: async (method, params) => {
+      rpcCalls.push({ method, params });
       if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "oneclaw-emp-custom" }] } };
       return { ok: true, payload: { ok: true } };
     },
   };
   const restoreFetch = withFetch((url) => {
     if (url.includes("/runtime/commands?")) {
-      return jsonResponse({ commands: [{ id: "cmd-custom", type: "apply_template", payload: { employee_id: "emp-custom", skills: ["merge-upstream"] } }] });
+      return jsonResponse({ commands: [{
+        id: "cmd-custom",
+        type: "apply_template",
+        payload: {
+          employee_id: "emp-custom",
+          skills: ["merge-upstream"],
+          skill_credentials: { "merge-upstream": { env: { SKILL_TOKEN: "secret" } } },
+        },
+      }] });
     }
     if (url.includes("/runtime/skills/merge-upstream/archive")) return new Response(Buffer.from("zip-data"), { status: 200 });
     if (url.includes("/runtime/skills/merge-upstream")) return jsonResponse({ slug: "merge-upstream", source: "custom", version: "1.0.0" });
@@ -837,6 +847,10 @@ test("employee template downloads custom skills instead of sending their slug to
   assert.equal(install.args.includes("--as"), true);
   assert.equal(runCalls.some((call) => call.args?.[2] === "merge-upstream"), false);
   assert.equal(fs.existsSync(install.args[2]), false);
+  assert.deepEqual(rpcCalls.find((call) => call.method === "skills.update")?.params, {
+    skillKey: "merge-upstream",
+    env: { SKILL_TOKEN: "secret" },
+  });
 });
 
 test("leased cron command reports a retryable failed acknowledgement when gateway sync fails", async () => {

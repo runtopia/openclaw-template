@@ -100,8 +100,11 @@ COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
 COPY --from=builtin-skill-himalaya /out/himalaya /usr/local/bin/himalaya
 COPY --from=builtin-skill-onepassword /usr/local/bin/op /usr/local/bin/op
 
+ARG UV_VERSION=0.8.14
 RUN python3 -m venv /opt/oneclaw-python \
-  && /opt/oneclaw-python/bin/pip install --no-cache-dir nano-pdf==0.2.1
+  && /opt/oneclaw-python/bin/pip install --no-cache-dir \
+       nano-pdf==0.2.1 \
+       uv==${UV_VERSION}
 ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 
 # Pre-install plugins OUTSIDE the /data volume, into a fixed image path.

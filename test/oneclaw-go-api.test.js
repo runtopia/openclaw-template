@@ -789,6 +789,76 @@ test("builtin skill install waits for the agent allowlist hot reload", async () 
   assert.deepEqual(configuredSkills, ["github"]);
 });
 
+test("clawhub skill install fails when declared CLI requirements remain missing", async () => {
+  const workspaceDir = makeWorkspace();
+  fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({
+    agents: { list: [{ id: "oneclaw-emp-cli", skills: ["media-tool"] }] },
+  }));
+  let acknowledgement;
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method) => {
+      if (method === "skills.status") {
+        return { ok: true, payload: { skills: [{ name: "media-tool", missing: { bins: ["media-cli"] } }] } };
+      }
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/runtime/commands?")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-cli-missing",
+        status: "leased",
+        type: "install_skill",
+        payload: {
+          employee_id: "emp-cli",
+          openclaw_agent_id: "oneclaw-emp-cli",
+          skill_slug: "media-tool",
+        },
+      }] });
+    }
+    if (url.includes("/runtime/skills/media-tool")) {
+      return jsonResponse({
+        slug: "media-tool",
+        source: "clawhub",
+        source_ref: "@owner/media-tool",
+        runtime_metadata: { requires: { bins: ["media-cli"] } },
+      });
+    }
+    if (url.includes("/runtime/commands/cmd-cli-missing/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    if (url.includes("/runtime/events")) return jsonResponse({ accepted: true });
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir: workspaceDir,
+      workspaceDir,
+      gatewayRpc,
+      runCmd: async () => ({ code: 0, output: "ok" }),
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+      skillStatusAttempts: 1,
+      skillStatusRetryMs: 0,
+    });
+    await integration.pollCommands();
+  } finally {
+    restoreFetch();
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+
+  assert.equal(acknowledgement.status, "failed");
+  assert.match(acknowledgement.error, /missing requirements.*media-cli/);
+});
+
 test("employee template downloads custom skills instead of sending their slug to ClawHub", async () => {
   const workspaceDir = makeWorkspace();
   const runCalls = [];

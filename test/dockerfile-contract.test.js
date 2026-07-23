@@ -52,13 +52,15 @@ test("Dockerfile includes complete Linux template skill dependencies", () => {
   assert.ok(dockerfile.includes("FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword"));
   assert.ok(dockerfile.includes("COPY --from=builtin-skill-onepassword /usr/local/bin/op /usr/local/bin/op"));
   assert.ok(dockerfile.includes("nano-pdf==0.2.1"));
+  assert.ok(dockerfile.includes("ARG UV_VERSION=0.8.14"));
+  assert.ok(dockerfile.includes("uv==${UV_VERSION}"));
   assert.ok(dockerfile.includes("/opt/oneclaw-python/bin"));
 });
 
 test("image includes a Linux template skill smoke verifier", () => {
   const script = fs.readFileSync(path.join(repoRoot, "scripts/verify-linux-template-skills.sh"), "utf8");
   assert.match(script, /openclaw skills list --agent main --json/);
-  for (const binary of ["summarize", "gog", "himalaya", "nano-pdf"]) {
+  for (const binary of ["summarize", "gog", "himalaya", "nano-pdf", "uv"]) {
     assert.ok(script.includes(binary), `${binary} should be verified`);
   }
   assert.doesNotMatch(script, /apple-notes|apple-reminders|things-mac/);

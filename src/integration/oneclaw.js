@@ -52,6 +52,18 @@ function skillUnavailableReasons(skill) {
   return reasons;
 }
 
+function skillNeedsRuntimeVerification(spec) {
+  const metadata = spec?.runtime_metadata || spec?.runtimeMetadata;
+  if (!metadata || typeof metadata !== "object") return false;
+  const requires = metadata.requires;
+  return Boolean(
+    (Array.isArray(metadata.os) && metadata.os.length > 0) ||
+    metadata.primary_env ||
+    metadata.primaryEnv ||
+    (requires && typeof requires === "object" && Object.values(requires).some((values) => Array.isArray(values) && values.length > 0)),
+  );
+}
+
 function resolveExtractedSkillRoot(extractRoot) {
   const roots = [];
   let visited = 0;
@@ -1037,6 +1049,7 @@ export function createOneclawIntegration({
         if (installed.code !== 0) throw new Error(installed.output || `failed to install custom skill ${slug}`);
         const configKey = resolveCustomSkillConfigKey(skillRoot, spec, slug);
         await applyInstalledSkillCredentials(configKey, credentials);
+        await verifyInstalledSkillIfRequired(spec, [configKey, slug], agentId);
         return;
       } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -1053,6 +1066,7 @@ export function createOneclawIntegration({
     const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
     if (result.code !== 0) throw new Error(result.output || `openclaw skills install exited ${result.code}`);
     await applyInstalledSkillCredentials(slug, credentials);
+    await verifyInstalledSkillIfRequired(spec, [slug], agentId);
   }
 
   async function applyInstalledSkillCredentials(slug, credentials) {
@@ -1085,6 +1099,44 @@ export function createOneclawIntegration({
     }
     if (lastConnectionError) throw lastConnectionError;
     return null;
+  }
+
+  async function ensureInstalledSkillUsable(identifiers, agentId) {
+    const normalized = identifiers.map((value) => String(value || "").trim()).filter(Boolean);
+    const attempts = Math.max(1, Number(skillStatusAttempts) || 1);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await gatewayRpc.waitUntilConnected?.(10_000);
+      const frame = await callGateway("skills.status", { agentId });
+      const skills = frame?.skills || frame?.result?.skills || frame?.payload?.skills || [];
+      const skill = Array.isArray(skills)
+        ? skills.find((entry) => normalized.some((value) => entry?.name === value || entry?.slug === value || entry?.skillKey === value))
+        : null;
+      if (skill) {
+        const unavailableReasons = skillUnavailableReasons(skill);
+        if (unavailableReasons.length === 0) return;
+        if (attempt === attempts - 1 || skill.blockedByAgentFilter !== true) {
+          throw new Error(`installed skill ${normalized[0]} is not usable: ${unavailableReasons.join("; ")}`);
+        }
+      } else if (attempt === attempts - 1) {
+        throw new Error(`installed skill ${normalized[0]} is not available in this runtime`);
+      }
+      if (skillStatusRetryMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, skillStatusRetryMs));
+      }
+    }
+  }
+
+  async function verifyInstalledSkillIfRequired(spec, identifiers, agentId) {
+    if (!skillNeedsRuntimeVerification(spec)) return;
+    const slug = String(spec?.slug || identifiers[0] || "").trim();
+    const wasAllowed = readAgentSkillAllowlist(agentId).includes(slug);
+    addAgentSkillToAllowlist(agentId, slug);
+    try {
+      await ensureInstalledSkillUsable(identifiers, agentId);
+    } catch (err) {
+      if (!wasAllowed) removeAgentSkillFromAllowlist(agentId, slug);
+      throw err;
+    }
   }
 
   async function removeEmployeeSkill(payload) {

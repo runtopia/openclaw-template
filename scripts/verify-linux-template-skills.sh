@@ -3,7 +3,7 @@ set -euo pipefail
 
 required_bins=(
   ffmpeg gh jq rg tmux unzip
-  summarize gog himalaya nano-pdf op
+  summarize gog himalaya nano-pdf op uv
 )
 
 for binary in "${required_bins[@]}"; do

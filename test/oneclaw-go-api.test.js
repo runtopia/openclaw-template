@@ -118,7 +118,9 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
     },
   };
   const restoreFetch = withFetch((url) => {
-    if (url.includes("/runtime/skills/github")) return jsonResponse({ slug: "github", source: "clawhub" });
+    if (url.includes("/runtime/skills/github")) {
+      return jsonResponse({ slug: "github", source: "clawhub", source_ref: "@openclaw/github" });
+    }
     assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/heartbeat");
     return jsonResponse({
       instance_id: "runtime-1",
@@ -170,7 +172,7 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
     rpcCalls.find((call) => call.method === "agents.update").params,
     { agentId: "oneclaw-emp-1", name: "程序员助理", avatar: "👨‍💻" },
   );
-  assert.deepEqual(runCalls[0].args, ["skills", "install", "github", "--agent", "oneclaw-emp-1"]);
+  assert.deepEqual(runCalls[0].args, ["skills", "install", "@openclaw/github", "--agent", "oneclaw-emp-1"]);
 });
 
 test("employee template retries the first file write after agent creation restarts the gateway", async () => {
@@ -1031,7 +1033,7 @@ test("command polling installs and removes employee skills", async () => {
     assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/commands?limit=10");
     return jsonResponse({
       commands: [
-        { id: "cmd-install", type: "install_skill", payload: { employee_id: "emp-skill", openclaw_agent_id: "oneclaw-emp-skill", skill_slug: "github", source: "clawhub" } },
+        { id: "cmd-install", type: "install_skill", payload: { employee_id: "emp-skill", openclaw_agent_id: "oneclaw-emp-skill", skill_slug: "github", source: "clawhub", credentials: { env: { GITHUB_TOKEN: "secret" } } } },
         { id: "cmd-remove", type: "remove_skill", payload: { employee_id: "emp-skill", openclaw_agent_id: "oneclaw-emp-skill", skill_slug: "github" } },
       ],
     });
@@ -1064,6 +1066,10 @@ test("command polling installs and removes employee skills", async () => {
   }
 
   assert.deepEqual(runCalls[0], ["skills", "install", "github", "--agent", "oneclaw-emp-skill"]);
+  assert.deepEqual(rpcCalls.find((call) => call.method === "skills.update")?.params, {
+    skillKey: "github",
+    env: { GITHUB_TOKEN: "secret" },
+  });
   assert.deepEqual(runCalls[1], ["skills", "list", "--agent", "oneclaw-emp-skill", "--json"]);
   assert.deepEqual(allowlistsBeforeRemove, [["calendar", "github"]]);
   const configured = JSON.parse(fs.readFileSync(configPath, "utf8")).agents.list[0];

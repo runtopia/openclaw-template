@@ -984,9 +984,7 @@ export function createOneclawIntegration({
         if (unavailableReasons.length > 0) {
           throw new Error(`builtin skill ${slug} is not usable: ${unavailableReasons.join("; ")}`);
         }
-        if (credentials && Object.keys(credentials).length > 0) {
-          await callGateway("skills.update", { skillKey: slug, ...credentials });
-        }
+        await applyInstalledSkillCredentials(slug, credentials);
       } catch (err) {
         if (!wasAllowed) removeAgentSkillFromAllowlist(agentId, slug);
         throw err;
@@ -1020,17 +1018,29 @@ export function createOneclawIntegration({
         if (spec.force === true) args.push("--force");
         const installed = await runCmd(OPENCLAW_NODE, clawArgs(args));
         if (installed.code !== 0) throw new Error(installed.output || `failed to install custom skill ${slug}`);
+        await applyInstalledSkillCredentials(slug, credentials);
         return;
       } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
       }
     }
     if (source !== "clawhub") throw new Error(`unsupported skill source: ${source}`);
-    const args = ["skills", "install", slug, "--agent", agentId];
+    const sourceRef = String(spec.source_ref || spec.sourceRef || slug).trim();
+    if (!/^@[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(sourceRef) && sourceRef !== slug) {
+      throw new Error(`invalid clawhub source reference: ${sourceRef}`);
+    }
+    const args = ["skills", "install", sourceRef, "--agent", agentId];
     if (spec.version) args.push("--version", String(spec.version));
     if (spec.force === true) args.push("--force");
     const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
     if (result.code !== 0) throw new Error(result.output || `openclaw skills install exited ${result.code}`);
+    await applyInstalledSkillCredentials(slug, credentials);
+  }
+
+  async function applyInstalledSkillCredentials(slug, credentials) {
+    if (!credentials || typeof credentials !== "object" || Object.keys(credentials).length === 0) return;
+    await gatewayRpc.waitUntilConnected?.(10_000);
+    await callGateway("skills.update", { skillKey: slug, ...credentials });
   }
 
   async function waitForBuiltinSkillStatus(slug, agentId) {

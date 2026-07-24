@@ -300,6 +300,10 @@ export function generateConfigDirect(opts) {
     list: [{ id: "main", default: true, name: "main", workspace: workspaceDir }],
   };
   const cfg = { gateway, session, tools, skills, models, agents, plugins, channels, bindings };
+  // Keep fresh instances on the same patch path as persisted-volume redeploys.
+  // This also selects the bundled OneClaw Search provider when ClawRouters auth
+  // is available, without overriding an explicit user-selected provider.
+  applyRuntimeDefaults(cfg, env);
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));

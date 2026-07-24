@@ -1,0 +1,25 @@
+{
+  "name": "@oneclaw/openclaw-search",
+  "version": "0.1.0",
+  "description": "OneClaw routed web-search provider for OpenClaw cloud runtimes.",
+  "type": "module",
+  "exports": "./index.mjs",
+  "files": [
+    "index.mjs",
+    "openclaw.plugin.json"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./index.mjs"
+    ],
+    "providers": [
+      "oneclaw-search"
+    ]
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

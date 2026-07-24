@@ -124,7 +124,8 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #     - slack / discord / feishu / whatsapp are official standalone packages.
 #     - wechat has no official package; @tencent-weixin/openclaw-weixin is the
 #       third-party plugin (channel id "openclaw-weixin", versioned separately).
-#   Plus clawrouters (chat/image/video providers; GitHub-only, not on npm).
+#   Plus clawrouters (chat/image/video providers; GitHub-only, not on npm) and
+#   the first-party OneClaw Search provider copied from this repository.
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
@@ -147,6 +148,8 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && node /app/scripts/patch-weixin-http-routes.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
+COPY resources/openclaw-plugins/oneclaw-search ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search
+RUN chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search
 
 WORKDIR /app
 

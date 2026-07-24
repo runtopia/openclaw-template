@@ -65,3 +65,10 @@ test("image includes a Linux template skill smoke verifier", () => {
   }
   assert.doesNotMatch(script, /apple-notes|apple-reminders|things-mac/);
 });
+
+test("Dockerfile bundles the OneClaw Search provider outside the data volume", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  assert.ok(dockerfile.includes(
+    "COPY resources/openclaw-plugins/oneclaw-search ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search",
+  ));
+});

@@ -7,6 +7,8 @@
 - **OpenClaw 网关 + Control UI** 在 `/openclaw`
 - **反向代理**（监听 `PORT`），自动注入 Bearer Token
 - **持久化存储**通过 Railway Volume（`/data`）— 配置、凭证和记忆在重新部署时保留
+- **语义记忆检索**：存在 ClawRouters 子密钥时使用 ClawRouters embeddings
+- **OneClaw 联网搜索**：通过 ClawRouters 路由，服务端使用 SearXNG/Tavily 回退
 - **修复控制台**在 `/repair/*` — AI 诊断对话、网关重启、WhatsApp/微信扫码绑定
 - **健康检查端点** `/health`
 - **登录页** `/login`（由 `SETUP_PASSWORD` 保护）
@@ -28,6 +30,14 @@ Wrapper（Express 监听 PORT）
 1. **启动**：Wrapper 读取环境变量 → 写入 `openclaw.json`（幂等）→ 启动 `openclaw gateway` → 等待网关就绪 → 开始处理流量。
 2. **运行时**：自动恢复网关崩溃（指数退避，最多 5 次）。在设置了平台环境变量时，向 oneclaw_web 上报心跳、统计和人格信息。
 3. **修复**：`/repair/*` 端点供 oneclaw_web 面板（或直接 API 调用）使用，支持 AI 诊断、网关重启，以及 WhatsApp/微信 QR 绑定流程。
+
+### 默认记忆与联网搜索
+
+配置 `CLAWROUTERS_API_KEY` 后，新实例和已有持久化实例都会在每次启动时收敛到同一套默认能力：
+
+- `agents.defaults.memorySearch` 通过 ClawRouters embeddings 检索记忆文件和历史会话；索引与源文件仍保存在实例自己的 Volume。
+- `tools.web.search` 默认选择镜像内置的 `oneclaw-search` provider，复用用户 child key 调用 ClawRouters `/api/v1/search`；SearXNG/Tavily 密钥、缓存、故障回退和积分计费均留在服务端。
+- 用户显式选择的其他搜索 provider 或 `enabled=false` 关闭状态不会被覆盖。
 
 ## 环境变量
 

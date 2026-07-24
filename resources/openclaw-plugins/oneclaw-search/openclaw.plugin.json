@@ -1,0 +1,34 @@
+{
+  "id": "oneclaw-search",
+  "name": "OneClaw Search",
+  "description": "OneClaw web search routed by ClawRouters.",
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": false,
+  "contracts": {
+    "webSearchProviders": [
+      "oneclaw-search"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "providerConfigId": {
+        "type": "string",
+        "description": "models.providers entry used for baseUrl and auth. Default: clawrouters."
+      },
+      "baseUrl": {
+        "type": "string",
+        "description": "Optional ClawRouters API base URL override."
+      },
+      "timeoutMs": {
+        "type": "number",
+        "minimum": 1000,
+        "maximum": 120000,
+        "description": "Search request timeout in milliseconds. Default: 20000."
+      }
+    }
+  }
+}

@@ -29,6 +29,7 @@ const DEFAULT_PLUGINS_DIR = "/opt/openclaw-plugins";
 // "openclaw-weixin"); there is no official wechat plugin.
 const PREINSTALLED_PACKAGES = [
   "@oneclaw/clawrouters",
+  "@oneclaw/openclaw-search",
   "@openclaw/slack",
   "@openclaw/discord",
   "@openclaw/feishu",
@@ -45,6 +46,7 @@ const OFFICIAL_NPM_PLUGIN_INSTALLS = [
 
 const PREINSTALLED_PLUGIN_IDS = [
   "clawrouters",
+  "oneclaw-search",
   "slack",
   "discord",
   "feishu",

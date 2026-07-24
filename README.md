@@ -7,6 +7,8 @@ Deploy **OpenClaw** (an AI coding assistant platform) on Railway as a single con
 - **OpenClaw Gateway + Control UI** at `/openclaw`
 - **Reverse proxy** on `PORT` with automatic Bearer token injection
 - **Persistent state** via Railway Volume (`/data`) — config, credentials, and memory survive redeploys
+- **Semantic memory search** backed by ClawRouters embeddings when a ClawRouters child key is present
+- **OneClaw web search** routed through ClawRouters with server-side SearXNG/Tavily fallback
 - **Repair console** at `/repair/*` — AI diagnostic chat, gateway restart, QR binding for WhatsApp/WeChat
 - **Health endpoint** at `/health`
 - **Login page** at `/login` (protected by `SETUP_PASSWORD`)
@@ -28,6 +30,14 @@ Wrapper (Express on PORT)
 1. **Startup**: wrapper reads env vars → writes `openclaw.json` (idempotent) → spawns `openclaw gateway` → waits for gateway readiness → begins serving traffic.
 2. **Runtime**: auto-heals gateway crashes (exponential backoff, max 5 restarts). Sends heartbeat/stats/personality to oneclaw_web when platform env vars are set.
 3. **Repair**: `/repair/*` endpoints let oneclaw_web's panel (or direct API calls) run AI diagnostics, restart the gateway, or trigger QR binding flows for WhatsApp/WeChat.
+
+### Default memory and web search
+
+With `CLAWROUTERS_API_KEY`, fresh and existing instances converge on the same runtime defaults at every startup:
+
+- `agents.defaults.memorySearch` indexes memory files and sessions through the ClawRouters embeddings endpoint. The index and source files stay on the instance volume.
+- `tools.web.search` selects the image-bundled `oneclaw-search` provider. Search calls use the same user child key and go to ClawRouters `/api/v1/search`; SearXNG/Tavily credentials, caching, fallback, and Credits billing remain server-side.
+- An explicitly selected third-party search provider or `enabled=false` setting is preserved.
 
 ## Environment Variables
 

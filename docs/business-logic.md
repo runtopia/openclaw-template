@@ -127,9 +127,9 @@ flowchart LR
 2. 写入 gateway 配置：loopback、内部端口、token auth、`/openclaw` basePath、allowed origins。
 3. 写入 models provider。ClawRouters 使用 env secret ref，不把 key 明文写入配置。
 4. 写入 agent defaults，包括 workspace、默认模型、heartbeat、上下文压缩和 ClawRouters memory search。
-5. 写入插件加载路径 `/opt/openclaw-plugins`。
+5. 写入插件加载路径 `/opt/openclaw-plugins`，并在有 ClawRouters child key 时启用 `oneclaw-search`。
 6. 写入 Telegram、Discord、Slack、Feishu、WhatsApp、WeChat 渠道配置。
-7. 生成 `session.dmScope=per-channel-peer` 和 `tools.profile=full`。
+7. 生成 `session.dmScope=per-channel-peer` 和 `tools.profile=full`；未被用户显式覆盖时，将 `tools.web.search` 指向 OneClaw Search。
 
 后续启动时，如果配置已存在，wrapper 不重建整份配置，而是修补：
 
@@ -568,7 +568,7 @@ flowchart TD
 ## 8. 外部依赖
 
 - OpenClaw core：gateway、Control UI、CLI、agent、channel 和 skill 能力。
-- ClawRouters：推荐模型 provider、图像/视频模型、memory search、用户 child key。
+- ClawRouters：推荐模型 provider、图像/视频模型、memory search、OneClaw Search 路由、用户 child key 与搜索积分计费。
 - OneClaw API：实例心跳、命令队列、人格模板、提醒、渠道状态。
 - Railway：生产部署和 `/data` volume。
 - Docker：本地或测试环境部署同一镜像。

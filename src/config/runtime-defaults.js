@@ -8,6 +8,8 @@
 const DEFAULT_HEARTBEAT = { every: "2h", target: "last" };
 const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" };
 const CLAWROUTERS_EMBEDDING_MODEL = "auto";
+const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
+const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
 
 // ── Shared helpers (also re-exported via generate.js) ────────────────────────
 
@@ -80,6 +82,33 @@ function applyClawroutersMemorySearchPatch(defaults, env) {
   return changed;
 }
 
+function applyOneclawWebSearchPatch(cfg) {
+  const plugins = ensureObject(cfg, "plugins");
+  const pluginEntries = ensureObject(plugins, "entries");
+  const searchPlugin = ensureObject(pluginEntries, ONECLAW_SEARCH_PLUGIN_ID);
+  let changed = setJsonValue(searchPlugin, "enabled", true);
+
+  const tools = ensureObject(cfg, "tools");
+  const web = ensureObject(tools, "web");
+  const search = ensureObject(web, "search");
+  const selectedProvider = typeof search.provider === "string"
+    ? search.provider.trim()
+    : "";
+
+  // Respect an explicitly selected third-party provider. With no selection,
+  // choose OneClaw Search while preserving an explicit enabled=false opt-out.
+  if (!selectedProvider) {
+    changed = setJsonValue(search, "provider", ONECLAW_SEARCH_PROVIDER_ID) || changed;
+  }
+  if (
+    (selectedProvider === "" || selectedProvider === ONECLAW_SEARCH_PROVIDER_ID)
+    && search.enabled !== false
+  ) {
+    changed = setJsonValue(search, "enabled", true) || changed;
+  }
+  return changed;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function applyRuntimeDefaults(cfg, env = process.env) {
@@ -118,6 +147,9 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
 
   if (hasKey || usesClawroutersMemory) {
     changed = applyClawroutersMemorySearchPatch(defaults, env) || changed;
+  }
+  if (hasKey) {
+    changed = applyOneclawWebSearchPatch(cfg) || changed;
   }
 
   return changed;

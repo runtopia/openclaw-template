@@ -76,6 +76,11 @@ test("direct config and repair key use CLAWROUTERS_BASE_URL", () => {
       apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
     },
   });
+  assert.deepEqual(cfg.tools.web.search, {
+    enabled: true,
+    provider: "oneclaw-search",
+  });
+  assert.equal(cfg.plugins.entries["oneclaw-search"].enabled, true);
 });
 
 test("direct config binds environment token channels to main account", () => {
@@ -131,6 +136,40 @@ test("existing openclaw.json runtime defaults are patched from CLAWROUTERS_BASE_
       baseUrl: "https://clawrouters-dev.example.com/api/v1",
       apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
     },
+  });
+  assert.deepEqual(cfg.tools.web.search, {
+    enabled: true,
+    provider: "oneclaw-search",
+  });
+  assert.equal(cfg.plugins.entries["oneclaw-search"].enabled, true);
+});
+
+test("runtime defaults preserve an explicit web search provider", () => {
+  const cfg = {
+    agents: { defaults: {} },
+    tools: { web: { search: { enabled: true, provider: "tavily" } } },
+  };
+
+  applyRuntimeDefaults(cfg, { CLAWROUTERS_API_KEY: "cr_test" });
+
+  assert.deepEqual(cfg.tools.web.search, {
+    enabled: true,
+    provider: "tavily",
+  });
+  assert.equal(cfg.plugins.entries["oneclaw-search"].enabled, true);
+});
+
+test("runtime defaults preserve an explicit web search opt-out", () => {
+  const cfg = {
+    agents: { defaults: {} },
+    tools: { web: { search: { enabled: false } } },
+  };
+
+  applyRuntimeDefaults(cfg, { CLAWROUTERS_API_KEY: "cr_test" });
+
+  assert.deepEqual(cfg.tools.web.search, {
+    enabled: false,
+    provider: "oneclaw-search",
   });
 });
 

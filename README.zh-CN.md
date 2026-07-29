@@ -21,7 +21,7 @@
 Wrapper（Express 监听 PORT）
   ├─ /health         → 存活检测
   ├─ /login          → Control UI 登录页（鉴权：SETUP_PASSWORD）
-  ├─ /repair/*       → 修复助手（鉴权：session 或 Bearer 密钥）
+  ├─ /repair/*       → 修复助手（session 或 Bearer；runtime input 仅接受实例 Bearer）
   └─ 其他所有路由    → 反向代理到 openclaw gateway（自动注入 Bearer Token）
 ```
 
@@ -38,6 +38,14 @@ Wrapper（Express 监听 PORT）
 - `agents.defaults.memorySearch` 通过 ClawRouters embeddings 检索记忆文件和历史会话；索引与源文件仍保存在实例自己的 Volume。
 - `tools.web.search` 默认选择镜像内置的 `oneclaw-search` provider，复用用户 child key 调用 ClawRouters `/api/v1/search`；SearXNG/Tavily 密钥、缓存、故障回退和积分计费均留在服务端。
 - 用户显式选择的其他搜索 provider 或 `enabled=false` 关闭状态不会被覆盖。
+
+### 持久任务与结构化输入
+
+镜像同时内置 `oneclaw-workflows`。新实例和已有实例默认启用持久任务工具
+`oneclaw_work`，并开启 OpenClaw 原生的结构化 `update_plan` 工具。插件的
+`request_user_input` 会等待进程私有的 loopback broker；平台客户端通过带实例
+密钥的 `POST /repair/interactions/input` 提交答案。broker URL 和 token 均由
+Wrapper 内部随机生成，不属于公网配置。
 
 ## 环境变量
 
@@ -57,6 +65,10 @@ Wrapper（Express 监听 PORT）
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Google Gemini 直连 |
 | `DEEPSEEK_API_KEY` | DeepSeek 直连 |
 | `OPENROUTER_API_KEY` | OpenRouter |
+
+OpenAI 直连 provider 默认使用 OpenClaw 内置 agent runtime，与 OneClaw Desktop
+保持一致。已有的显式 `agentRuntime` 选择不会被覆盖；默认 pin 可避免云端首启时
+额外下载数 GB 的 Codex harness。
 
 ### 推荐
 
@@ -83,7 +95,7 @@ Wrapper（Express 监听 PORT）
 |------|------|
 | `ONECLAW_API_URL` | OneClaw API 端点（默认：`https://www.oneclaw.net/api/v1`） |
 | `ONECLAW_INSTANCE_ID` | oneclaw_web 分配的实例 ID |
-| `ONECLAW_INSTANCE_SECRET` | 心跳上报的实例密钥 |
+| `ONECLAW_INSTANCE_SECRET` | 心跳上报及平台访问受保护 Runtime 接口的实例密钥 |
 | `ONECLAW_TEMPLATE_ID` | 模板 ID（可选） |
 
 ### 可选 / 高级
@@ -210,6 +222,13 @@ A：设置不同的 provider API 密钥，或使用 `CLAWROUTERS_API_KEY` 进行
 **Q：网关 Bearer Token 如何在重新部署后保持稳定？**
 
 A：如果未设置 `OPENCLAW_GATEWAY_TOKEN`，Wrapper 在首次启动时自动生成 Token 并持久化到 `${OPENCLAW_STATE_DIR}/gateway.token`。只要 `/data` Volume 保持挂载，重新部署后会复用同一 Token。
+
+平台提交结构化输入时，使用
+`POST /repair/interactions/input` 并携带
+`Authorization: Bearer <ONECLAW_INSTANCE_SECRET>`。该接口不接受浏览器 session
+或 gateway token。
+请求字段、幂等规则和 HTTP 状态码见
+[`docs/interaction-input-contract.md`](docs/interaction-input-contract.md)。
 
 **Q：为什么插件预装在镜像中而不是运行时安装？**
 

@@ -123,7 +123,7 @@ flowchart LR
 
 首次启动时，如果存在至少一个模型 provider key，wrapper 会生成 `openclaw.json`：
 
-1. 选择 provider，优先级为 `CLAWROUTERS_API_KEY`、Anthropic、OpenAI、Gemini、OpenRouter、DeepSeek。
+1. 选择 provider，优先级为 `CLAWROUTERS_API_KEY`、Anthropic、OpenAI、Gemini、OpenRouter、DeepSeek。OpenAI / OpenAI Codex provider 在未显式选择 runtime 时会 pin 到内置 `pi` runtime，避免 OpenClaw 2026.7.1 首启下载外置 Codex harness。
 2. 写入 gateway 配置：loopback、内部端口、token auth、`/openclaw` basePath、allowed origins。
 3. 写入 models provider。ClawRouters 使用 env secret ref，不把 key 明文写入配置。
 4. 写入 agent defaults，包括 workspace、默认模型、heartbeat、上下文压缩和 ClawRouters memory search。
@@ -366,9 +366,9 @@ flowchart TD
 
 镜像构建：
 
-- 基础镜像：`node:22-bookworm`。
-- 安装 OpenClaw core，当前 Dockerfile pin 到 `openclaw@2026.6.10`。
-- 预装 ClawRouters、Slack、Discord、Feishu、WhatsApp、WeChat 插件到 `/opt/openclaw-plugins`。
+- 基础镜像：`node:24-bookworm`。
+- 安装 OpenClaw core，当前 Dockerfile pin 到 `openclaw@2026.7.1`。
+- 预装 ClawRouters、OneClaw Search、OneClaw Durable Work、Slack、Discord、Feishu、WhatsApp、WeChat 插件到 `/opt/openclaw-plugins`。
 - 安装 wrapper 依赖 `express`、`http-proxy`、`ws`。
 - 运行时通过 `start.sh` 启动。
 
@@ -403,6 +403,16 @@ Docker：
 | `OPENCLAW_GATEWAY_TOKEN` | gateway auth、proxy | 内部 gateway bearer token |
 | `SETUP_PASSWORD` | login auth | Control UI 登录密码 |
 | `WHATSAPP_ENABLED`、`WECHAT_ENABLED` | channel manifest | 启用 QR 通道插件 |
+
+结构化输入：
+
+- Gateway 子进程只接收 Wrapper 内部生成的
+  `ONECLAW_INTERACTION_BROKER_URL/TOKEN`。
+- broker 只监听 loopback，不向公网暴露 token。
+- 平台通过 `POST /repair/interactions/input` 提交答案；该路由只接受
+  `ONECLAW_INSTANCE_SECRET` Bearer，不接受浏览器 session 或 gateway token。
+- 精确请求结构、幂等语义及 `200/400/404/409/410/503` 状态码定义在
+  `docs/interaction-input-contract.md`，供 `oneclaw_api` 直接依赖。
 
 Agent API：
 

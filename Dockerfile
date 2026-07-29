@@ -73,11 +73,10 @@ RUN apt-get update \
     fonts-liberation \
   && rm -rf /var/lib/apt/lists/*
 
-# Pin OpenClaw core.
-# 固定在 2026.6.10：2026.6.11 的 reply session 初始化改用整-entry CAS（只重试一次），
-# 会导致 dashboard/webchat 二轮对话及微信等通道第二条消息起报
-# "reply session initialization conflicted"。6.10 无此逻辑。
-ARG OPENCLAW_VERSION=2026.6.10
+# Pin OpenClaw core to the same runtime shipped by OneClaw Desktop. The
+# sidecar's runtime patches and first-party plugins are validated against this
+# exact host version.
+ARG OPENCLAW_VERSION=2026.7.1
 ENV OPENCLAW_VERSION=${OPENCLAW_VERSION}
 ARG CLAWHUB_VERSION=0.23.1
 ARG CODEX_VERSION=0.144.4
@@ -118,14 +117,15 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #   it via `plugins.load.paths`. The discovery code (discoverFromPath) accepts
 #   any path and resolves each plugin's deps through the adjacent node_modules,
 #   so this needs zero runtime copy and zero runtime npm install.
-#   Channels (verified against openclaw 2026.6.10 source):
+#   Channels (verified against openclaw 2026.7.1 source):
 #     - telegram is BUILT INTO openclaw core (dist/extensions/telegram) — no
 #       plugin to install here.
 #     - slack / discord / feishu / whatsapp are official standalone packages.
 #     - wechat has no official package; @tencent-weixin/openclaw-weixin is the
 #       third-party plugin (channel id "openclaw-weixin", versioned separately).
 #   Plus clawrouters (chat/image/video providers; GitHub-only, not on npm) and
-#   the first-party OneClaw Search provider copied from this repository.
+#   the first-party OneClaw Search and Durable Work plugins copied from this
+#   repository.
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
@@ -133,23 +133,31 @@ ARG CACHEBUST_PLUGINS=v7
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts ./scripts
-# 2026.6.10 会保存 chat.send 图片，却未把保存路径交给当前 agent；构建时补齐并在上游修复后移除。
+# OpenClaw saves chat.send images but does not pass the managed path to the
+# current agent; keep the existing fail-closed patch until upstream removes
+# the matching bundle anchors.
 RUN node /app/scripts/patch-openclaw-chat-images.js /usr/local/lib/node_modules/openclaw
+# OpenClaw 2026.7.1 can leave duplicate legacy Memory Core state in place,
+# causing its strict startup migration checkpoint to fail on every restart.
+RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_modules/openclaw/dist
 RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && cd ${OPENCLAW_PLUGINS_DIR} \
   && npm init -y >/dev/null 2>&1 \
   && npm install --omit=dev --no-audit --no-fund \
        github:runtopia/clawrouters-plugin#0.4.1 \
-       @openclaw/slack@2026.6.10 \
-       @openclaw/discord@2026.6.10 \
-       @openclaw/feishu@2026.6.10 \
-       @openclaw/whatsapp@2026.6.10 \
+       @openclaw/slack@2026.7.1 \
+       @openclaw/discord@2026.7.1 \
+       @openclaw/feishu@2026.7.1 \
+       @openclaw/whatsapp@2026.7.1 \
        @tencent-weixin/openclaw-weixin@2.4.6 \
   && node /app/scripts/patch-weixin-http-routes.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 COPY resources/openclaw-plugins/oneclaw-search ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search
-RUN chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search
+COPY resources/openclaw-plugins/oneclaw-workflows ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work
+RUN chmod -R a+rX \
+      ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search \
+      ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work
 
 WORKDIR /app
 

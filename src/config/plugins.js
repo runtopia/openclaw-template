@@ -30,6 +30,7 @@ const DEFAULT_PLUGINS_DIR = "/opt/openclaw-plugins";
 const PREINSTALLED_PACKAGES = [
   "@oneclaw/clawrouters",
   "@oneclaw/openclaw-search",
+  "@oneclaw/durable-work",
   "@openclaw/slack",
   "@openclaw/discord",
   "@openclaw/feishu",
@@ -47,6 +48,7 @@ const OFFICIAL_NPM_PLUGIN_INSTALLS = [
 const PREINSTALLED_PLUGIN_IDS = [
   "clawrouters",
   "oneclaw-search",
+  "oneclaw-workflows",
   "slack",
   "discord",
   "feishu",

@@ -76,6 +76,23 @@ export function createAuth({ SETUP_PASSWORD, ONECLAW_INSTANCE_SECRET, GATEWAY_TO
     if (isAuthed(req)) return next();
     return res.status(401).json({ ok: false, error: "unauthorized" });
   }
+  // Platform-to-runtime mutation endpoints must only accept the per-instance
+  // secret. A browser session or gateway token is intentionally insufficient.
+  function requireInstanceSecretApi(req, res, next) {
+    if (!ONECLAW_INSTANCE_SECRET) {
+      return res.status(503).json({ ok: false, error: "instance secret unavailable" });
+    }
+    if (bearerMatchesSecret(req)) return next();
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
 
-  return { isAuthed, requireAuthPage, requireAuthApi, signSession, verifySession, AUTH_COOKIE };
+  return {
+    isAuthed,
+    requireAuthPage,
+    requireAuthApi,
+    requireInstanceSecretApi,
+    signSession,
+    verifySession,
+    AUTH_COOKIE,
+  };
 }

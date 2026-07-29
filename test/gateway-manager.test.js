@@ -73,6 +73,50 @@ test("gateway restart requests are coalesced while a restart is already in fligh
   assert.equal(procs.filter((proc) => !proc.killed).length, 1);
 });
 
+test("gateway child receives the process-private interaction broker environment", async (t) => {
+  const originalSpawn = childProcess.spawn;
+  const originalFetch = globalThis.fetch;
+  let spawnedEnv;
+
+  childProcess.spawn = (_command, _args, options) => {
+    spawnedEnv = options.env;
+    return new FakeProc(1);
+  };
+  globalThis.fetch = async () => new Response("ok", { status: 200 });
+
+  t.after(() => {
+    childProcess.spawn = originalSpawn;
+    globalThis.fetch = originalFetch;
+  });
+
+  const gateway = createGatewayManager({
+    OPENCLAW_NODE: "node",
+    clawArgs: (args) => args,
+    stateDir: "/tmp/openclaw-template-gateway-env-test",
+    workspaceDir: "/tmp/openclaw-template-gateway-env-test/workspace",
+    internalGatewayPort: 18789,
+    internalGatewayHost: "127.0.0.1",
+    gatewayToken: "test-token",
+    isConfigured: () => true,
+    gatewayEnv: {
+      ONECLAW_INTERACTION_BROKER_URL: "http://127.0.0.1:4567",
+      ONECLAW_INTERACTION_BROKER_TOKEN: "broker-token",
+    },
+  });
+  t.after(() => gateway.stopGateway());
+
+  await gateway.ensureGatewayRunning();
+
+  assert.equal(
+    spawnedEnv.ONECLAW_INTERACTION_BROKER_URL,
+    "http://127.0.0.1:4567",
+  );
+  assert.equal(
+    spawnedEnv.ONECLAW_INTERACTION_BROKER_TOKEN,
+    "broker-token",
+  );
+});
+
 test("gateway runner exit does not crash-loop when gateway http is still reachable", async (t) => {
   const originalSpawn = childProcess.spawn;
   const originalFetch = globalThis.fetch;

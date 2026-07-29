@@ -72,3 +72,28 @@ test("Dockerfile bundles the OneClaw Search provider outside the data volume", (
     "COPY resources/openclaw-plugins/oneclaw-search ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search",
   ));
 });
+
+test("Dockerfile aligns OpenClaw core and official plugins to Desktop 2026.7.1", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  assert.ok(dockerfile.includes("ARG OPENCLAW_VERSION=2026.7.1"));
+  for (const plugin of ["slack", "discord", "feishu", "whatsapp"]) {
+    assert.ok(
+      dockerfile.includes(`@openclaw/${plugin}@2026.7.1`),
+      `@openclaw/${plugin} should match the host runtime`,
+    );
+  }
+});
+
+test("Dockerfile patches Memory Core and bundles Durable Work outside the data volume", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  assert.ok(dockerfile.includes(
+    "RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_modules/openclaw/dist",
+  ));
+  assert.ok(dockerfile.includes(
+    "COPY resources/openclaw-plugins/oneclaw-workflows ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work",
+  ));
+  assert.match(
+    dockerfile,
+    /chmod -R a\+rX[\s\S]*\$\{OPENCLAW_PLUGINS_DIR\}\/node_modules\/@oneclaw\/durable-work/,
+  );
+});

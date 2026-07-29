@@ -1,0 +1,21 @@
+{
+  "id": "oneclaw-workflows",
+  "name": "OneClaw Durable Work",
+  "description": "Request-first durable progress, recovery, and reusable work methods.",
+  "version": "0.3.2",
+  "main": "index.mjs",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "oneclaw_work",
+      "request_user_input"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

@@ -3,6 +3,7 @@ import { mountAssistant } from "./assistant.js";
 import { mountQrLogin } from "./qr-login.js";
 import { mountConfigOps } from "./config-ops.js";
 import { mountBrowserLogin } from "./browser-login.js";
+import { mountInteractions } from "./interactions.js";
 
 export function createRepairRouter(deps) {
   const router = express.Router();
@@ -11,6 +12,7 @@ export function createRepairRouter(deps) {
   mountQrLogin(router, deps);
   mountAssistant(router, deps);
   mountBrowserLogin(router, deps);
+  mountInteractions(router, deps);
   return router;
 }
 

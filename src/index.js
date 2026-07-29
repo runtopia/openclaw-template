@@ -31,6 +31,7 @@ import { reconcileAllChannels } from "./channels/manifest.js";
 import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./config/plugins.js";
 import { createAuth } from "./proxy/auth.js";
 import { createBrowserSessionManager } from "./proxy/browser-session.js";
+import { createInteractionBrokerRuntime } from "./interactions/broker.js";
 import { createReverseProxy } from "./proxy/reverse-proxy.js";
 import { createGatewayWsRelay } from "./proxy/ws-relay.js";
 import { agentWorkspace, migrateAgentWorkspaces } from "./agents/workspace.js";
@@ -84,7 +85,14 @@ process.env.OPENCLAW_GATEWAY_TOKEN = GATEWAY_TOKEN;
 
 // ── 鉴权 + 反向代理模块 ───────────────────────────────────────────────────────
 
-const { isAuthed, requireAuthPage, requireAuthApi, signSession, AUTH_COOKIE } = createAuth({
+const {
+  isAuthed,
+  requireAuthPage,
+  requireAuthApi,
+  requireInstanceSecretApi,
+  signSession,
+  AUTH_COOKIE,
+} = createAuth({
   SETUP_PASSWORD,
   ONECLAW_INSTANCE_SECRET,
   GATEWAY_TOKEN,
@@ -226,6 +234,8 @@ async function ensureWorkspaceFiles() {
 ensureConfig();
 migrateAgentWorkspaces({ workspaceRoot: WORKSPACE_DIR, configPath: CONFIG_PATH });
 
+const interactionRuntime = await createInteractionBrokerRuntime();
+
 const gateway = createGatewayManager({
   OPENCLAW_NODE,
   clawArgs,
@@ -235,6 +245,7 @@ const gateway = createGatewayManager({
   internalGatewayHost: GATEWAY_HOST,
   gatewayToken: GATEWAY_TOKEN,
   isConfigured,
+  gatewayEnv: interactionRuntime.gatewayEnv,
 });
 
 const gatewayRpc = createGatewayRpc({
@@ -326,6 +337,8 @@ const repairRouter = createRepairRouter({
   getRepairAiKey: () => repairAiKey,
   gatewayRpc,
   oneclawIntegration: oneclaw,
+  requireInstanceSecretApi,
+  interactionBroker: interactionRuntime.service,
   issueBrowserLoginUrl: (req, next) => browserSessions.issueLoginUrl(req, next),
 });
 app.use("/repair", requireAuthApi);
@@ -428,6 +441,9 @@ function shutdown(signal) {
   oneclaw.stop();
   gatewayRpc.close();
   gateway.stopGateway();
+  interactionRuntime.stop().catch((error) => {
+    console.warn(`[sidecar] interaction broker shutdown failed: ${error.message}`);
+  });
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);
 }

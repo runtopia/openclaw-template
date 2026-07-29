@@ -21,7 +21,7 @@ User Request
 Wrapper (Express on PORT)
   ├─ /health         → liveness probe
   ├─ /login          → Control UI login page (auth: SETUP_PASSWORD)
-  ├─ /repair/*       → repair assistant (auth: session or Bearer secret)
+  ├─ /repair/*       → repair assistant (session or Bearer; runtime input requires instance Bearer)
   └─ all other       → reverse-proxied to openclaw gateway (Bearer token auto-injected)
 ```
 
@@ -38,6 +38,15 @@ With `CLAWROUTERS_API_KEY`, fresh and existing instances converge on the same ru
 - `agents.defaults.memorySearch` indexes memory files and sessions through the ClawRouters embeddings endpoint. The index and source files stay on the instance volume.
 - `tools.web.search` selects the image-bundled `oneclaw-search` provider. Search calls use the same user child key and go to ClawRouters `/api/v1/search`; SearXNG/Tavily credentials, caching, fallback, and Credits billing remain server-side.
 - An explicitly selected third-party search provider or `enabled=false` setting is preserved.
+
+### Durable work and structured input
+
+The image also bundles `oneclaw-workflows`. Fresh and existing instances enable
+its durable `oneclaw_work` tool and OpenClaw's native structured
+`update_plan` tool by default. The plugin's `request_user_input` tool waits on a
+process-private loopback broker. Platform clients answer through
+`POST /repair/interactions/input` with the instance secret; the broker URL and
+token are generated internally and are never public configuration.
 
 ## Environment Variables
 
@@ -57,6 +66,10 @@ At least one model provider key is required to trigger auto-configuration:
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Google Gemini direct |
 | `DEEPSEEK_API_KEY` | DeepSeek direct |
 | `OPENROUTER_API_KEY` | OpenRouter |
+
+Direct OpenAI providers default to OpenClaw's embedded agent runtime, matching
+OneClaw Desktop. An explicit `agentRuntime` selection is preserved; otherwise
+this avoids a multi-GB Codex harness download during the first cloud boot.
 
 ### Recommended
 
@@ -83,7 +96,7 @@ At least one model provider key is required to trigger auto-configuration:
 |----------|-------------|
 | `ONECLAW_API_URL` | OneClaw API endpoint (default: `https://www.oneclaw.net/api/v1`) |
 | `ONECLAW_INSTANCE_ID` | Instance ID assigned by oneclaw_web |
-| `ONECLAW_INSTANCE_SECRET` | Instance secret for heartbeat auth |
+| `ONECLAW_INSTANCE_SECRET` | Instance secret for heartbeat auth and protected platform-to-runtime repair calls |
 | `ONECLAW_RUNTIME_CONTRACT` | Runtime personality contract version (default: `2`) |
 
 ### Optional / Advanced
@@ -212,6 +225,12 @@ A: Set a different provider API key or use `CLAWROUTERS_API_KEY` for multi-model
 A: If `OPENCLAW_GATEWAY_TOKEN` is not set, the wrapper auto-generates a token on first startup and persists it to `${OPENCLAW_STATE_DIR}/gateway.token`. As long as the `/data` volume is mounted, the same token is reused across redeploys.
 
 For platform dashboards, do not expose `OPENCLAW_GATEWAY_TOKEN` to browsers. Use `POST /repair/openclaw-login` with `Authorization: Bearer <ONECLAW_INSTANCE_SECRET>` to issue a short-lived `/oneclaw-login?ticket=...` URL. The browser consumes that URL to receive an HttpOnly session cookie before entering `/openclaw/` or `/openclaw/chat`.
+
+Structured input answers use `POST /repair/interactions/input` with the same
+instance-secret Bearer authentication. Unlike general repair UI routes, this
+endpoint does not accept a browser session or gateway token.
+The exact request, idempotency, and HTTP status contract is documented in
+[`docs/interaction-input-contract.md`](docs/interaction-input-contract.md).
 
 **Q: Why are plugins baked into the image rather than installed at runtime?**
 

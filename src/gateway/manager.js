@@ -3,7 +3,7 @@
 import childProcess from "node:child_process";
 import fs from "node:fs";
 
-export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured, gracefulRestartAdoptionMs = 5_000 }) {
+export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured, gatewayEnv = {}, gracefulRestartAdoptionMs = 5_000 }) {
   const GATEWAY_TARGET = `http://${internalGatewayHost}:${internalGatewayPort}`;
 
   const LOG_BUFFER_MAX = 500;
@@ -93,7 +93,12 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     ];
     const proc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, OPENCLAW_STATE_DIR: stateDir, OPENCLAW_WORKSPACE_DIR: workspaceDir },
+      env: {
+        ...process.env,
+        ...gatewayEnv,
+        OPENCLAW_STATE_DIR: stateDir,
+        OPENCLAW_WORKSPACE_DIR: workspaceDir,
+      },
     });
     gatewayProc = proc;
     intentionalStop = false; // 新进程已启动，清除上一轮可能残留的主动停止标记

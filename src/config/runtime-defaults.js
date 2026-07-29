@@ -10,6 +10,11 @@ const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWR
 const CLAWROUTERS_EMBEDDING_MODEL = "auto";
 const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
 const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
+const ONECLAW_WORKFLOWS_PLUGIN_ID = "oneclaw-workflows";
+const OPENCLAW_PROVIDER_PINNED_AGENT_RUNTIME = {
+  openai: "pi",
+  "openai-codex": "pi",
+};
 
 // ── Shared helpers (also re-exported via generate.js) ────────────────────────
 
@@ -109,6 +114,60 @@ function applyOneclawWebSearchPatch(cfg) {
   return changed;
 }
 
+function applyOneclawWorkflowsPatch(cfg) {
+  const plugins = ensureObject(cfg, "plugins");
+  const pluginEntries = ensureObject(plugins, "entries");
+  const workflowsPlugin = ensureObject(pluginEntries, ONECLAW_WORKFLOWS_PLUGIN_ID);
+  let changed = setJsonValue(workflowsPlugin, "enabled", true);
+
+  // An existing non-empty plugins.allow is an exclusive allowlist. Keep that
+  // user policy intact while ensuring the image-bundled workflow plugin is not
+  // accidentally excluded. Do not turn an empty/non-restrictive list into a
+  // restrictive one.
+  if (
+    Array.isArray(plugins.allow)
+    && plugins.allow.length > 0
+    && !plugins.allow.includes(ONECLAW_WORKFLOWS_PLUGIN_ID)
+  ) {
+    plugins.allow = [...plugins.allow, ONECLAW_WORKFLOWS_PLUGIN_ID];
+    changed = true;
+  }
+
+  const tools = ensureObject(cfg, "tools");
+  const experimental = ensureObject(tools, "experimental");
+  if (experimental.planTool === undefined) {
+    experimental.planTool = true;
+    changed = true;
+  }
+  return changed;
+}
+
+function applyOpenclawProviderAgentRuntimePins(cfg) {
+  const providers = cfg?.models?.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
+    return false;
+  }
+
+  let changed = false;
+  for (const [providerId, runtimeId] of Object.entries(OPENCLAW_PROVIDER_PINNED_AGENT_RUNTIME)) {
+    const provider = providers[providerId];
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
+    const existing = provider.agentRuntime;
+    if (
+      existing
+      && typeof existing === "object"
+      && !Array.isArray(existing)
+      && typeof existing.id === "string"
+      && existing.id.trim()
+    ) {
+      continue;
+    }
+    provider.agentRuntime = { id: runtimeId };
+    changed = true;
+  }
+  return changed;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function applyRuntimeDefaults(cfg, env = process.env) {
@@ -123,6 +182,7 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   const skillEntries = ensureObject(skills, "entries");
   const codingAgent = ensureObject(skillEntries, "coding-agent");
   changed = setJsonValue(codingAgent, "enabled", true) || changed;
+  changed = applyOneclawWorkflowsPatch(cfg) || changed;
 
   const hasKey = hasClawroutersKey(env);
   const provider = cfg?.models?.providers?.clawrouters;
@@ -144,6 +204,7 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
       changed = true;
     }
   }
+  changed = applyOpenclawProviderAgentRuntimePins(cfg) || changed;
 
   if (hasKey || usesClawroutersMemory) {
     changed = applyClawroutersMemorySearchPatch(defaults, env) || changed;

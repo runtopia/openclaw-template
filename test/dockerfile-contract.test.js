@@ -76,6 +76,13 @@ test("Dockerfile bundles the OneClaw Search provider outside the data volume", (
 test("Dockerfile aligns OpenClaw core and official plugins to Desktop 2026.7.1", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   assert.ok(dockerfile.includes("ARG OPENCLAW_VERSION=2026.7.1"));
+  assert.ok(
+    dockerfile.includes(
+      "git+https://github.com/runtopia/clawrouters-plugin.git#0.4.1",
+    ),
+    "ClawRouters should use HTTPS so cloud builds do not require SSH credentials",
+  );
+  assert.ok(!dockerfile.includes("github:runtopia/clawrouters-plugin"));
   for (const plugin of ["slack", "discord", "feishu", "whatsapp"]) {
     assert.ok(
       dockerfile.includes(`@openclaw/${plugin}@2026.7.1`),

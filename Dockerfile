@@ -144,7 +144,7 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && cd ${OPENCLAW_PLUGINS_DIR} \
   && npm init -y >/dev/null 2>&1 \
   && npm install --omit=dev --no-audit --no-fund \
-       github:runtopia/clawrouters-plugin#0.4.1 \
+       git+https://github.com/runtopia/clawrouters-plugin.git#0.4.1 \
        @openclaw/slack@2026.7.1 \
        @openclaw/discord@2026.7.1 \
        @openclaw/feishu@2026.7.1 \

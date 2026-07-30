@@ -129,7 +129,7 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v7
+ARG CACHEBUST_PLUGINS=v8
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts ./scripts
@@ -150,6 +150,18 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
        @openclaw/feishu@2026.7.1 \
        @openclaw/whatsapp@2026.7.1 \
        @tencent-weixin/openclaw-weixin@2.4.6 \
+  # OpenClaw's post-core plugin smoke check requires every official plugin
+  # that declares the host as a peerDependency to resolve that peer from the
+  # plugin's own node_modules. The host is installed globally, outside this
+  # standalone /opt npm project, so npm cannot create these links itself.
+  && for plugin in slack discord feishu whatsapp; do \
+       plugin_dir="${OPENCLAW_PLUGINS_DIR}/node_modules/@openclaw/${plugin}"; \
+       mkdir -p "${plugin_dir}/node_modules"; \
+       if [ ! -e "${plugin_dir}/node_modules/openclaw" ]; then \
+         ln -s /usr/local/lib/node_modules/openclaw "${plugin_dir}/node_modules/openclaw"; \
+       fi; \
+       test -f "${plugin_dir}/node_modules/openclaw/package.json"; \
+     done \
   && node /app/scripts/patch-weixin-http-routes.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}

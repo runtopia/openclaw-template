@@ -89,6 +89,18 @@ test("Dockerfile aligns OpenClaw core and official plugins to Desktop 2026.7.1",
       `@openclaw/${plugin} should match the host runtime`,
     );
   }
+  assert.ok(
+    dockerfile.includes(
+      'ln -s /usr/local/lib/node_modules/openclaw "${plugin_dir}/node_modules/openclaw"',
+    ),
+    "official plugins should resolve their globally installed OpenClaw peer",
+  );
+  assert.ok(
+    dockerfile.includes(
+      'test -f "${plugin_dir}/node_modules/openclaw/package.json"',
+    ),
+    "the image build should fail if an official plugin cannot resolve its OpenClaw peer",
+  );
 });
 
 test("Dockerfile patches Memory Core and bundles Durable Work outside the data volume", () => {

@@ -9,11 +9,12 @@ import {
   generateConfigDirect,
 } from "../src/config/generate.js";
 
-test("runtime defaults enable Durable Work and the native plan tool without provider credentials", () => {
+test("runtime defaults enable Durable Work, Workboard, and the native plan tool without provider credentials", () => {
   const cfg = {};
 
   assert.equal(applyRuntimeDefaults(cfg, {}), true);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
+  assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);
 });
 
@@ -26,6 +27,14 @@ test("runtime defaults preserve an explicit plan-tool opt-out", () => {
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
 });
 
+test("runtime defaults preserve an explicit Workboard opt-out", () => {
+  const cfg = { plugins: { entries: { workboard: { enabled: false } } } };
+
+  applyRuntimeDefaults(cfg, {});
+
+  assert.equal(cfg.plugins.entries.workboard.enabled, false);
+});
+
 test("runtime defaults extend only an already-restrictive plugin allowlist", () => {
   const restrictive = { plugins: { allow: ["clawrouters"] } };
   const nonRestrictive = { plugins: { allow: [] } };
@@ -33,7 +42,11 @@ test("runtime defaults extend only an already-restrictive plugin allowlist", () 
   applyRuntimeDefaults(restrictive, {});
   applyRuntimeDefaults(nonRestrictive, {});
 
-  assert.deepEqual(restrictive.plugins.allow, ["clawrouters", "oneclaw-workflows"]);
+  assert.deepEqual(restrictive.plugins.allow, [
+    "clawrouters",
+    "oneclaw-workflows",
+    "workboard",
+  ]);
   assert.deepEqual(nonRestrictive.plugins.allow, []);
 });
 
@@ -58,5 +71,6 @@ test("fresh config loads and enables the preinstalled Durable Work package", () 
 
   assert.deepEqual(cfg.plugins.load.paths, [installedPlugin]);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
+  assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);
 });

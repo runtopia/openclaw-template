@@ -11,6 +11,7 @@ const CLAWROUTERS_EMBEDDING_MODEL = "auto";
 const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
 const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
 const ONECLAW_WORKFLOWS_PLUGIN_ID = "oneclaw-workflows";
+const WORKBOARD_PLUGIN_ID = "workboard";
 const OPENCLAW_PROVIDER_PINNED_AGENT_RUNTIME = {
   openai: "pi",
   "openai-codex": "pi",
@@ -142,6 +143,32 @@ function applyOneclawWorkflowsPatch(cfg) {
   return changed;
 }
 
+function applyWorkboardPatch(cfg) {
+  const plugins = ensureObject(cfg, "plugins");
+  const pluginEntries = ensureObject(plugins, "entries");
+  const workboardPlugin = ensureObject(pluginEntries, WORKBOARD_PLUGIN_ID);
+  let changed = false;
+
+  // Enable Workboard by default for both fresh configs and persisted-volume
+  // upgrades, while preserving an explicit user opt-out.
+  if (workboardPlugin.enabled === undefined) {
+    workboardPlugin.enabled = true;
+    changed = true;
+  }
+
+  if (
+    workboardPlugin.enabled !== false
+    && Array.isArray(plugins.allow)
+    && plugins.allow.length > 0
+    && !plugins.allow.includes(WORKBOARD_PLUGIN_ID)
+  ) {
+    plugins.allow = [...plugins.allow, WORKBOARD_PLUGIN_ID];
+    changed = true;
+  }
+
+  return changed;
+}
+
 function applyOpenclawProviderAgentRuntimePins(cfg) {
   const providers = cfg?.models?.providers;
   if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
@@ -183,6 +210,7 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   const codingAgent = ensureObject(skillEntries, "coding-agent");
   changed = setJsonValue(codingAgent, "enabled", true) || changed;
   changed = applyOneclawWorkflowsPatch(cfg) || changed;
+  changed = applyWorkboardPatch(cfg) || changed;
 
   const hasKey = hasClawroutersKey(env);
   const provider = cfg?.models?.providers?.clawrouters;

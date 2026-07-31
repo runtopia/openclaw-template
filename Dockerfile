@@ -94,8 +94,25 @@ RUN npm install -g \
       @google/gemini-cli@${GEMINI_CLI_VERSION} \
       mcporter@${MCPORTER_VERSION} \
       @steipete/oracle@${ORACLE_VERSION} \
-      @steipete/summarize@${SUMMARIZE_VERSION} \
-      @xdevplatform/xurl@${XURL_VERSION}
+      @steipete/summarize@${SUMMARIZE_VERSION}
+
+# xurl's npm postinstall downloads its platform binary from GitHub with a
+# single https.get() call and no retry. Keep it in a separate layer so a
+# transient builder DNS failure retries only this small package rather than
+# the complete global toolchain.
+RUN set -eu; \
+  for attempt in 1 2 3; do \
+    if npm install -g @xdevplatform/xurl@${XURL_VERSION}; then \
+      break; \
+    fi; \
+    if [ "${attempt}" -eq 3 ]; then \
+      echo "xurl install failed after ${attempt} attempts" >&2; \
+      exit 1; \
+    fi; \
+    delay=$((attempt * 5)); \
+    echo "xurl install attempt ${attempt} failed; retrying in ${delay}s" >&2; \
+    sleep "${delay}"; \
+  done
 
 COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
 COPY --from=builtin-skill-himalaya /out/himalaya /usr/local/bin/himalaya

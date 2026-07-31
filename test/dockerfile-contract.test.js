@@ -26,6 +26,11 @@ test("Dockerfile preinstalls portable builtin skill dependencies", () => {
   ]) {
     assert.ok(dockerfile.includes(npmPackage), `${npmPackage} should be installed`);
   }
+  assert.match(
+    dockerfile,
+    /for attempt in 1 2 3; do[\s\S]*npm install -g @xdevplatform\/xurl@\$\{XURL_VERSION\}[\s\S]*xurl install failed after/,
+    "xurl's GitHub binary download should be retried independently",
+  );
   for (const module of ["blogwatcher", "blucli", "eightctl", "gifgrep", "ordercli", "sonoscli", "wacli"]) {
     assert.ok(dockerfile.includes(`/${module}/`), `${module} should be built`);
   }

@@ -33,7 +33,9 @@ RUN apt-get update \
 
 FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword
 
-FROM node:24-bookworm
+# OpenClaw 2026.7.1 requires a Node build with a WAL-reset-safe embedded
+# SQLite. Keep the Runtime image on the same version used by Channel CI.
+FROM node:24.15.0-bookworm
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

@@ -15,7 +15,7 @@
 //
 // Discovery only makes a plugin's code findable; activation still requires
 // plugins.entries.<id>.enabled=true (set by auto-config for clawrouters and by
-// the channel plan for discord/feishu), so listing all paths here is harmless
+// runtime defaults for OneClaw Channel), so listing all paths here is harmless
 // even when a given channel isn't configured.
 
 import fs from "node:fs";
@@ -31,6 +31,7 @@ const PREINSTALLED_PACKAGES = [
   "@oneclaw/clawrouters",
   "@oneclaw/openclaw-search",
   "@oneclaw/durable-work",
+  "@oneclaw/channel",
   "@openclaw/slack",
   "@openclaw/discord",
   "@openclaw/feishu",
@@ -43,12 +44,14 @@ const OFFICIAL_NPM_PLUGIN_INSTALLS = [
   { pluginId: "discord", packageName: "@openclaw/discord" },
   { pluginId: "feishu", packageName: "@openclaw/feishu" },
   { pluginId: "whatsapp", packageName: "@openclaw/whatsapp" },
+  { pluginId: "oneclaw-channel", packageName: "@oneclaw/channel" },
 ];
 
 const PREINSTALLED_PLUGIN_IDS = [
   "clawrouters",
   "oneclaw-search",
   "oneclaw-workflows",
+  "oneclaw-channel",
   "slack",
   "discord",
   "feishu",

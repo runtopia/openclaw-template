@@ -27,16 +27,26 @@ test("OneClaw Durable Work declares durable work and structured input tools", ()
   assert.equal(pkg.name, "@oneclaw/durable-work");
   assert.equal(pkg.version, manifest.version);
   assert.equal(pkg.openclaw.extensions[0], "./index.mjs");
+  assert.equal(pkg.dependencies["@oneclaw/runtime-events"], "0.1.0");
+  assert.equal(pkg.peerDependencies.openclaw, "2026.7.1");
 });
 
 test("OneClaw Durable Work captures only a loopback interaction broker", () => {
   const source = fs.readFileSync(path.join(pluginDir, "index.mjs"), "utf8");
+  const runtimeSource = fs.readFileSync(
+    path.join(pluginDir, "runtime-integration.mjs"),
+    "utf8",
+  );
 
   assert.match(source, /ONECLAW_INTERACTION_BROKER_URL/);
   assert.match(source, /ONECLAW_INTERACTION_BROKER_TOKEN/);
   assert.match(source, /OneClaw interaction broker must use loopback HTTP/);
-  assert.match(source, /authorization: `Bearer \$\{configuration\.token\}`/);
+  assert.match(runtimeSource, /authorization: `Bearer \$\{configuration\.token\}`/);
   assert.match(source, /api\.runtime\.tasks\.managedFlows\.fromToolContext/);
+  assert.match(source, /runtimeContexts\.register/);
+  assert.match(runtimeSource, /\/v1\/attentions/);
+  assert.match(runtimeSource, /\/v1\/events\/pending/);
+  assert.match(runtimeSource, /task\.snapshot/);
 });
 
 test("preinstalled plugin discovery includes the image-bundled workflow plugin", () => {

@@ -6,6 +6,7 @@
   "main": "index.mjs",
   "files": [
     "index.mjs",
+    "runtime-integration.mjs",
     "openclaw.plugin.json"
   ],
   "openclaw": {
@@ -13,8 +14,11 @@
       "./index.mjs"
     ]
   },
+  "dependencies": {
+    "@oneclaw/runtime-events": "0.1.0"
+  },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": "2026.7.1"
   },
   "engines": {
     "node": ">=22"

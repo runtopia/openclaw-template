@@ -116,3 +116,15 @@ test("Dockerfile patches Memory Core and bundles Durable Work outside the data v
     /chmod -R a\+rX[\s\S]*\$\{OPENCLAW_PLUGINS_DIR\}\/node_modules\/@oneclaw\/durable-work/,
   );
 });
+
+test("Dockerfile installs checksummed OneClaw Channel artifacts beside one shared Runtime Event SDK", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  assert.ok(dockerfile.includes("COPY resources/oneclaw-packages /tmp/oneclaw-packages"));
+  assert.ok(dockerfile.includes("sha256sum -c checksums.sha256"));
+  assert.ok(dockerfile.includes("oneclaw-runtime-events-0.1.0.tgz"));
+  assert.ok(dockerfile.includes("oneclaw-channel-0.1.0.tgz"));
+  assert.ok(dockerfile.includes("npm install --omit=dev --legacy-peer-deps"));
+  assert.ok(dockerfile.includes("root !== workflow || root !== channel"));
+  assert.ok(dockerfile.includes("/node_modules/@oneclaw/channel/package.json', 'utf8'"));
+  assert.ok(!dockerfile.includes("require('@oneclaw/channel/package.json')"));
+});

@@ -9,11 +9,12 @@ import {
   generateConfigDirect,
 } from "../src/config/generate.js";
 
-test("runtime defaults enable Durable Work, Workboard, and the native plan tool without provider credentials", () => {
+test("runtime defaults enable Durable Work, OneClaw Channel, Workboard, and the native plan tool without provider credentials", () => {
   const cfg = {};
 
   assert.equal(applyRuntimeDefaults(cfg, {}), true);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
+  assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
   assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);
 });
@@ -45,12 +46,13 @@ test("runtime defaults extend only an already-restrictive plugin allowlist", () 
   assert.deepEqual(restrictive.plugins.allow, [
     "clawrouters",
     "oneclaw-workflows",
+    "oneclaw-channel",
     "workboard",
   ]);
   assert.deepEqual(nonRestrictive.plugins.allow, []);
 });
 
-test("fresh config loads and enables the preinstalled Durable Work package", () => {
+test("fresh config loads and enables the preinstalled Durable Work and Channel packages", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-workflows-config-"));
   const pluginsDir = path.join(root, "plugins");
   const installedPlugin = path.join(
@@ -59,7 +61,14 @@ test("fresh config loads and enables the preinstalled Durable Work package", () 
     "@oneclaw",
     "durable-work",
   );
+  const installedChannel = path.join(
+    pluginsDir,
+    "node_modules",
+    "@oneclaw",
+    "channel",
+  );
   fs.mkdirSync(installedPlugin, { recursive: true });
+  fs.mkdirSync(installedChannel, { recursive: true });
   const configPath = path.join(root, "state", "openclaw.json");
 
   const cfg = generateConfigDirect({
@@ -69,8 +78,9 @@ test("fresh config loads and enables the preinstalled Durable Work package", () 
     env: { OPENCLAW_PLUGINS_DIR: pluginsDir },
   });
 
-  assert.deepEqual(cfg.plugins.load.paths, [installedPlugin]);
+  assert.deepEqual(cfg.plugins.load.paths, [installedPlugin, installedChannel]);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
+  assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
   assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);
 });

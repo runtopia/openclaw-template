@@ -57,6 +57,11 @@ const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
 const ONECLAW_API_URL      = process.env.ONECLAW_API_URL?.trim()      || "https://www.oneclaw.net/api/v1";
 const ONECLAW_INSTANCE_ID  = process.env.ONECLAW_INSTANCE_ID?.trim();
 const ONECLAW_INSTANCE_SECRET = process.env.ONECLAW_INSTANCE_SECRET?.trim();
+process.env.ONECLAW_API_URL ||= ONECLAW_API_URL;
+process.env.ONECLAW_CHANNEL_ENABLED ??= "1";
+if (ONECLAW_INSTANCE_ID) {
+  process.env.ONECLAW_RUNTIME_ID ||= ONECLAW_INSTANCE_ID;
+}
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
 
@@ -234,7 +239,9 @@ async function ensureWorkspaceFiles() {
 ensureConfig();
 migrateAgentWorkspaces({ workspaceRoot: WORKSPACE_DIR, configPath: CONFIG_PATH });
 
-const interactionRuntime = await createInteractionBrokerRuntime();
+const interactionRuntime = await createInteractionBrokerRuntime({
+  statePath: path.join(STATE_DIR, "oneclaw", "interaction-broker.sqlite"),
+});
 
 const gateway = createGatewayManager({
   OPENCLAW_NODE,

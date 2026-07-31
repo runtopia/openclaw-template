@@ -11,6 +11,7 @@ const CLAWROUTERS_EMBEDDING_MODEL = "auto";
 const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
 const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
 const ONECLAW_WORKFLOWS_PLUGIN_ID = "oneclaw-workflows";
+const ONECLAW_CHANNEL_PLUGIN_ID = "oneclaw-channel";
 const WORKBOARD_PLUGIN_ID = "workboard";
 const OPENCLAW_PROVIDER_PINNED_AGENT_RUNTIME = {
   openai: "pi",
@@ -143,6 +144,23 @@ function applyOneclawWorkflowsPatch(cfg) {
   return changed;
 }
 
+function applyOneclawChannelPatch(cfg) {
+  const plugins = ensureObject(cfg, "plugins");
+  const pluginEntries = ensureObject(plugins, "entries");
+  const channelPlugin = ensureObject(pluginEntries, ONECLAW_CHANNEL_PLUGIN_ID);
+  let changed = setJsonValue(channelPlugin, "enabled", true);
+
+  if (
+    Array.isArray(plugins.allow)
+    && plugins.allow.length > 0
+    && !plugins.allow.includes(ONECLAW_CHANNEL_PLUGIN_ID)
+  ) {
+    plugins.allow = [...plugins.allow, ONECLAW_CHANNEL_PLUGIN_ID];
+    changed = true;
+  }
+  return changed;
+}
+
 function applyWorkboardPatch(cfg) {
   const plugins = ensureObject(cfg, "plugins");
   const pluginEntries = ensureObject(plugins, "entries");
@@ -210,6 +228,7 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   const codingAgent = ensureObject(skillEntries, "coding-agent");
   changed = setJsonValue(codingAgent, "enabled", true) || changed;
   changed = applyOneclawWorkflowsPatch(cfg) || changed;
+  changed = applyOneclawChannelPatch(cfg) || changed;
   changed = applyWorkboardPatch(cfg) || changed;
 
   const hasKey = hasClawroutersKey(env);

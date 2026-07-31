@@ -3,6 +3,12 @@ import { readJsonFileWithFallback, writeJsonFileAtomically } from 'openclaw/plug
 import { resolveStateDir } from 'openclaw/plugin-sdk/state-paths';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import {
+  WorkflowEventReconciler,
+  createAttentionResponder,
+  flushBrokerEvents,
+  requestAttention,
+} from './runtime-integration.mjs';
 
 const PLUGIN_ID = 'oneclaw-workflows';
 const CONTROLLER_ID = 'oneclaw/request-first';
@@ -10,6 +16,7 @@ const METHOD_SCHEMA_VERSION = 1;
 const MAX_METHODS = 100;
 const MAX_METHOD_VERSIONS = 20;
 const MAX_METHOD_STEPS = 20;
+const EVENT_RECONCILE_INTERVAL_MS = 30_000;
 const METHOD_ID_RE = /^[a-z0-9][a-z0-9._-]{0,119}$/iu;
 const SECRET_PATTERNS = [
   /\b(?:api[_ -]?key|access[_ -]?token|password|secret|cookie|authorization)\b\s*[:=]\s*["']?[^\s,"'}]{6,}/iu,
@@ -218,26 +225,6 @@ function interactionBrokerConfiguration() {
   return cacheInteractionBrokerConfiguration(captureInteractionBrokerConfiguration());
 }
 
-async function requestDesktopInput(configuration, toolCallId, signal) {
-  if (!configuration) {
-    throw new Error('OneClaw Desktop input is unavailable.');
-  }
-  const response = await fetch(`${configuration.url}/v1/input`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${configuration.token}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ toolCallId }),
-    signal,
-  });
-  const payload = await response.json();
-  if (!response.ok || payload?.ok !== true) {
-    throw new Error(typeof payload?.error === 'string' ? payload.error : 'INPUT_REQUEST_FAILED');
-  }
-  return payload.answers;
-}
-
 function requireText(value, field, maxLength) {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`${field} is required for this durable work action.`);
@@ -293,6 +280,22 @@ function normalizeMethodSteps(value) {
 
 function methodStorePath() {
   return join(resolveStateDir(), 'oneclaw', 'work-methods.json');
+}
+
+function workflowEventStorePath() {
+  return join(resolveStateDir(), 'oneclaw', 'workflow-events.json');
+}
+
+async function readWorkflowEventRegistry() {
+  const { value } = await readJsonFileWithFallback(
+    workflowEventStorePath(),
+    { schemaVersion: 1, sessions: {}, flows: {} },
+  );
+  return value;
+}
+
+async function writeWorkflowEventRegistry(registry) {
+  await writeJsonFileAtomically(workflowEventStorePath(), registry);
 }
 
 function emptyMethodRegistry() {
@@ -431,7 +434,7 @@ function jsonResult(value) {
 function createWorkTool(api, context, methodRepository = {
   read: readMethodRegistry,
   mutate: mutateMethodRegistry,
-}) {
+}, eventRuntime = {}) {
   return {
     name: 'oneclaw_work',
     label: 'Durable Work',
@@ -450,11 +453,22 @@ function createWorkTool(api, context, methodRepository = {
     ],
     parameters: WORK_SCHEMA,
     executionMode: 'sequential',
-    async execute(_toolCallId, args) {
+    async execute(toolCallId, args) {
       // OpenClaw 2026.7.1 instantiates tool descriptors without a session
       // context during Doctor/registry audits. Resolve the session-scoped
       // managed-flow runtime only when the model actually invokes the tool.
       const runtime = api.runtime.tasks.managedFlows.fromToolContext(context);
+      const correlation = eventRuntime.correlations?.get(toolCallId);
+      const sessionKey = correlation?.sessionKey ?? context.sessionKey;
+      const runId = correlation?.runId;
+      await eventRuntime.reconciler?.rememberInvocation(sessionKey, runId);
+      const withTaskEvent = async (value, flow) => {
+        if (!flow) return jsonResult(value);
+        const delivery = eventRuntime.reconciler
+          ? await eventRuntime.reconciler.publishFlow(flow, sessionKey, runId)
+          : { eventDelivery: 'pending', reason: 'runtime_event_bridge_unavailable' };
+        return jsonResult({ ...value, ...delivery });
+      };
       switch (args.action) {
         case 'create': {
           const work = runtime.createManaged({
@@ -465,7 +479,7 @@ function createWorkTool(api, context, methodRepository = {
               ? { currentStep: requireText(args.currentStep, 'currentStep', 500) }
               : {}),
           });
-          return jsonResult({ created: true, work: flowView(work, runtime) });
+          return withTaskEvent({ created: true, work: flowView(work, runtime) }, work);
         }
         case 'list':
           return jsonResult({ work: runtime.list().map((flow) => flowView(flow, runtime)) });
@@ -489,10 +503,13 @@ function createWorkTool(api, context, methodRepository = {
               waitJson: { kind: 'user', reason: note },
               blockedSummary: note,
             });
-            return jsonResult({
-              ...mutationView(result, runtime),
-              normalizedAction: 'wait',
-            });
+            return withTaskEvent(
+              {
+                ...mutationView(result, runtime),
+                normalizedAction: 'wait',
+              },
+              result.applied ? result.flow : undefined,
+            );
           }
           const result = runtime.resume({
             flowId: requireText(args.flowId, 'flowId', 200),
@@ -502,7 +519,10 @@ function createWorkTool(api, context, methodRepository = {
               ? { currentStep: requireText(args.currentStep, 'currentStep', 500) }
               : {}),
           });
-          return jsonResult(mutationView(result, runtime));
+          return withTaskEvent(
+            mutationView(result, runtime),
+            result.applied ? result.flow : undefined,
+          );
         }
         case 'resume': {
           const result = runtime.resume({
@@ -513,7 +533,10 @@ function createWorkTool(api, context, methodRepository = {
               ? { currentStep: requireText(args.currentStep, 'currentStep', 500) }
               : {}),
           });
-          return jsonResult(mutationView(result, runtime));
+          return withTaskEvent(
+            mutationView(result, runtime),
+            result.applied ? result.flow : undefined,
+          );
         }
         case 'wait': {
           const needsUser = requireBoolean(args.needsUser, 'needsUser');
@@ -527,14 +550,20 @@ function createWorkTool(api, context, methodRepository = {
             waitJson: { kind: needsUser ? 'user' : 'external', reason: note },
             ...(needsUser ? { blockedSummary: note } : {}),
           });
-          return jsonResult(mutationView(result, runtime));
+          return withTaskEvent(
+            mutationView(result, runtime),
+            result.applied ? result.flow : undefined,
+          );
         }
         case 'complete': {
           const result = runtime.finish({
             flowId: requireText(args.flowId, 'flowId', 200),
             expectedRevision: requireFlowRevision(args.revision),
           });
-          return jsonResult(mutationView(result, runtime));
+          return withTaskEvent(
+            mutationView(result, runtime),
+            result.applied ? result.flow : undefined,
+          );
         }
         case 'fail': {
           const note = requireText(args.note, 'note', 800);
@@ -543,7 +572,10 @@ function createWorkTool(api, context, methodRepository = {
             expectedRevision: requireFlowRevision(args.revision),
             blockedSummary: note,
           });
-          return jsonResult(mutationView(result, runtime));
+          return withTaskEvent(
+            mutationView(result, runtime),
+            result.applied ? result.flow : undefined,
+          );
         }
         case 'save_method': {
           const name = requireSafeText(args.name, 'name', 160);
@@ -665,13 +697,16 @@ function createWorkTool(api, context, methodRepository = {
             status: 'running',
             currentStep: selected.steps[0].title,
           });
-          return jsonResult({
-            started: true,
-            method: selected,
-            work: flowView(work, runtime),
-            ...(inputNotes ? { inputNotes } : {}),
-            instruction: 'Execute the method steps in order and checkpoint the returned durable work at meaningful progress points.',
-          });
+          return withTaskEvent(
+            {
+              started: true,
+              method: selected,
+              work: flowView(work, runtime),
+              ...(inputNotes ? { inputNotes } : {}),
+              instruction: 'Execute the method steps in order and checkpoint the returned durable work at meaningful progress points.',
+            },
+            work,
+          );
         }
         default:
           throw new Error(`Unsupported durable work action: ${String(args.action)}`);
@@ -680,7 +715,7 @@ function createWorkTool(api, context, methodRepository = {
   };
 }
 
-function createRequestUserInputTool(configuration) {
+function createRequestUserInputTool(configuration, eventRuntime = {}) {
   return {
     name: 'request_user_input',
     label: 'Request User Input',
@@ -693,9 +728,18 @@ function createRequestUserInputTool(configuration) {
     ],
     parameters: REQUEST_USER_INPUT_SCHEMA,
     executionMode: 'sequential',
-    async execute(toolCallId, _args, signal) {
-      const answers = await requestDesktopInput(configuration, toolCallId, signal);
-      return jsonResult({ answered: true, answers });
+    async execute(toolCallId, args, signal) {
+      const correlation = eventRuntime.correlations?.get(toolCallId);
+      const result = await requestAttention({
+        args,
+        configuration,
+        ...(eventRuntime.publisher ? { publisher: eventRuntime.publisher } : {}),
+        runId: correlation?.runId,
+        sessionKey: correlation?.sessionKey,
+        signal,
+        toolCallId,
+      });
+      return jsonResult({ answered: true, ...result });
     },
   };
 }
@@ -706,11 +750,80 @@ export default definePluginEntry({
   description: 'Request-first durable progress and recovery for multi-step agent work.',
   register(api) {
     const interactionBroker = interactionBrokerConfiguration();
+    const correlations = new Map();
+    const relevantTools = new Set(['oneclaw_work', 'request_user_input']);
+    api.on('before_tool_call', (event, context) => {
+      if (!relevantTools.has(event.toolName)) return;
+      const toolCallId = event.toolCallId ?? context.toolCallId;
+      const runId = event.runId ?? context.runId;
+      const sessionKey = context.sessionKey;
+      if (!toolCallId || !runId || !sessionKey) return;
+      correlations.set(toolCallId, { runId, sessionKey, updatedAt: Date.now() });
+    });
+    api.on('after_tool_call', (event, context) => {
+      const toolCallId = event.toolCallId ?? context.toolCallId;
+      if (toolCallId) correlations.delete(toolCallId);
+    });
+
+    const reconciler = new WorkflowEventReconciler({
+      load: readWorkflowEventRegistry,
+      save: writeWorkflowEventRegistry,
+      listFlows: (sessionKey) =>
+        api.runtime.tasks.managedFlows.bindSession({ sessionKey }).list(),
+      logger: api.logger,
+    });
     api.registerTool(
-      (context) => createWorkTool(api, context),
+      (context) => createWorkTool(
+        api,
+        context,
+        {
+          read: readMethodRegistry,
+          mutate: mutateMethodRegistry,
+        },
+        { correlations, reconciler },
+      ),
       { names: ['oneclaw_work'] },
     );
-    api.registerTool(createRequestUserInputTool(interactionBroker), { name: 'request_user_input' });
+    api.registerTool(
+      createRequestUserInputTool(interactionBroker, { correlations }),
+      { name: 'request_user_input' },
+    );
+
+    let attentionLease;
+    let reconcileTimer;
+    api.registerService({
+      id: 'oneclaw-workflow-event-reconciliation',
+      async start() {
+        if (interactionBroker) {
+          attentionLease = api.runtime.channel.runtimeContexts.register({
+            channelId: 'oneclaw',
+            accountId: 'default',
+            capability: 'attention-responder',
+            context: createAttentionResponder(interactionBroker),
+          });
+        }
+        const reconcile = async () => {
+          try {
+            await reconciler.reconcile();
+            if (interactionBroker) await flushBrokerEvents(interactionBroker);
+          } catch (error) {
+            api.logger.warn?.(
+              `oneclaw-workflows: event reconciliation remains pending: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        };
+        await reconcile();
+        reconcileTimer = setInterval(reconcile, EVENT_RECONCILE_INTERVAL_MS);
+        reconcileTimer.unref?.();
+      },
+      stop() {
+        clearInterval(reconcileTimer);
+        attentionLease?.dispose();
+        attentionLease = undefined;
+      },
+    });
   },
 });
 

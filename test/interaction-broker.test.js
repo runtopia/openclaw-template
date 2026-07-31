@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -25,7 +28,11 @@ test("interaction broker resolves a pending plugin request with structured answe
     },
     body: JSON.stringify({ toolCallId: "call-1" }),
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (runtime.service.getByToolCallId("call-1")) break;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  assert.ok(runtime.service.getByToolCallId("call-1"));
 
   assert.deepEqual(runtime.service.submit({
     runId: "run-1",
@@ -164,4 +171,119 @@ test("interaction broker times out an unanswered plugin request", async (t) => {
     ok: false,
     error: "INPUT_REQUEST_TIMED_OUT",
   });
+});
+
+test("interaction broker recovers pending and terminal attention state across restart", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-attention-"));
+  const statePath = path.join(directory, "broker.sqlite");
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const now = Date.now();
+  const attention = {
+    attentionId: "attention_restart",
+    toolCallId: "call_restart",
+    runId: "run_restart",
+    revision: 1,
+    title: "Choose a format",
+    questions: [{
+      id: "format",
+      header: "Format",
+      question: "Which output format should be used?",
+      options: [{ id: "memo", label: "Memo" }],
+      allowCustom: true,
+      multiple: false,
+    }],
+    createdAt: now,
+    expiresAt: now + 60_000,
+  };
+
+  const first = new InteractionBrokerService({ statePath });
+  assert.equal(first.createAttention(attention).created, true);
+  assert.deepEqual(
+    first.listPendingEvents().map((entry) => entry.event.type),
+    ["attention.created"],
+  );
+  first.close();
+
+  const second = new InteractionBrokerService({ statePath });
+  assert.equal(second.listPending()[0].attentionId, "attention_restart");
+  assert.equal(second.createAttention(attention).duplicate, true);
+  const answers = [{ questionId: "format", selectedOptionIds: ["memo"] }];
+  const submitted = second.submit({
+    attentionId: "attention_restart",
+    runId: "run_restart",
+    expectedRevision: 1,
+    answers,
+  }, { detailed: true });
+  assert.equal(submitted.success, true);
+  assert.equal(submitted.attention.revision, 2);
+  second.close();
+
+  const third = new InteractionBrokerService({ statePath });
+  assert.deepEqual(third.submit({
+    attentionId: "attention_restart",
+    runId: "run_restart",
+    expectedRevision: 1,
+    answers,
+  }, { detailed: true }).status, "already_submitted");
+  assert.equal(third.submit({
+    attentionId: "attention_restart",
+    runId: "run_restart",
+    expectedRevision: 2,
+    answers: [{ questionId: "format", text: "Slides" }],
+  }, { detailed: true }).protocolCode, "revision_conflict");
+  assert.deepEqual(
+    third.listPendingEvents().map((entry) => entry.event.type),
+    ["attention.created", "attention.resolved"],
+  );
+  assert.equal(
+    third.markEventPublished("attention_restart:1:attention.created"),
+    true,
+  );
+  assert.deepEqual(
+    third.listPendingEvents().map((entry) => entry.event.type),
+    ["attention.resolved"],
+  );
+  third.close();
+});
+
+test("interaction broker persists expiration and its terminal event", () => {
+  let now = 1_000;
+  const service = new InteractionBrokerService({
+    maxWaitMs: 1_000,
+    now: () => now,
+    terminalTtlMs: 10_000,
+  });
+  service.createAttention({
+    attentionId: "attention_expiry",
+    toolCallId: "call_expiry",
+    runId: "run_expiry",
+    revision: 1,
+    title: "Approval",
+    questions: [{
+      id: "approve",
+      header: "Approval",
+      question: "Proceed?",
+      options: [{ id: "yes", label: "Yes" }],
+      allowCustom: false,
+      multiple: false,
+    }],
+    createdAt: now,
+    expiresAt: 1_500,
+  });
+  now = 2_000;
+  service.sweepExpired();
+
+  assert.equal(service.listPending().length, 0);
+  assert.deepEqual(
+    service.listPendingEvents().map((entry) => [
+      entry.event.type,
+      entry.event.revision,
+      entry.event.payload.status,
+    ]),
+    [
+      ["attention.created", 1, "pending"],
+      ["attention.expired", 2, "expired"],
+    ],
+  );
+  service.close();
 });

@@ -131,7 +131,7 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v8
+ARG CACHEBUST_PLUGINS=v9
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts ./scripts
@@ -167,11 +167,32 @@ RUN mkdir -p ${OPENCLAW_PLUGINS_DIR} \
   && node /app/scripts/patch-weixin-http-routes.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
+
+# OneClaw Runtime Channel release artifacts are built and checksummed by the
+# openclaw-lark Release Job. Install the shared SDK first and the Channel second
+# into the same top-level /opt tree; no runtime network access or npm install is
+# needed.
+COPY resources/oneclaw-packages /tmp/oneclaw-packages
+RUN cd /tmp/oneclaw-packages \
+  && sha256sum -c checksums.sha256 \
+  && cd ${OPENCLAW_PLUGINS_DIR} \
+  && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund \
+       /tmp/oneclaw-packages/oneclaw-runtime-events-0.1.0.tgz \
+       /tmp/oneclaw-packages/oneclaw-channel-0.1.0.tgz \
+  && if [ ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw" ]; then \
+       ln -s /usr/local/lib/node_modules/openclaw "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw"; \
+     fi \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/runtime-events/package.json" \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/channel/openclaw.plugin.json" \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw/package.json" \
+  && rm -rf /tmp/oneclaw-packages
 COPY resources/openclaw-plugins/oneclaw-search ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search
 COPY resources/openclaw-plugins/oneclaw-workflows ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work
 RUN chmod -R a+rX \
       ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search \
-      ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work
+      ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work \
+  && node --input-type=module -e "import { createRequire } from 'node:module'; const root = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json').resolve('@oneclaw/runtime-events'); const workflow = createRequire('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work/index.mjs').resolve('@oneclaw/runtime-events'); const channel = createRequire('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/channel/package.json').resolve('@oneclaw/runtime-events'); if (root !== workflow || root !== channel) throw new Error('OneClaw Runtime Event SDK did not resolve to one top-level package');" \
+  && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const require = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelPackage = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/channel/package.json', 'utf8')); if (require('@oneclaw/runtime-events').runtimeEventSdkVersion() !== '0.1.0') throw new Error('Unexpected Runtime Event SDK version'); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');"
 
 WORKDIR /app
 

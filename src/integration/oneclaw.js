@@ -11,6 +11,45 @@ import { patchConfig } from "../config/edit.js";
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
 
+function enabledFlag(value) {
+  return ["1", "on", "true", "yes"].includes(String(value || "").trim().toLowerCase());
+}
+
+export function buildOneclawChannelStatus({
+  apiUrl,
+  channelEnabled,
+  gatewayReady,
+  gatewayStarting,
+  hasSecret,
+  pluginSnapshot,
+  runtimeId,
+}) {
+  const enabled = enabledFlag(channelEnabled);
+  const configured = Boolean(enabled && apiUrl && runtimeId && hasSecret);
+  let state = "configured";
+  if (!enabled) state = "disabled";
+  else if (!String(apiUrl || "").trim()) state = "missing_api_url";
+  else if (!String(runtimeId || "").trim()) state = "missing_runtime_id";
+  else if (!hasSecret) state = "missing_secret";
+  else if (!gatewayReady) state = gatewayStarting ? "gateway_starting" : "gateway_unavailable";
+
+  const snapshot = pluginSnapshot && typeof pluginSnapshot === "object"
+    ? pluginSnapshot
+    : null;
+  if (snapshot && typeof snapshot.statusState === "string" && snapshot.statusState.trim()) {
+    state = snapshot.statusState.trim();
+  }
+
+  return {
+    enabled,
+    configured: snapshot?.configured === true || configured,
+    gateway_ready: Boolean(gatewayReady),
+    running: snapshot?.running === true,
+    connected: snapshot?.connected === true,
+    state,
+  };
+}
+
 function normalizeEmployeeLanguage(language) {
   return String(language || "").trim().toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 }
@@ -393,6 +432,31 @@ export function createOneclawIntegration({
         whatsapp: process.env.WHATSAPP_ENABLED === "1",
         wechat: process.env.WECHAT_ENABLED === "1",
       } : {};
+      let pluginSnapshot = null;
+      if (gatewayReady && typeof gatewayRpc?.rpcGateway === "function") {
+        try {
+          const frame = await gatewayRpc.rpcGateway(
+            "channels.status",
+            { probe: false, timeoutMs: 2_000 },
+            3_000,
+          );
+          pluginSnapshot = frame?.ok === true
+            ? frame.payload?.channels?.oneclaw
+            : null;
+        } catch {
+          // Heartbeat must remain available even while the Gateway RPC
+          // transport is reconnecting.
+        }
+      }
+      const oneclawChannel = buildOneclawChannelStatus({
+        apiUrl: platformApiUrl,
+        channelEnabled: process.env.ONECLAW_CHANNEL_ENABLED,
+        gatewayReady,
+        gatewayStarting: isGatewayStarting(),
+        hasSecret: Boolean(instanceSecret),
+        pluginSnapshot,
+        runtimeId: process.env.ONECLAW_RUNTIME_ID || instanceId,
+      });
       const res = await apiFetch("/runtime/heartbeat", {
         method: "POST",
         body: JSON.stringify({
@@ -406,6 +470,7 @@ export function createOneclawIntegration({
             openclaw_version: reportedOpenClawVersion,
             runtime_contract_version: String(runtimeContract),
             platforms,
+            oneclaw_channel: oneclawChannel,
           },
         }),
       });

@@ -87,7 +87,8 @@ ARG MCPORTER_VERSION=0.12.3
 ARG ORACLE_VERSION=0.16.0
 ARG XURL_VERSION=1.2.2
 ARG SUMMARIZE_VERSION=0.11.1
-RUN npm install -g \
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm install -g --prefer-offline --no-audit --no-fund \
       openclaw@${OPENCLAW_VERSION} \
       clawhub@${CLAWHUB_VERSION} \
       @openai/codex@${CODEX_VERSION} \
@@ -100,9 +101,11 @@ RUN npm install -g \
 # single https.get() call and no retry. Keep it in a separate layer so a
 # transient builder DNS failure retries only this small package rather than
 # the complete global toolchain.
-RUN set -eu; \
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+  set -eu; \
   for attempt in 1 2 3; do \
-    if npm install -g @xdevplatform/xurl@${XURL_VERSION}; then \
+    if npm install -g --prefer-offline --no-audit --no-fund \
+         @xdevplatform/xurl@${XURL_VERSION}; then \
       break; \
     fi; \
     if [ "${attempt}" -eq 3 ]; then \

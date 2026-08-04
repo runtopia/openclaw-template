@@ -43,10 +43,10 @@ With `CLAWROUTERS_API_KEY`, fresh and existing instances converge on the same ru
 
 The image also bundles `oneclaw-workflows`. Fresh and existing instances enable
 its durable `oneclaw_work` tool and OpenClaw's native structured
-`update_plan` tool by default. The plugin's `request_user_input` tool waits on a
-process-private loopback broker. Platform clients answer through
-`POST /repair/interactions/input` with the instance secret; the broker URL and
-token are generated internally and are never public configuration.
+`update_plan` tool by default. Structured input and external-app authorization
+are published directly as OneClaw Channel Attention events. Clients answer with
+Channel control commands, so there is no secondary interaction service or
+repair endpoint.
 
 ## Environment Variables
 
@@ -225,12 +225,6 @@ A: Set a different provider API key or use `CLAWROUTERS_API_KEY` for multi-model
 A: If `OPENCLAW_GATEWAY_TOKEN` is not set, the wrapper auto-generates a token on first startup and persists it to `${OPENCLAW_STATE_DIR}/gateway.token`. As long as the `/data` volume is mounted, the same token is reused across redeploys.
 
 For platform dashboards, do not expose `OPENCLAW_GATEWAY_TOKEN` to browsers. Use `POST /repair/openclaw-login` with `Authorization: Bearer <ONECLAW_INSTANCE_SECRET>` to issue a short-lived `/oneclaw-login?ticket=...` URL. The browser consumes that URL to receive an HttpOnly session cookie before entering `/openclaw/` or `/openclaw/chat`.
-
-Structured input answers use `POST /repair/interactions/input` with the same
-instance-secret Bearer authentication. Unlike general repair UI routes, this
-endpoint does not accept a browser session or gateway token.
-The exact request, idempotency, and HTTP status contract is documented in
-[`docs/interaction-input-contract.md`](docs/interaction-input-contract.md).
 
 **Q: Why are plugins baked into the image rather than installed at runtime?**
 

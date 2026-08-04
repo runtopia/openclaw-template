@@ -43,9 +43,8 @@ Wrapper（Express 监听 PORT）
 
 镜像同时内置 `oneclaw-workflows`。新实例和已有实例默认启用持久任务工具
 `oneclaw_work`，并开启 OpenClaw 原生的结构化 `update_plan` 工具。插件的
-`request_user_input` 会等待进程私有的 loopback broker；平台客户端通过带实例
-密钥的 `POST /repair/interactions/input` 提交答案。broker URL 和 token 均由
-Wrapper 内部随机生成，不属于公网配置。
+结构化提问与外部应用授权都会直接发布为 OneClaw Channel Attention 事件，
+客户端通过 Channel 控制命令回复，不存在第二套交互服务或 repair 接口。
 
 ## 环境变量
 
@@ -222,13 +221,6 @@ A：设置不同的 provider API 密钥，或使用 `CLAWROUTERS_API_KEY` 进行
 **Q：网关 Bearer Token 如何在重新部署后保持稳定？**
 
 A：如果未设置 `OPENCLAW_GATEWAY_TOKEN`，Wrapper 在首次启动时自动生成 Token 并持久化到 `${OPENCLAW_STATE_DIR}/gateway.token`。只要 `/data` Volume 保持挂载，重新部署后会复用同一 Token。
-
-平台提交结构化输入时，使用
-`POST /repair/interactions/input` 并携带
-`Authorization: Bearer <ONECLAW_INSTANCE_SECRET>`。该接口不接受浏览器 session
-或 gateway token。
-请求字段、幂等规则和 HTTP 状态码见
-[`docs/interaction-input-contract.md`](docs/interaction-input-contract.md)。
 
 **Q：为什么插件预装在镜像中而不是运行时安装？**
 

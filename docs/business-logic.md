@@ -406,13 +406,11 @@ Docker：
 
 结构化输入：
 
-- Gateway 子进程只接收 Wrapper 内部生成的
-  `ONECLAW_INTERACTION_BROKER_URL/TOKEN`。
-- broker 只监听 loopback，不向公网暴露 token。
-- 平台通过 `POST /repair/interactions/input` 提交答案；该路由只接受
-  `ONECLAW_INSTANCE_SECRET` Bearer，不接受浏览器 session 或 gateway token。
-- 精确请求结构、幂等语义及 `200/400/404/409/410/503` 状态码定义在
-  `docs/interaction-input-contract.md`，供 `oneclaw_api` 直接依赖。
+- `request_user_input` 和外部应用授权均由 Runtime Plugin 直接发布
+  OneClaw Channel Attention 事件。
+- 客户端通过 `command.attention.respond` 回答，Runtime Plugin 发布
+  `attention.resolved` 并恢复原工具调用。
+- Wrapper 不启动交互 broker，也不提供独立的结构化输入 repair 路由。
 
 Agent API：
 

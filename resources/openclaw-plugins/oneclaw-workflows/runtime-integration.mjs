@@ -3,10 +3,10 @@ import { createHash } from 'node:crypto';
 const BLOCK_IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/u;
 const EVENT_STORE_SCHEMA_VERSION = 1;
 const DEFAULT_ATTENTION_TIMEOUT_MS = 30 * 60 * 1000;
+const TERMINAL_ATTENTION_RETENTION_MS = 60 * 60 * 1000;
 const CONTROLLER_ID = 'oneclaw/request-first';
 
 let runtimeEventsSdkPromise;
-const brokerFlushQueues = new Map();
 
 function stableDigest(value) {
   return createHash('sha256').update(String(value)).digest('hex');
@@ -81,6 +81,275 @@ export function decodeAttentionAnswers(answers, mappings) {
         : {}),
     };
   });
+}
+
+function channelAttentionEvent(entry, type, now) {
+  return {
+    type,
+    producer: 'oneclaw-workflows',
+    runId: entry.runId,
+    resourceId: entry.attentionId,
+    revision: entry.revision,
+    toolCallId: entry.toolCallId,
+    occurredAt: now,
+    payload: {
+      kind: entry.kind,
+      status: entry.status,
+      title: entry.title,
+      ...(entry.body ? { body: entry.body } : {}),
+      ...(entry.questions ? { questions: entry.questions } : {}),
+      ...(entry.actions ? { actions: entry.actions } : {}),
+      createdAt: entry.createdAt,
+      updatedAt: now,
+      expiresAt: entry.expiresAt,
+      ...(entry.response
+        ? {
+            resolution: {
+              ...entry.response,
+              answeredAt: now,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+export function createChannelAttentionController({
+  publisher = defaultRuntimeEventPublish,
+  now = Date.now,
+} = {}) {
+  const entries = new Map();
+
+  const retainTerminal = (entry) => {
+    clearTimeout(entry.timeout);
+    entry.timeout = setTimeout(() => {
+      if (entries.get(entry.attentionId) === entry) entries.delete(entry.attentionId);
+    }, TERMINAL_ATTENTION_RETENTION_MS);
+    entry.timeout.unref?.();
+  };
+
+  const transition = async (entry, status, type, response) => {
+    if (entry.status !== 'pending') return false;
+    entry.status = status;
+    entry.revision += 1;
+    entry.response = response;
+    const timestamp = now();
+    await publishRuntimeEvent(channelAttentionEvent(entry, type, timestamp), publisher);
+    retainTerminal(entry);
+    return true;
+  };
+
+  const startRequest = async ({ entry, signal, timeoutError, cancelError }) => {
+    entries.set(entry.attentionId, entry);
+    entry.timeout = setTimeout(async () => {
+      if (!await transition(entry, 'expired', 'attention.expired')) return;
+      entry.reject(new Error(timeoutError));
+    }, DEFAULT_ATTENTION_TIMEOUT_MS);
+    entry.timeout.unref?.();
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        void transition(entry, 'cancelled', 'attention.cancelled')
+          .finally(() => entry.reject(new Error(cancelError)));
+      }, { once: true });
+    }
+    const delivery = await publishRuntimeEvent(
+      channelAttentionEvent(entry, 'attention.created', entry.createdAt),
+      publisher,
+    );
+    entry.eventDelivery = delivery.status === 'accepted' || delivery.status === 'duplicate'
+      ? 'delivered'
+      : 'pending';
+    return entry.promise;
+  };
+
+  const createPromiseFields = () => {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+  };
+
+  const requireCorrelation = ({ runId, sessionKey }, requestName) => {
+    if (typeof runId !== 'string' || !runId.trim()) {
+      throw new Error(`The public OneClaw runId is unavailable for this ${requestName}.`);
+    }
+    if (typeof sessionKey !== 'string' || !sessionKey.trim()) {
+      throw new Error(`The OneClaw session is unavailable for this ${requestName}.`);
+    }
+  };
+
+  const sameResponse = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
+  return {
+    handles(command) {
+      return entries.has(command?.payload?.attentionId);
+    },
+
+    async requestInput({ args, runId, sessionKey, signal, toolCallId }) {
+      requireCorrelation({ runId, sessionKey }, 'input request');
+      const attentionId = attentionIdForToolCall(toolCallId);
+      const existing = entries.get(attentionId);
+      if (existing) return existing.promise;
+      const normalized = normalizeAttentionQuestions(args?.questions);
+      const createdAt = now();
+      const entry = {
+        attentionId,
+        toolCallId,
+        runId: runId.trim(),
+        sessionKey: sessionKey.trim(),
+        revision: 1,
+        kind: 'business_input',
+        status: 'pending',
+        title: boundedText(args?.title, 'Input required', 200),
+        questions: normalized.questions,
+        mappings: normalized.mappings,
+        createdAt,
+        expiresAt: createdAt + DEFAULT_ATTENTION_TIMEOUT_MS,
+        response: undefined,
+        ...createPromiseFields(),
+        timeout: undefined,
+      };
+      return startRequest({
+        entry,
+        signal,
+        timeoutError: 'INPUT_REQUEST_TIMED_OUT',
+        cancelError: 'INPUT_REQUEST_CANCELLED',
+      });
+    },
+
+    async requestConnection({
+      args,
+      runId,
+      sessionKey,
+      signal,
+      toolCallId,
+    }) {
+      requireCorrelation({ runId, sessionKey }, 'connection request');
+      const serviceName = boundedText(args?.serviceName, 'external app', 120);
+      const serviceId = stableBlockId(args?.serviceId ?? serviceName, 'service');
+      const attentionId = attentionIdForToolCall(toolCallId);
+      const existing = entries.get(attentionId);
+      if (existing) return existing.promise;
+      const createdAt = now();
+      const expiresAt = createdAt + DEFAULT_ATTENTION_TIMEOUT_MS;
+      const actions = [
+        {
+          id: stableBlockId(`connect-${serviceId}`, 'connect'),
+          label: boundedText(args?.authorizeLabel, `Connect ${serviceName}`, 160),
+          style: 'primary',
+          command: {
+            type: 'attention.respond',
+            attentionId,
+            actionId: stableBlockId(`connect:${serviceId}`, 'connect'),
+          },
+        },
+        {
+          id: stableBlockId(`cancel-${serviceId}`, 'cancel'),
+          label: boundedText(args?.cancelLabel, 'Not now', 160),
+          style: 'secondary',
+          command: {
+            type: 'attention.respond',
+            attentionId,
+            actionId: stableBlockId(`cancel:${serviceId}`, 'cancel'),
+          },
+        },
+      ];
+      const entry = {
+        attentionId,
+        toolCallId,
+        runId: runId.trim(),
+        sessionKey: sessionKey.trim(),
+        revision: 1,
+        kind: 'connection',
+        status: 'pending',
+        title: boundedText(args?.title, `Connect ${serviceName}`, 200),
+        body: boundedText(
+          args?.reason,
+          `OneClaw needs access to ${serviceName} to continue this request.`,
+          1_000,
+        ),
+        actions,
+        allowedActionIds: new Set(actions.map((action) => action.command.actionId)),
+        createdAt,
+        expiresAt,
+        response: undefined,
+        ...createPromiseFields(),
+        timeout: undefined,
+      };
+      return startRequest({
+        entry,
+        signal,
+        timeoutError: 'CONNECTION_REQUEST_TIMED_OUT',
+        cancelError: 'CONNECTION_REQUEST_CANCELLED',
+      });
+    },
+
+    async respond(command) {
+      const payload = command?.payload ?? {};
+      const entry = entries.get(payload.attentionId);
+      if (!entry) throw new Error('OneClaw Attention is no longer active.');
+      if (entry.runId !== payload.runId || entry.toolCallId !== payload.toolCallId) {
+        throw new Error('OneClaw Attention ownership mismatch.');
+      }
+      if (entry.status === 'resolved') {
+        const response = entry.kind === 'business_input'
+          ? { answers: payload.answers }
+          : { actionId: payload.actionId };
+        return sameResponse(entry.response, response) ? 'duplicate' : Promise.reject(
+          new Error('OneClaw Attention already resolved with another action.'),
+        );
+      }
+      if (entry.status !== 'pending') {
+        throw new Error('OneClaw Attention is no longer pending.');
+      }
+      if (payload.expectedRevision !== entry.revision) {
+        throw new Error('OneClaw Attention revision conflict.');
+      }
+      let response;
+      let result;
+      if (entry.kind === 'business_input') {
+        if (!Array.isArray(payload.answers)) {
+          throw new Error('OneClaw Attention answers are required.');
+        }
+        const questionIds = new Set(entry.questions.map((question) => question.id));
+        if (payload.answers.some((answer) => !questionIds.has(answer?.questionId))) {
+          throw new Error('OneClaw Attention answer references an unknown question.');
+        }
+        response = { answers: payload.answers };
+        result = {
+          attentionId: entry.attentionId,
+          answers: decodeAttentionAnswers(payload.answers, entry.mappings),
+          eventDelivery: entry.eventDelivery,
+        };
+      } else {
+        if (!entry.allowedActionIds.has(payload.actionId)) {
+          throw new Error('OneClaw Attention action is invalid.');
+        }
+        response = { actionId: payload.actionId };
+        result = {
+          attentionId: entry.attentionId,
+          actionId: payload.actionId,
+          eventDelivery: entry.eventDelivery,
+        };
+      }
+      await transition(entry, 'resolved', 'attention.resolved', response);
+      entry.resolve(result);
+      return 'resolved';
+    },
+
+    close() {
+      for (const entry of entries.values()) {
+        clearTimeout(entry.timeout);
+        if (entry.status === 'pending') {
+          entry.reject(new Error('CHANNEL_ATTENTION_CONTROLLER_STOPPED'));
+        }
+      }
+      entries.clear();
+    },
+  };
 }
 
 async function defaultRuntimeEventPublish(event) {
@@ -308,150 +577,6 @@ export class WorkflowEventReconciler {
     }
     return { delivered, pending };
   }
-}
-
-export class BrokerRequestError extends Error {
-  constructor(message, protocolCode = 'internal_error') {
-    super(message);
-    this.name = 'BrokerRequestError';
-    this.protocolCode = protocolCode;
-  }
-}
-
-async function brokerJson(configuration, path, { body, method = 'POST', signal } = {}) {
-  if (!configuration) {
-    throw new BrokerRequestError('OneClaw Desktop input is unavailable.', 'runtime_unavailable');
-  }
-  const response = await fetch(`${configuration.url}${path}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${configuration.token}`,
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    ...(signal ? { signal } : {}),
-  });
-  const payload = await response.json();
-  if (!response.ok || payload?.ok !== true) {
-    throw new BrokerRequestError(
-      typeof payload?.error === 'string'
-        ? payload.error
-        : typeof payload?.code === 'string'
-          ? payload.code
-          : 'INTERACTION_BROKER_REQUEST_FAILED',
-      typeof payload?.protocolCode === 'string' ? payload.protocolCode : 'internal_error',
-    );
-  }
-  return payload;
-}
-
-async function flushBrokerEventsNow(configuration, publisher) {
-  const payload = await brokerJson(configuration, '/v1/events/pending', { method: 'GET' });
-  let delivered = 0;
-  let pending = 0;
-  for (const item of payload.events ?? []) {
-    const receipt = await publishRuntimeEvent(item.event, publisher);
-    if (receipt.status !== 'accepted' && receipt.status !== 'duplicate') {
-      pending += 1;
-      continue;
-    }
-    await brokerJson(configuration, '/v1/events/ack', {
-      body: { idempotencyKey: item.idempotencyKey },
-    });
-    delivered += 1;
-  }
-  return { delivered, pending };
-}
-
-export function flushBrokerEvents(configuration, publisher = defaultRuntimeEventPublish) {
-  const key = configuration?.url ?? 'unconfigured';
-  const previous = brokerFlushQueues.get(key) ?? Promise.resolve();
-  const current = previous
-    .catch(() => undefined)
-    .then(() => flushBrokerEventsNow(configuration, publisher));
-  brokerFlushQueues.set(key, current);
-  void current.finally(() => {
-    if (brokerFlushQueues.get(key) === current) brokerFlushQueues.delete(key);
-  }).catch(() => undefined);
-  return current;
-}
-
-export async function requestAttention({
-  args,
-  configuration,
-  publisher = defaultRuntimeEventPublish,
-  runId,
-  sessionKey,
-  signal,
-  toolCallId,
-}) {
-  if (typeof runId !== 'string' || !runId) {
-    throw new BrokerRequestError(
-      'The public OneClaw runId is unavailable for this input request.',
-      'run_not_active',
-    );
-  }
-  const normalized = normalizeAttentionQuestions(args?.questions);
-  const now = Date.now();
-  const attentionId = attentionIdForToolCall(toolCallId);
-  const created = await brokerJson(configuration, '/v1/attentions', {
-    body: {
-      attentionId,
-      toolCallId,
-      runId,
-      revision: 1,
-      title: boundedText(args?.title, 'Input required', 200),
-      questions: normalized.questions,
-      ...(sessionKey ? { sessionKey } : {}),
-      createdAt: now,
-      expiresAt: now + DEFAULT_ATTENTION_TIMEOUT_MS,
-    },
-    signal,
-  });
-  await flushBrokerEvents(configuration, publisher);
-  if (created.attention?.status === 'resolved') {
-    return {
-      attentionId,
-      answers: decodeAttentionAnswers(created.attention.answers, normalized.mappings),
-      eventDelivery: 'delivered',
-    };
-  }
-  if (created.attention?.status !== 'pending') {
-    throw new BrokerRequestError(
-      `Attention is no longer pending (${String(created.attention?.status)}).`,
-      'run_not_active',
-    );
-  }
-
-  const response = await brokerJson(configuration, '/v1/input', {
-    body: { toolCallId },
-    signal,
-  });
-  const delivery = await flushBrokerEvents(configuration, publisher);
-  return {
-    attentionId,
-    answers: decodeAttentionAnswers(response.answers, normalized.mappings),
-    eventDelivery: delivery.pending === 0 ? 'delivered' : 'pending',
-  };
-}
-
-export function createAttentionResponder(configuration, publisher = defaultRuntimeEventPublish) {
-  return {
-    async respond(command) {
-      const payload = command?.payload ?? {};
-      const response = await brokerJson(configuration, '/v1/attentions/respond', {
-        body: {
-          attentionId: payload.attentionId,
-          toolCallId: payload.toolCallId,
-          runId: payload.runId,
-          expectedRevision: payload.expectedRevision,
-          answers: payload.answers,
-        },
-      });
-      await flushBrokerEvents(configuration, publisher);
-      return response.status === 'already_submitted' ? 'duplicate' : 'resolved';
-    },
-  };
 }
 
 export const testing = {

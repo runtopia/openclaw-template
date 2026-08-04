@@ -5,9 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import {
   WorkflowEventReconciler,
-  createAttentionResponder,
-  flushBrokerEvents,
-  requestAttention,
+  createChannelAttentionController,
 } from './runtime-integration.mjs';
 
 const PLUGIN_ID = 'oneclaw-workflows';
@@ -183,47 +181,34 @@ const REQUEST_USER_INPUT_SCHEMA = {
   additionalProperties: false,
 };
 
-function captureInteractionBrokerConfiguration() {
-  const rawUrl = process.env.ONECLAW_INTERACTION_BROKER_URL;
-  const token = process.env.ONECLAW_INTERACTION_BROKER_TOKEN;
-  delete process.env.ONECLAW_INTERACTION_BROKER_URL;
-  delete process.env.ONECLAW_INTERACTION_BROKER_TOKEN;
-  if (!rawUrl || !token) return null;
-  const url = new URL(rawUrl);
-  if (url.protocol !== 'http:' || (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost')) {
-    throw new Error('OneClaw interaction broker must use loopback HTTP.');
-  }
-  return { url: url.toString().replace(/\/+$/u, ''), token };
-}
-
-const INTERACTION_BROKER_CONFIGURATION_KEY = Symbol.for(
-  'oneclaw.workflows.interaction-broker-configuration',
-);
-
-function cachedInteractionBrokerConfiguration() {
-  return globalThis[INTERACTION_BROKER_CONFIGURATION_KEY] ?? null;
-}
-
-function cacheInteractionBrokerConfiguration(configuration) {
-  globalThis[INTERACTION_BROKER_CONFIGURATION_KEY] = configuration;
-  return configuration;
-}
-
-function interactionBrokerConfiguration() {
-  // OpenClaw can evaluate/register startup plugins more than once while
-  // rebuilding the active tool catalog. Credentials are intentionally removed
-  // from the environment after capture, so retain them in process-private
-  // global state for later registrations and fresh module instances.
-  if (
-    process.env.ONECLAW_INTERACTION_BROKER_URL
-    && process.env.ONECLAW_INTERACTION_BROKER_TOKEN
-  ) {
-    return cacheInteractionBrokerConfiguration(captureInteractionBrokerConfiguration());
-  }
-  const cached = cachedInteractionBrokerConfiguration();
-  if (cached) return cached;
-  return cacheInteractionBrokerConfiguration(captureInteractionBrokerConfiguration());
-}
+const REQUEST_CONNECTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    serviceId: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 80,
+      description: 'Stable provider id such as gmail, google_drive, github, or slack.',
+    },
+    serviceName: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 120,
+      description: 'User-facing provider name.',
+    },
+    reason: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 1_000,
+      description: 'Why this task needs the connection. Never include credentials.',
+    },
+    title: { type: 'string', minLength: 1, maxLength: 200 },
+    authorizeLabel: { type: 'string', minLength: 1, maxLength: 160 },
+    cancelLabel: { type: 'string', minLength: 1, maxLength: 160 },
+  },
+  required: ['serviceId', 'serviceName', 'reason'],
+  additionalProperties: false,
+};
 
 function requireText(value, field, maxLength) {
   if (typeof value !== 'string' || !value.trim()) {
@@ -715,7 +700,18 @@ function createWorkTool(api, context, methodRepository = {
   };
 }
 
-function createRequestUserInputTool(configuration, eventRuntime = {}) {
+function activeCorrelation(toolCallId, eventRuntime, context) {
+  const correlation = eventRuntime.correlations?.get(toolCallId);
+  const activeRuns = globalThis[Symbol.for('oneclaw.activeRunsBySessionKey')];
+  const activeRun = activeRuns?.get(context.sessionKey)
+    ?? (activeRuns?.size === 1 ? activeRuns.values().next().value : undefined);
+  return {
+    runId: correlation?.runId ?? context.runId ?? activeRun?.runId,
+    sessionKey: correlation?.sessionKey ?? context.sessionKey ?? activeRun?.sessionKey,
+  };
+}
+
+function createRequestUserInputTool(controller, eventRuntime = {}, context = {}) {
   return {
     name: 'request_user_input',
     label: 'Request User Input',
@@ -729,17 +725,49 @@ function createRequestUserInputTool(configuration, eventRuntime = {}) {
     parameters: REQUEST_USER_INPUT_SCHEMA,
     executionMode: 'sequential',
     async execute(toolCallId, args, signal) {
-      const correlation = eventRuntime.correlations?.get(toolCallId);
-      const result = await requestAttention({
+      const correlation = activeCorrelation(toolCallId, eventRuntime, context);
+      const result = await controller.requestInput({
         args,
-        configuration,
-        ...(eventRuntime.publisher ? { publisher: eventRuntime.publisher } : {}),
-        runId: correlation?.runId,
-        sessionKey: correlation?.sessionKey,
+        runId: correlation.runId,
+        sessionKey: correlation.sessionKey,
         signal,
         toolCallId,
       });
       return jsonResult({ answered: true, ...result });
+    },
+  };
+}
+
+function createRequestConnectionTool(controller, eventRuntime = {}, context = {}) {
+  return {
+    name: 'request_connection',
+    label: 'Request App Connection',
+    description: 'Publish a OneClaw Channel authorization card when the current task needs an external app or account that is not connected.',
+    promptSnippet: 'When Gmail, Google Drive, GitHub, Slack, or another external account is required but unavailable, call request_connection immediately. OneClaw will show a native authorization card. Never replace the card with manual OAuth instructions or a text checklist.',
+    promptGuidelines: [
+      'Use request_connection whenever missing external-app access blocks the requested task.',
+      'Match the card title and button labels to the user language.',
+      'Never claim authorization succeeded until the provider integration confirms access after the user responds.',
+      'Never ask the user to paste tokens, cookies, passwords, or OAuth codes into chat.',
+    ],
+    parameters: REQUEST_CONNECTION_SCHEMA,
+    executionMode: 'sequential',
+    async execute(toolCallId, args, signal) {
+      const correlation = activeCorrelation(toolCallId, eventRuntime, context);
+      const result = await controller.requestConnection({
+        args,
+        runId: correlation.runId,
+        sessionKey: correlation.sessionKey,
+        signal,
+        toolCallId,
+      });
+      return jsonResult({
+        responded: true,
+        ...result,
+        instruction: result.actionId?.startsWith('connect:')
+          ? 'The user chose to connect the provider. Continue only after the provider integration confirms authorization.'
+          : 'The user declined or postponed the connection. Do not continue with provider-dependent work.',
+      });
     },
   };
 }
@@ -749,9 +777,13 @@ export default definePluginEntry({
   name: 'OneClaw Durable Work',
   description: 'Request-first durable progress and recovery for multi-step agent work.',
   register(api) {
-    const interactionBroker = interactionBrokerConfiguration();
+    const channelAttentionController = createChannelAttentionController();
     const correlations = new Map();
-    const relevantTools = new Set(['oneclaw_work', 'request_user_input']);
+    const relevantTools = new Set([
+      'oneclaw_work',
+      'request_user_input',
+      'request_connection',
+    ]);
     api.on('before_tool_call', (event, context) => {
       if (!relevantTools.has(event.toolName)) return;
       const toolCallId = event.toolCallId ?? context.toolCallId;
@@ -785,8 +817,20 @@ export default definePluginEntry({
       { names: ['oneclaw_work'] },
     );
     api.registerTool(
-      createRequestUserInputTool(interactionBroker, { correlations }),
-      { name: 'request_user_input' },
+      (context) => createRequestUserInputTool(
+        channelAttentionController,
+        { correlations },
+        context,
+      ),
+      { names: ['request_user_input'] },
+    );
+    api.registerTool(
+      (context) => createRequestConnectionTool(
+        channelAttentionController,
+        { correlations },
+        context,
+      ),
+      { names: ['request_connection'] },
     );
 
     let attentionLease;
@@ -794,18 +838,17 @@ export default definePluginEntry({
     api.registerService({
       id: 'oneclaw-workflow-event-reconciliation',
       async start() {
-        if (interactionBroker) {
-          attentionLease = api.runtime.channel.runtimeContexts.register({
-            channelId: 'oneclaw',
-            accountId: 'default',
-            capability: 'attention-responder',
-            context: createAttentionResponder(interactionBroker),
-          });
-        }
+        attentionLease = api.runtime.channel.runtimeContexts.register({
+          channelId: 'oneclaw',
+          accountId: 'default',
+          capability: 'attention-responder',
+          context: {
+            respond: (command) => channelAttentionController.respond(command),
+          },
+        });
         const reconcile = async () => {
           try {
             await reconciler.reconcile();
-            if (interactionBroker) await flushBrokerEvents(interactionBroker);
           } catch (error) {
             api.logger.warn?.(
               `oneclaw-workflows: event reconciliation remains pending: ${
@@ -820,6 +863,7 @@ export default definePluginEntry({
       },
       stop() {
         clearInterval(reconcileTimer);
+        channelAttentionController.close();
         attentionLease?.dispose();
         attentionLease = undefined;
       },
@@ -830,8 +874,7 @@ export default definePluginEntry({
 export const testing = {
   createWorkTool,
   createRequestUserInputTool,
-  captureInteractionBrokerConfiguration,
-  interactionBrokerConfiguration,
+  createRequestConnectionTool,
   createMethodId,
   currentMethodVersion,
   flowView,

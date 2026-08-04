@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createInteractionBrokerRuntime } from "../src/interactions/broker.js";
 import {
   WorkflowEventReconciler,
-  createAttentionResponder,
+  createChannelAttentionController,
   decodeAttentionAnswers,
   normalizeAttentionQuestions,
-  requestAttention,
   taskSnapshotEvent,
 } from "../resources/openclaw-plugins/oneclaw-workflows/runtime-integration.mjs";
 
@@ -145,13 +143,79 @@ test("attention question ids are Protocol-safe and answers decode to tool-facing
   }]);
 });
 
-test("attention control response bypasses the waiter and publishes created/resolved exactly once", async (t) => {
-  const runtime = await createInteractionBrokerRuntime({ maxWaitMs: 2_000 });
-  t.after(() => runtime.stop());
-  const configuration = {
-    url: runtime.gatewayEnv.ONECLAW_INTERACTION_BROKER_URL,
-    token: runtime.gatewayEnv.ONECLAW_INTERACTION_BROKER_TOKEN,
-  };
+test("connection authorization uses direct OneClaw Channel attention events", async (t) => {
+  const published = [];
+  const controller = createChannelAttentionController({
+    publisher: async (event) => {
+      published.push(clone(event));
+      return {
+        status: "accepted",
+        eventId: `event_${published.length}`,
+        idempotencyKey: `${event.resourceId}:${event.revision}:${event.type}`,
+      };
+    },
+    now: (() => {
+      let value = 1_000;
+      return () => value += 100;
+    })(),
+  });
+  t.after(() => controller.close());
+  const pending = controller.requestConnection({
+    args: {
+      serviceId: "gmail",
+      serviceName: "Gmail",
+      reason: "Read the requested Gmail messages.",
+      authorizeLabel: "授权 Gmail",
+      cancelLabel: "暂不授权",
+    },
+    runId: "run_gmail",
+    sessionKey: "session_gmail",
+    toolCallId: "call_gmail",
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  const created = published[0];
+  assert.equal(created.type, "attention.created");
+  assert.equal(created.payload.kind, "connection");
+  assert.equal(created.payload.actions[0].label, "授权 Gmail");
+  assert.equal(created.payload.actions[0].command.actionId, "connect:gmail");
+
+  assert.equal(await controller.respond({
+    type: "command.attention.respond",
+    payload: {
+      runId: "run_gmail",
+      toolCallId: "call_gmail",
+      attentionId: created.resourceId,
+      expectedRevision: 1,
+      actionId: "connect:gmail",
+    },
+  }), "resolved");
+
+  assert.deepEqual(await pending, {
+    attentionId: created.resourceId,
+    actionId: "connect:gmail",
+    eventDelivery: "delivered",
+  });
+  assert.deepEqual(
+    published.map((event) => [event.type, event.revision, event.payload.status]),
+    [
+      ["attention.created", 1, "pending"],
+      ["attention.resolved", 2, "resolved"],
+    ],
+  );
+  assert.equal(await controller.respond({
+    type: "command.attention.respond",
+    payload: {
+      runId: "run_gmail",
+      toolCallId: "call_gmail",
+      attentionId: created.resourceId,
+      expectedRevision: 1,
+      actionId: "connect:gmail",
+    },
+  }), "duplicate");
+});
+
+test("structured input uses direct OneClaw Channel attention events", async (t) => {
   const published = [];
   const publisher = async (event) => {
     published.push(clone(event));
@@ -161,7 +225,9 @@ test("attention control response bypasses the waiter and publishes created/resol
       idempotencyKey: `${event.resourceId}:${event.revision}:${event.type}`,
     };
   };
-  const pending = requestAttention({
+  const controller = createChannelAttentionController({ publisher });
+  t.after(() => controller.close());
+  const pending = controller.requestInput({
     args: {
       title: "Audience",
       questions: [{
@@ -173,44 +239,39 @@ test("attention control response bypasses the waiter and publishes created/resol
         multiple: false,
       }],
     },
-    configuration,
-    publisher,
     runId: "run_123",
     sessionKey: "session_123",
     toolCallId: "call_123",
   });
 
-  let attention;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    [attention] = runtime.service.listPending();
-    if (attention) break;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  assert.ok(attention);
-  const optionId = attention.questions[0].options[0].id;
-  const responder = createAttentionResponder(configuration, publisher);
+  await new Promise((resolve) => setImmediate(resolve));
+  const attention = published[0];
+  assert.equal(attention.type, "attention.created");
+  assert.equal(attention.payload.kind, "business_input");
+  const optionId = attention.payload.questions[0].options[0].id;
   const command = {
+    type: "command.attention.respond",
     payload: {
-      attentionId: attention.attentionId,
+      attentionId: attention.resourceId,
       toolCallId: attention.toolCallId,
       runId: "run_123",
       expectedRevision: 1,
       answers: [{
-        questionId: attention.questions[0].id,
+        questionId: attention.payload.questions[0].id,
         selectedOptionIds: [optionId],
       }],
     },
   };
-  assert.equal(await responder.respond(command), "resolved");
+  assert.equal(await controller.respond(command), "resolved");
   assert.deepEqual(await pending, {
-    attentionId: attention.attentionId,
+    attentionId: attention.resourceId,
     answers: [{
       questionId: "audience",
       selected: ["Executives"],
     }],
     eventDelivery: "delivered",
   });
-  assert.equal(await responder.respond(command), "duplicate");
+  assert.equal(await controller.respond(command), "duplicate");
   assert.deepEqual(
     published.map((event) => event.type),
     ["attention.created", "attention.resolved"],

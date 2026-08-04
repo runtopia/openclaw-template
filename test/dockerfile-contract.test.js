@@ -28,7 +28,12 @@ test("Dockerfile preinstalls portable builtin skill dependencies", () => {
   }
   assert.match(
     dockerfile,
-    /for attempt in 1 2 3; do[\s\S]*npm install -g @xdevplatform\/xurl@\$\{XURL_VERSION\}[\s\S]*xurl install failed after/,
+    /RUN --mount=type=cache,target=\/root\/\.npm,sharing=locked \\\n\s+npm install -g --prefer-offline --no-audit --no-fund/,
+    "global Node tools should reuse the BuildKit npm cache",
+  );
+  assert.match(
+    dockerfile,
+    /for attempt in 1 2 3; do[\s\S]*npm install -g --prefer-offline --no-audit --no-fund[\s\S]*@xdevplatform\/xurl@\$\{XURL_VERSION\}[\s\S]*xurl install failed after/,
     "xurl's GitHub binary download should be retried independently",
   );
   for (const module of ["blogwatcher", "blucli", "eightctl", "gifgrep", "ordercli", "sonoscli", "wacli"]) {

@@ -59,6 +59,7 @@ FROM node:24.15.0-bookworm
 ARG DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
 ARG DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG ONECLAW_NPM_REGISTRY=https://registry.npmjs.org
 
 RUN npm config set registry "${NPM_REGISTRY}"
 
@@ -206,7 +207,7 @@ RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_mo
 COPY resources/openclaw-plugin-bundle /tmp/openclaw-plugin-bundle
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   cd /tmp/openclaw-plugin-bundle \
-  && npm ci --omit=dev --legacy-peer-deps --no-audit --no-fund \
+  && npm ci --registry="${ONECLAW_NPM_REGISTRY}" --omit=dev --legacy-peer-deps --no-audit --no-fund \
   && mkdir -p ${OPENCLAW_PLUGINS_DIR}/node_modules \
   && cp package.json package-lock.json ${OPENCLAW_PLUGINS_DIR}/ \
   && cp -a node_modules/. ${OPENCLAW_PLUGINS_DIR}/node_modules/ \

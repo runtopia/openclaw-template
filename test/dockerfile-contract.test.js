@@ -79,7 +79,11 @@ test("image includes a Linux template skill smoke verifier", () => {
 test("Dockerfile installs the locked plugin bundle outside the data volume", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   assert.ok(dockerfile.includes("COPY resources/openclaw-plugin-bundle /tmp/openclaw-plugin-bundle"));
-  assert.ok(dockerfile.includes("npm ci --omit=dev --legacy-peer-deps"));
+  assert.ok(dockerfile.includes("ARG ONECLAW_NPM_REGISTRY=https://registry.npmjs.org"));
+  assert.ok(
+    dockerfile.includes('npm ci --registry="${ONECLAW_NPM_REGISTRY}" --omit=dev --legacy-peer-deps'),
+    "official OneClaw packages must bypass mirrors that may not have synchronized new releases",
+  );
   assert.ok(dockerfile.includes("cp -a node_modules/. ${OPENCLAW_PLUGINS_DIR}/node_modules/"));
   assert.ok(!dockerfile.includes("COPY resources/openclaw-plugins"));
   assert.ok(!dockerfile.includes("COPY resources/oneclaw-packages"));

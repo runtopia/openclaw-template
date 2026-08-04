@@ -9,7 +9,7 @@
     "@oneclaw-plugins/employee-catalog": "0.4.8",
     "@oneclaw-plugins/openclaw-search": "0.2.0",
     "@oneclaw-plugins/runtime-events": "0.1.0",
-    "@oneclaw/clawrouters": "https://github.com/runtopia/clawrouters-plugin/archive/refs/tags/0.4.1.tar.gz",
+    "@oneclaw-plugins/clawrouters": "0.4.1",
     "@openclaw/discord": "2026.7.1",
     "@openclaw/feishu": "2026.7.1",
     "@openclaw/slack": "2026.7.1",

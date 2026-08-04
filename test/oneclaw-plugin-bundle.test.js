@@ -10,6 +10,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "package.json")
 const lockfile = JSON.parse(fs.readFileSync(path.join(bundleDir, "package-lock.json"), "utf8"));
 
 const ONECLAW_PACKAGES = {
+  "@oneclaw-plugins/clawrouters": "0.4.1",
   "@oneclaw-plugins/runtime-events": "0.1.0",
   "@oneclaw-plugins/channel": "0.1.1",
   "@oneclaw-plugins/openclaw-search": "0.2.0",

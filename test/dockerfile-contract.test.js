@@ -97,20 +97,20 @@ test("Dockerfile aligns OpenClaw core and official plugins to Desktop 2026.7.1",
   ));
   assert.ok(dockerfile.includes("ARG OPENCLAW_VERSION=2026.7.1"));
   assert.equal(
-    pluginBundle.dependencies["@oneclaw/clawrouters"],
-    "https://github.com/runtopia/clawrouters-plugin/archive/refs/tags/0.4.1.tar.gz",
-    "ClawRouters should use a fixed HTTPS tarball so cloud builds do not require SSH credentials",
+    pluginBundle.dependencies["@oneclaw-plugins/clawrouters"],
+    "0.4.1",
+    "ClawRouters should use the exact official npm package version",
   );
-  assert.ok(!pluginBundle.dependencies["@oneclaw/clawrouters"].startsWith("git+"));
   const lockfile = JSON.parse(fs.readFileSync(
     path.join(repoRoot, "resources", "openclaw-plugin-bundle", "package-lock.json"),
     "utf8",
   ));
-  const clawroutersLock = lockfile.packages["node_modules/@oneclaw/clawrouters"];
+  const clawroutersLock = lockfile.packages["node_modules/@oneclaw-plugins/clawrouters"];
+  assert.equal(clawroutersLock.version, "0.4.1");
   assert.match(
     clawroutersLock.resolved,
-    /^https:\/\/github\.com\/runtopia\/clawrouters-plugin\/archive\/refs\/tags\/0\.4\.1\.tar\.gz$/u,
-    "ClawRouters lock entry must resolve over HTTPS without SSH credentials",
+    /^https:\/\/registry\.npmjs\.org\/@oneclaw-plugins\/clawrouters\/-\/clawrouters-0\.4\.1\.tgz$/u,
+    "ClawRouters lock entry must resolve from npmjs",
   );
   for (const plugin of ["slack", "discord", "feishu", "whatsapp"]) {
     assert.equal(
@@ -150,6 +150,7 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
   assert.ok(dockerfile.includes("@oneclaw-plugins/channel/package.json"));
   assert.ok(dockerfile.includes("root !== channel"));
   assert.ok(dockerfile.includes("['channel', '0.1.1']"));
+  assert.ok(dockerfile.includes("['clawrouters', '0.4.1']"));
   assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));
   assert.ok(dockerfile.includes("['employee-catalog', '0.4.8']"));
   assert.ok(!dockerfile.includes("@oneclaw/channel"));

@@ -28,7 +28,7 @@ const DEFAULT_PLUGINS_DIR = "/opt/openclaw-plugins";
 // wechat uses the third-party @tencent-weixin/openclaw-weixin (channel id
 // "openclaw-weixin"); there is no official wechat plugin.
 const PREINSTALLED_PACKAGES = [
-  "@oneclaw/clawrouters",
+  "@oneclaw-plugins/clawrouters",
   "@oneclaw-plugins/openclaw-search",
   "@oneclaw-plugins/durable-work",
   "@oneclaw-plugins/employee-catalog",
@@ -41,6 +41,7 @@ const PREINSTALLED_PACKAGES = [
 ];
 
 const OFFICIAL_NPM_PLUGIN_INSTALLS = [
+  { pluginId: "clawrouters", packageName: "@oneclaw-plugins/clawrouters" },
   { pluginId: "slack", packageName: "@openclaw/slack" },
   { pluginId: "discord", packageName: "@openclaw/discord" },
   { pluginId: "feishu", packageName: "@openclaw/feishu" },

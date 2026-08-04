@@ -178,8 +178,8 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #     - slack / discord / feishu / whatsapp are official standalone packages.
 #     - wechat has no official package; @tencent-weixin/openclaw-weixin is the
 #       third-party plugin (channel id "openclaw-weixin", versioned separately).
-#   Plus clawrouters (chat/image/video providers; GitHub-only, not on npm) and
-#   the first-party OneClaw plugins published from runtopia/oneclaw-plugins.
+#   ClawRouters and the other first-party OneClaw plugins are exact npm packages
+#   published from runtopia/oneclaw-plugins.
 #   Exact top-level versions and their complete dependency graph are locked in
 #   resources/openclaw-plugin-bundle/package-lock.json.
 #
@@ -231,13 +231,14 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && node /app/scripts/patch-weixin-http-routes.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/runtime-events/package.json" \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/clawrouters/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/openclaw-search/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw/package.json" \
   && node --input-type=module -e "import { createRequire } from 'node:module'; const root = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json').resolve('@oneclaw-plugins/runtime-events'); const channel = createRequire('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json').resolve('@oneclaw-plugins/runtime-events'); if (root !== channel) throw new Error('OneClaw Runtime Event SDK did not resolve to one top-level package');" \
-  && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const require = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelPackage = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json', 'utf8')); const versions = new Map([['channel', '0.1.1'], ['openclaw-search', '0.2.0'], ['durable-work', '0.7.3'], ['employee-catalog', '0.4.8']]); for (const [name, expected] of versions) { const pkg = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/' + name + '/package.json', 'utf8')); if (pkg.version !== expected) throw new Error('Unexpected ' + name + ' version: ' + pkg.version); } if (require('@oneclaw-plugins/runtime-events').runtimeEventSdkVersion() !== '0.1.0') throw new Error('Unexpected Runtime Event SDK version'); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');" \
+  && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const require = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelPackage = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json', 'utf8')); const versions = new Map([['clawrouters', '0.4.1'], ['channel', '0.1.1'], ['openclaw-search', '0.2.0'], ['durable-work', '0.7.3'], ['employee-catalog', '0.4.8']]); for (const [name, expected] of versions) { const pkg = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/' + name + '/package.json', 'utf8')); if (pkg.version !== expected) throw new Error('Unexpected ' + name + ' version: ' + pkg.version); } if (require('@oneclaw-plugins/runtime-events').runtimeEventSdkVersion() !== '0.1.0') throw new Error('Unexpected Runtime Event SDK version'); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');" \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 
 COPY scripts ./scripts

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ImplicitTaskTracker,
   WorkflowEventReconciler,
   createChannelAttentionController,
   decodeAttentionAnswers,
@@ -51,6 +52,71 @@ test("workflow task snapshots use monotonic protocol revisions and full state", 
   }), "run_123");
   assert.equal(succeeded.payload.phase, "completed");
   assert.equal(succeeded.payload.steps[0].status, "completed");
+});
+
+test("implicit collaboration tools publish Task Dock snapshots without exposing raw tool events", async () => {
+  const published = [];
+  let now = 2_000;
+  const tracker = new ImplicitTaskTracker({
+    now: () => now += 100,
+    publisher: async (event) => {
+      published.push(clone(event));
+      return {
+        status: "accepted",
+        eventId: `event_${published.length}`,
+        idempotencyKey: `${event.resourceId}:${event.revision}:${event.type}`,
+      };
+    },
+  });
+
+  assert.equal(await tracker.beforeTool({
+    toolName: "sessions_spawn",
+    toolCallId: "call_spawn",
+    params: { label: "Research competitors" },
+    runId: "run_123",
+    sessionKey: "session_123",
+  }), true);
+  await tracker.afterTool({
+    toolName: "sessions_spawn",
+    toolCallId: "call_spawn",
+    result: { status: "accepted" },
+    runId: "run_123",
+  });
+  await tracker.finish({ runId: "run_123", success: true });
+
+  assert.deepEqual(published.map((event) => event.revision), [1, 2, 3]);
+  assert.deepEqual(published.map((event) => event.payload.phase), [
+    "running",
+    "running",
+    "completed",
+  ]);
+  assert.equal(published[0].payload.steps[0].title, "Research competitors");
+  assert.equal(published[0].payload.steps[0].status, "running");
+  assert.equal(published[1].payload.steps[0].status, "completed");
+  assert.doesNotMatch(JSON.stringify(published), /sessions_spawn/u);
+});
+
+test("implicit user input publishes a waiting Task Dock snapshot", async () => {
+  const published = [];
+  const tracker = new ImplicitTaskTracker({
+    now: () => 3_000,
+    publisher: async (event) => {
+      published.push(clone(event));
+      return { status: "accepted", eventId: "event_input" };
+    },
+  });
+
+  await tracker.beforeTool({
+    toolName: "request_user_input",
+    toolCallId: "call_input",
+    params: { title: "Choose the audience" },
+    runId: "run_input",
+    sessionKey: "session_input",
+  });
+
+  assert.equal(published[0].payload.phase, "waiting_input");
+  assert.equal(published[0].payload.steps[0].status, "waiting");
+  assert.equal(published[0].payload.attentionSummary, "Choose the audience");
 });
 
 test("workflow reconciliation closes the state-commit/event-publish crash gap", async () => {

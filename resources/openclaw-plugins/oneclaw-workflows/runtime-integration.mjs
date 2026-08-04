@@ -370,6 +370,210 @@ export async function publishRuntimeEvent(event, publisher = defaultRuntimeEvent
   }
 }
 
+const IMPLICIT_TASK_TOOL_KINDS = new Map([
+  ['request_user_input', 'input'],
+  ['request_connection', 'connection'],
+  ['sessions_spawn', 'spawn'],
+  ['subagents', 'subagents'],
+  ['sessions_yield', 'yield'],
+]);
+
+function implicitToolKind(toolName) {
+  const normalized = typeof toolName === 'string'
+    ? toolName.trim().toLowerCase().replace(/[.-]/gu, '_')
+    : '';
+  for (const [suffix, kind] of IMPLICIT_TASK_TOOL_KINDS) {
+    if (normalized === suffix || normalized.endsWith(`_${suffix}`)) return kind;
+  }
+  return undefined;
+}
+
+function firstText(object, keys, fallback, maxLength) {
+  for (const key of keys) {
+    if (typeof object?.[key] === 'string' && object[key].trim()) {
+      return object[key].trim().slice(0, maxLength);
+    }
+  }
+  return fallback;
+}
+
+function implicitStepTitle(kind, params) {
+  switch (kind) {
+    case 'input':
+      return firstText(params, ['title'], 'Waiting for your input', 200);
+    case 'connection': {
+      const service = firstText(params, ['serviceName', 'serviceId'], '', 120);
+      return service ? `Connect ${service}`.slice(0, 200) : 'Waiting for connection authorization';
+    }
+    case 'spawn':
+      return firstText(params, ['label', 'task', 'description'], 'Delegating a work step', 200);
+    case 'yield':
+      return 'Waiting for delegated work';
+    case 'subagents': {
+      const action = firstText(params, ['action'], '', 40).toLowerCase();
+      if (action === 'wait') return 'Waiting for collaborators';
+      if (action === 'steer') return 'Adjusting delegated work';
+      if (action === 'kill') return 'Stopping delegated work';
+      if (action === 'list') return 'Checking collaboration progress';
+      return 'Coordinating delegated work';
+    }
+    default:
+      return 'Working on your request';
+  }
+}
+
+function implicitStepDetail(kind, result, error) {
+  if (typeof error === 'string' && error.trim()) {
+    return error.trim().slice(0, 4_000);
+  }
+  if (kind === 'input') return 'Input received';
+  if (kind === 'connection') return 'Authorization choice received';
+  if (result && typeof result === 'object') {
+    const summary = firstText(result, ['summary', 'message'], '', 4_000);
+    if (summary) return summary;
+  }
+  return 'Completed';
+}
+
+function implicitTaskEvent(state, now) {
+  return {
+    type: 'task.snapshot',
+    producer: 'workflow',
+    runId: state.runId,
+    resourceId: state.taskId,
+    revision: state.revision,
+    occurredAt: now,
+    payload: {
+      title: state.title,
+      phase: state.phase,
+      currentStepId: state.currentStepId,
+      steps: state.steps.map((step) => ({ ...step })),
+      ...(state.attentionSummary ? { attentionSummary: state.attentionSummary } : {}),
+      ...(state.summary ? { summary: state.summary } : {}),
+      updatedAt: now,
+    },
+  };
+}
+
+export class ImplicitTaskTracker {
+  constructor({ publisher = defaultRuntimeEventPublish, now = Date.now } = {}) {
+    this.publisher = publisher;
+    this.now = now;
+    this.states = new Map();
+    this.disabledRunIds = new Set();
+    this.mutationQueue = Promise.resolve();
+  }
+
+  mutate(operation) {
+    const next = this.mutationQueue.then(operation);
+    this.mutationQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  async disable(runId) {
+    if (typeof runId !== 'string' || !runId) return false;
+    return this.mutate(() => {
+      this.disabledRunIds.add(runId);
+      return this.states.delete(runId);
+    });
+  }
+
+  async beforeTool({ toolName, toolCallId, params = {}, runId, sessionKey }) {
+    const kind = implicitToolKind(toolName);
+    if (!kind || !runId || !sessionKey || !toolCallId) return false;
+    return this.mutate(async () => {
+      if (this.disabledRunIds.has(runId)) return false;
+      const timestamp = this.now();
+      const state = this.states.get(runId) ?? {
+        runId,
+        sessionKey,
+        taskId: `task_${stableDigest(runId).slice(0, 32)}`,
+        title: 'Working on your request',
+        phase: 'running',
+        revision: 0,
+        currentStepId: undefined,
+        attentionSummary: undefined,
+        summary: undefined,
+        steps: [],
+      };
+      const stepId = stableBlockId(`step:${toolCallId}`, 'step');
+      const waiting = kind === 'input' || kind === 'connection';
+      const step = {
+        id: stepId,
+        title: implicitStepTitle(kind, params),
+        status: waiting ? 'waiting' : 'running',
+        startedAt: timestamp,
+      };
+      const existingIndex = state.steps.findIndex((entry) => entry.id === stepId);
+      if (existingIndex >= 0) state.steps[existingIndex] = step;
+      else state.steps.push(step);
+      if (state.steps.length > 100) state.steps.splice(0, state.steps.length - 100);
+      state.currentStepId = stepId;
+      state.phase = waiting ? 'waiting_input' : 'running';
+      state.attentionSummary = waiting ? step.title : undefined;
+      state.summary = undefined;
+      state.revision += 1;
+      this.states.set(runId, state);
+      await publishRuntimeEvent(implicitTaskEvent(state, timestamp), this.publisher);
+      return true;
+    });
+  }
+
+  async afterTool({ toolName, toolCallId, result, error, runId }) {
+    const kind = implicitToolKind(toolName);
+    if (!kind || !runId || !toolCallId) return false;
+    return this.mutate(async () => {
+      const state = this.states.get(runId);
+      if (!state || this.disabledRunIds.has(runId)) return false;
+      const stepId = stableBlockId(`step:${toolCallId}`, 'step');
+      const step = state.steps.find((entry) => entry.id === stepId);
+      if (!step) return false;
+      const timestamp = this.now();
+      step.status = error ? 'failed' : 'completed';
+      step.detail = implicitStepDetail(kind, result, error);
+      step.completedAt = timestamp;
+      state.phase = error ? 'failed' : 'running';
+      state.attentionSummary = undefined;
+      state.summary = error ? step.detail : undefined;
+      state.revision += 1;
+      await publishRuntimeEvent(implicitTaskEvent(state, timestamp), this.publisher);
+      return true;
+    });
+  }
+
+  async finish({ runId, success, error }) {
+    if (!runId) return false;
+    return this.mutate(async () => {
+      const state = this.states.get(runId);
+      if (this.disabledRunIds.has(runId)) {
+        this.disabledRunIds.delete(runId);
+        this.states.delete(runId);
+        return false;
+      }
+      if (!state) return false;
+      const timestamp = this.now();
+      const cancelled = !success && /abort|cancel/iu.test(error ?? '');
+      const stepStatus = success ? 'completed' : cancelled ? 'cancelled' : 'failed';
+      for (const step of state.steps) {
+        if (step.status === 'running' || step.status === 'waiting') {
+          step.status = stepStatus;
+          step.completedAt = timestamp;
+        }
+      }
+      state.phase = success ? 'completed' : cancelled ? 'cancelled' : 'failed';
+      state.attentionSummary = undefined;
+      state.summary = success
+        ? 'Completed'
+        : boundedText(error, cancelled ? 'Cancelled' : 'Failed', 10_000);
+      state.revision += 1;
+      await publishRuntimeEvent(implicitTaskEvent(state, timestamp), this.publisher);
+      this.states.delete(runId);
+      this.disabledRunIds.delete(runId);
+      return true;
+    });
+  }
+}
+
 function emptyEventRegistry() {
   return {
     schemaVersion: EVENT_STORE_SCHEMA_VERSION,

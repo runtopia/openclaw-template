@@ -4,6 +4,7 @@ import { resolveStateDir } from 'openclaw/plugin-sdk/state-paths';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import {
+  ImplicitTaskTracker,
   WorkflowEventReconciler,
   createChannelAttentionController,
 } from './runtime-integration.mjs';
@@ -782,13 +783,17 @@ export default definePluginEntry({
   description: 'Request-first durable progress and recovery for multi-step agent work.',
   register(api) {
     const channelAttentionController = createChannelAttentionController();
+    const implicitTasks = new ImplicitTaskTracker();
     const correlations = new Map();
     const relevantTools = new Set([
       'oneclaw_work',
       'request_user_input',
       'request_connection',
+      'sessions_spawn',
+      'subagents',
+      'sessions_yield',
     ]);
-    api.on('before_tool_call', (event, context) => {
+    api.on('before_tool_call', async (event, context) => {
       if (!relevantTools.has(event.toolName)) return;
       const toolCallId = event.toolCallId ?? context.toolCallId;
       const sessionKey = context.sessionKey;
@@ -799,10 +804,44 @@ export default definePluginEntry({
       const runId = activeRun?.runId ?? event.runId ?? context.runId;
       if (!toolCallId || !runId || !sessionKey) return;
       correlations.set(toolCallId, { runId, sessionKey, updatedAt: Date.now() });
+      if (event.toolName === 'oneclaw_work') {
+        if (activeRun?.runId) await implicitTasks.disable(activeRun.runId);
+        return;
+      }
+      if (!activeRun?.runId) return;
+      await implicitTasks.beforeTool({
+        toolName: event.toolName,
+        toolCallId,
+        params: event.params,
+        runId: activeRun.runId,
+        sessionKey,
+      });
     });
-    api.on('after_tool_call', (event, context) => {
+    api.on('after_tool_call', async (event, context) => {
       const toolCallId = event.toolCallId ?? context.toolCallId;
+      const correlation = toolCallId ? correlations.get(toolCallId) : undefined;
+      if (toolCallId && correlation) {
+        await implicitTasks.afterTool({
+          toolName: event.toolName,
+          toolCallId,
+          result: event.result,
+          error: event.error,
+          runId: correlation.runId,
+        });
+      }
       if (toolCallId) correlations.delete(toolCallId);
+    });
+    api.on('agent_end', async (event, context) => {
+      const activeRuns = globalThis[Symbol.for('oneclaw.activeRunsBySessionKey')];
+      const activeRun = context.sessionKey
+        ? activeRuns?.get(context.sessionKey)
+        : undefined;
+      if (!activeRun?.runId) return;
+      await implicitTasks.finish({
+        runId: activeRun.runId,
+        success: event.success,
+        error: event.error,
+      });
     });
 
     const reconciler = new WorkflowEventReconciler({

@@ -14,6 +14,10 @@ test("runtime defaults enable Durable Work, OneClaw Channel, Workboard, and the 
 
   assert.equal(applyRuntimeDefaults(cfg, {}), true);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
+  assert.equal(
+    cfg.plugins.entries["oneclaw-workflows"].hooks.allowConversationAccess,
+    true,
+  );
   assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
   assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);
@@ -80,6 +84,10 @@ test("fresh config loads and enables the preinstalled Durable Work and Channel p
 
   assert.deepEqual(cfg.plugins.load.paths, [installedPlugin, installedChannel]);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
+  assert.equal(
+    cfg.plugins.entries["oneclaw-workflows"].hooks.allowConversationAccess,
+    true,
+  );
   assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
   assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);

@@ -121,6 +121,11 @@ function applyOneclawWorkflowsPatch(cfg) {
   const pluginEntries = ensureObject(plugins, "entries");
   const workflowsPlugin = ensureObject(pluginEntries, ONECLAW_WORKFLOWS_PLUGIN_ID);
   let changed = setJsonValue(workflowsPlugin, "enabled", true);
+  const workflowHooks = ensureObject(workflowsPlugin, "hooks");
+  // OpenClaw treats image-bundled third-party plugins as non-core plugins.
+  // The implicit Task Dock must observe agent_end so it can publish a terminal
+  // snapshot, which requires this explicit conversation-hook capability.
+  changed = setJsonValue(workflowHooks, "allowConversationAccess", true) || changed;
 
   // An existing non-empty plugins.allow is an exclusive allowlist. Keep that
   // user policy intact while ensuring the image-bundled workflow plugin is not

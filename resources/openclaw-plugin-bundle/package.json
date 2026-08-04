@@ -4,11 +4,11 @@
   "private": true,
   "description": "Exact plugin versions preinstalled by the OneClaw cloud Runtime image.",
   "dependencies": {
-    "@oneclaw-plugins/channel": "0.1.1",
+    "@oneclaw-plugins/channel": "0.1.3",
     "@oneclaw-plugins/durable-work": "0.7.3",
     "@oneclaw-plugins/employee-catalog": "0.4.8",
     "@oneclaw-plugins/openclaw-search": "0.2.0",
-    "@oneclaw-plugins/runtime-events": "0.1.0",
+    "@oneclaw-plugins/runtime-events": "0.1.1",
     "@oneclaw-plugins/clawrouters": "0.4.1",
     "@openclaw/discord": "2026.7.1",
     "@openclaw/feishu": "2026.7.1",

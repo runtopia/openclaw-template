@@ -2,6 +2,8 @@ ARG OP_VERSION=2.35.0
 
 FROM golang:1.26.5-bookworm AS builtin-skill-go-tools
 
+ARG GO_PROXY=https://goproxy.cn,direct
+
 # Go-based dependencies declared by OpenClaw's bundled skills. Keep these in a
 # builder stage so the runtime image only receives the resulting executables.
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
@@ -11,7 +13,7 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
   install_go_tool() { \
     package="$1"; \
     attempt=1; \
-    while ! GOBIN=/out go install "${package}"; do \
+    while ! GOPROXY="${GO_PROXY}" GOBIN=/out go install "${package}"; do \
       if [ "${attempt}" -ge 3 ]; then \
         echo "go install ${package} failed after ${attempt} attempts" >&2; \
         return 1; \
@@ -54,9 +56,19 @@ FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword
 # SQLite. Keep the Runtime image on the same version used by Channel CI.
 FROM node:24.15.0-bookworm
 
+ARG DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
+ARG DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+RUN npm config set registry "${NPM_REGISTRY}"
+
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-  rm -f /etc/apt/apt.conf.d/docker-clean \
+  sed -i \
+    -e "s|http://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
+    -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+    /etc/apt/sources.list.d/debian.sources \
+  && rm -f /etc/apt/apt.conf.d/docker-clean \
   && apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -251,7 +263,8 @@ COPY package.json pnpm-lock.yaml ./
 COPY patches ./patches
 RUN --mount=type=cache,target=/root/.cache/node/corepack,sharing=locked \
     --mount=type=cache,target=/root/.local/share/pnpm/store/v3,sharing=locked \
-  corepack enable && pnpm install --frozen-lockfile --prod
+  corepack enable \
+  && pnpm install --frozen-lockfile --prod
 
 # Cache buster - change this to force rebuild
 ARG CACHEBUST=v20260212-chromium

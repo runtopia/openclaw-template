@@ -1,0 +1,8 @@
+.git
+.DS_Store
+.env
+.tmpdata
+node_modules
+coverage
+npm-debug.log*
+pnpm-debug.log*

@@ -151,5 +151,6 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
   assert.ok(dockerfile.includes("root !== channel"));
   assert.ok(dockerfile.includes("['channel', '0.1.1']"));
   assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));
+  assert.ok(dockerfile.includes("['employee-catalog', '0.4.8']"));
   assert.ok(!dockerfile.includes("@oneclaw/channel"));
 });

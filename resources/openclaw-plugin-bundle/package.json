@@ -6,6 +6,7 @@
   "dependencies": {
     "@oneclaw-plugins/channel": "0.1.1",
     "@oneclaw-plugins/durable-work": "0.7.3",
+    "@oneclaw-plugins/employee-catalog": "0.4.8",
     "@oneclaw-plugins/openclaw-search": "0.2.0",
     "@oneclaw-plugins/runtime-events": "0.1.0",
     "@oneclaw/clawrouters": "https://github.com/runtopia/clawrouters-plugin/archive/refs/tags/0.4.1.tar.gz",

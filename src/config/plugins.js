@@ -31,6 +31,7 @@ const PREINSTALLED_PACKAGES = [
   "@oneclaw/clawrouters",
   "@oneclaw-plugins/openclaw-search",
   "@oneclaw-plugins/durable-work",
+  "@oneclaw-plugins/employee-catalog",
   "@oneclaw-plugins/channel",
   "@openclaw/slack",
   "@openclaw/discord",
@@ -46,6 +47,7 @@ const OFFICIAL_NPM_PLUGIN_INSTALLS = [
   { pluginId: "whatsapp", packageName: "@openclaw/whatsapp" },
   { pluginId: "oneclaw-search", packageName: "@oneclaw-plugins/openclaw-search" },
   { pluginId: "oneclaw-workflows", packageName: "@oneclaw-plugins/durable-work" },
+  { pluginId: "oneclaw-employee-catalog", packageName: "@oneclaw-plugins/employee-catalog" },
   { pluginId: "oneclaw-channel", packageName: "@oneclaw-plugins/channel" },
 ];
 
@@ -53,6 +55,7 @@ const PREINSTALLED_PLUGIN_IDS = [
   "clawrouters",
   "oneclaw-search",
   "oneclaw-workflows",
+  "oneclaw-employee-catalog",
   "oneclaw-channel",
   "slack",
   "discord",

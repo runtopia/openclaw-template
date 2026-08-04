@@ -14,6 +14,7 @@ const ONECLAW_PACKAGES = {
   "@oneclaw-plugins/channel": "0.1.1",
   "@oneclaw-plugins/openclaw-search": "0.2.0",
   "@oneclaw-plugins/durable-work": "0.7.3",
+  "@oneclaw-plugins/employee-catalog": "0.4.8",
 };
 
 test("cloud Runtime declares exact official OneClaw plugin versions", () => {

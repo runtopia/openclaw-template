@@ -62,13 +62,13 @@ test("fresh config loads and enables the preinstalled Durable Work and Channel p
   const installedPlugin = path.join(
     pluginsDir,
     "node_modules",
-    "@oneclaw",
+    "@oneclaw-plugins",
     "durable-work",
   );
   const installedChannel = path.join(
     pluginsDir,
     "node_modules",
-    "@oneclaw",
+    "@oneclaw-plugins",
     "channel",
   );
   fs.mkdirSync(installedPlugin, { recursive: true });

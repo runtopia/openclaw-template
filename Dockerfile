@@ -179,12 +179,13 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #     - wechat has no official package; @tencent-weixin/openclaw-weixin is the
 #       third-party plugin (channel id "openclaw-weixin", versioned separately).
 #   Plus clawrouters (chat/image/video providers; GitHub-only, not on npm) and
-#   the first-party OneClaw Search and Durable Work plugins copied from this
-#   repository.
+#   the first-party OneClaw plugins published from runtopia/oneclaw-plugins.
+#   Exact top-level versions and their complete dependency graph are locked in
+#   resources/openclaw-plugin-bundle/package-lock.json.
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v9
+ARG CACHEBUST_PLUGINS=v10
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts/patch-openclaw-chat-images.js \
@@ -199,19 +200,21 @@ RUN node /app/scripts/patch-openclaw-chat-images.js /usr/local/lib/node_modules/
 # OpenClaw 2026.7.1 can leave duplicate legacy Memory Core state in place,
 # causing its strict startup migration checkpoint to fail on every restart.
 RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_modules/openclaw/dist
-# Do not auto-install each plugin's large OpenClaw peer dependency. The
-# validated global host is linked below instead.
+# The template is a package consumer. Plugin source, manifests, and internal
+# dependency declarations stay in their own packages; this lockfile pins the
+# exact set consumed by the cloud Runtime image.
+COPY resources/openclaw-plugin-bundle /tmp/openclaw-plugin-bundle
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-  mkdir -p ${OPENCLAW_PLUGINS_DIR} \
-  && cd ${OPENCLAW_PLUGINS_DIR} \
-  && npm init -y >/dev/null 2>&1 \
-  && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund \
-       git+https://github.com/runtopia/clawrouters-plugin.git#0.4.1 \
-       @openclaw/slack@2026.7.1 \
-       @openclaw/discord@2026.7.1 \
-       @openclaw/feishu@2026.7.1 \
-       @openclaw/whatsapp@2026.7.1 \
-       @tencent-weixin/openclaw-weixin@2.4.6 \
+  cd /tmp/openclaw-plugin-bundle \
+  && npm ci --omit=dev --legacy-peer-deps --no-audit --no-fund \
+  && mkdir -p ${OPENCLAW_PLUGINS_DIR}/node_modules \
+  && cp package.json package-lock.json ${OPENCLAW_PLUGINS_DIR}/ \
+  && cp -a node_modules/. ${OPENCLAW_PLUGINS_DIR}/node_modules/ \
+  # Do not install each plugin's large OpenClaw peer dependency. The validated
+  # global host is linked into the standalone /opt project instead.
+  && if [ ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw" ]; then \
+       ln -s /usr/local/lib/node_modules/openclaw "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw"; \
+     fi \
   # OpenClaw's post-core plugin smoke check requires every official plugin
   # that declares the host as a peerDependency to resolve that peer from the
   # plugin's own node_modules. The host is installed globally, outside this
@@ -226,34 +229,14 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
      done \
   && node /app/scripts/patch-weixin-http-routes.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
   && node /app/scripts/patch-weixin-access-policy.js ${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin \
-  && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
-
-# OneClaw Runtime Channel release artifacts are built and checksummed by the
-# openclaw-lark Release Job. Install the shared SDK first and the Channel second
-# into the same top-level /opt tree; no runtime network access or npm install is
-# needed.
-COPY resources/oneclaw-packages /tmp/oneclaw-packages
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-  cd /tmp/oneclaw-packages \
-  && sha256sum -c checksums.sha256 \
-  && cd ${OPENCLAW_PLUGINS_DIR} \
-  && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund \
-       /tmp/oneclaw-packages/oneclaw-runtime-events-0.1.0.tgz \
-       /tmp/oneclaw-packages/oneclaw-channel-0.1.0.tgz \
-  && if [ ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw" ]; then \
-       ln -s /usr/local/lib/node_modules/openclaw "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw"; \
-     fi \
-  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/runtime-events/package.json" \
-  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/channel/openclaw.plugin.json" \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/runtime-events/package.json" \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/openclaw.plugin.json" \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/openclaw-search/openclaw.plugin.json" \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw/package.json" \
-  && rm -rf /tmp/oneclaw-packages
-COPY resources/openclaw-plugins/oneclaw-search ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search
-COPY resources/openclaw-plugins/oneclaw-workflows ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work
-RUN chmod -R a+rX \
-      ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search \
-      ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work \
-  && node --input-type=module -e "import { createRequire } from 'node:module'; const root = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json').resolve('@oneclaw/runtime-events'); const workflow = createRequire('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work/index.mjs').resolve('@oneclaw/runtime-events'); const channel = createRequire('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/channel/package.json').resolve('@oneclaw/runtime-events'); if (root !== workflow || root !== channel) throw new Error('OneClaw Runtime Event SDK did not resolve to one top-level package');" \
-  && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const require = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelPackage = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/channel/package.json', 'utf8')); if (require('@oneclaw/runtime-events').runtimeEventSdkVersion() !== '0.1.0') throw new Error('Unexpected Runtime Event SDK version'); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');"
+  && node --input-type=module -e "import { createRequire } from 'node:module'; const root = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json').resolve('@oneclaw-plugins/runtime-events'); const channel = createRequire('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json').resolve('@oneclaw-plugins/runtime-events'); if (root !== channel) throw new Error('OneClaw Runtime Event SDK did not resolve to one top-level package');" \
+  && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const require = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelPackage = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json', 'utf8')); const versions = new Map([['channel', '0.1.1'], ['openclaw-search', '0.2.0'], ['durable-work', '0.7.3']]); for (const [name, expected] of versions) { const pkg = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/' + name + '/package.json', 'utf8')); if (pkg.version !== expected) throw new Error('Unexpected ' + name + ' version: ' + pkg.version); } if (require('@oneclaw-plugins/runtime-events').runtimeEventSdkVersion() !== '0.1.0') throw new Error('Unexpected Runtime Event SDK version'); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');" \
+  && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 
 COPY scripts ./scripts
 

@@ -1,9 +1,9 @@
 // Pre-installed plugin discovery paths.
 //
 // The Dockerfile installs these plugins into OPENCLAW_PLUGINS_DIR (default
-// /opt/openclaw-plugins), which lives OUTSIDE the /data volume. Each plugin
-// ships an npm-shrinkwrap.json, so npm nests every dependency under the
-// plugin's own node_modules — the package directories are fully self-contained.
+// /opt/openclaw-plugins), which lives OUTSIDE the /data volume. The image uses
+// the consumer lockfile in resources/openclaw-plugin-bundle, so every exact
+// plugin version and transitive dependency is reproducible at build time.
 //
 // OpenClaw's plugin discovery (discoverOpenClawPlugins → discoverFromPath)
 // accepts arbitrary paths via `plugins.load.paths` and resolves each plugin's
@@ -29,9 +29,9 @@ const DEFAULT_PLUGINS_DIR = "/opt/openclaw-plugins";
 // "openclaw-weixin"); there is no official wechat plugin.
 const PREINSTALLED_PACKAGES = [
   "@oneclaw/clawrouters",
-  "@oneclaw/openclaw-search",
-  "@oneclaw/durable-work",
-  "@oneclaw/channel",
+  "@oneclaw-plugins/openclaw-search",
+  "@oneclaw-plugins/durable-work",
+  "@oneclaw-plugins/channel",
   "@openclaw/slack",
   "@openclaw/discord",
   "@openclaw/feishu",
@@ -44,7 +44,9 @@ const OFFICIAL_NPM_PLUGIN_INSTALLS = [
   { pluginId: "discord", packageName: "@openclaw/discord" },
   { pluginId: "feishu", packageName: "@openclaw/feishu" },
   { pluginId: "whatsapp", packageName: "@openclaw/whatsapp" },
-  { pluginId: "oneclaw-channel", packageName: "@oneclaw/channel" },
+  { pluginId: "oneclaw-search", packageName: "@oneclaw-plugins/openclaw-search" },
+  { pluginId: "oneclaw-workflows", packageName: "@oneclaw-plugins/durable-work" },
+  { pluginId: "oneclaw-channel", packageName: "@oneclaw-plugins/channel" },
 ];
 
 const PREINSTALLED_PLUGIN_IDS = [

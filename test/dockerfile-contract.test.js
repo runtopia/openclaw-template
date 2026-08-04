@@ -76,26 +76,42 @@ test("image includes a Linux template skill smoke verifier", () => {
   assert.doesNotMatch(script, /apple-notes|apple-reminders|things-mac/);
 });
 
-test("Dockerfile bundles the OneClaw Search provider outside the data volume", () => {
+test("Dockerfile installs the locked plugin bundle outside the data volume", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-  assert.ok(dockerfile.includes(
-    "COPY resources/openclaw-plugins/oneclaw-search ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/openclaw-search",
-  ));
+  assert.ok(dockerfile.includes("COPY resources/openclaw-plugin-bundle /tmp/openclaw-plugin-bundle"));
+  assert.ok(dockerfile.includes("npm ci --omit=dev --legacy-peer-deps"));
+  assert.ok(dockerfile.includes("cp -a node_modules/. ${OPENCLAW_PLUGINS_DIR}/node_modules/"));
+  assert.ok(!dockerfile.includes("COPY resources/openclaw-plugins"));
+  assert.ok(!dockerfile.includes("COPY resources/oneclaw-packages"));
 });
 
 test("Dockerfile aligns OpenClaw core and official plugins to Desktop 2026.7.1", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  const pluginBundle = JSON.parse(fs.readFileSync(
+    path.join(repoRoot, "resources", "openclaw-plugin-bundle", "package.json"),
+    "utf8",
+  ));
   assert.ok(dockerfile.includes("ARG OPENCLAW_VERSION=2026.7.1"));
-  assert.ok(
-    dockerfile.includes(
-      "git+https://github.com/runtopia/clawrouters-plugin.git#0.4.1",
-    ),
-    "ClawRouters should use HTTPS so cloud builds do not require SSH credentials",
+  assert.equal(
+    pluginBundle.dependencies["@oneclaw/clawrouters"],
+    "https://github.com/runtopia/clawrouters-plugin/archive/refs/tags/0.4.1.tar.gz",
+    "ClawRouters should use a fixed HTTPS tarball so cloud builds do not require SSH credentials",
   );
-  assert.ok(!dockerfile.includes("github:runtopia/clawrouters-plugin"));
+  assert.ok(!pluginBundle.dependencies["@oneclaw/clawrouters"].startsWith("git+"));
+  const lockfile = JSON.parse(fs.readFileSync(
+    path.join(repoRoot, "resources", "openclaw-plugin-bundle", "package-lock.json"),
+    "utf8",
+  ));
+  const clawroutersLock = lockfile.packages["node_modules/@oneclaw/clawrouters"];
+  assert.match(
+    clawroutersLock.resolved,
+    /^https:\/\/github\.com\/runtopia\/clawrouters-plugin\/archive\/refs\/tags\/0\.4\.1\.tar\.gz$/u,
+    "ClawRouters lock entry must resolve over HTTPS without SSH credentials",
+  );
   for (const plugin of ["slack", "discord", "feishu", "whatsapp"]) {
-    assert.ok(
-      dockerfile.includes(`@openclaw/${plugin}@2026.7.1`),
+    assert.equal(
+      pluginBundle.dependencies[`@openclaw/${plugin}`],
+      "2026.7.1",
       `@openclaw/${plugin} should match the host runtime`,
     );
   }
@@ -119,22 +135,17 @@ test("Dockerfile patches Memory Core and bundles Durable Work outside the data v
     "RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_modules/openclaw/dist",
   ));
   assert.ok(dockerfile.includes(
-    "COPY resources/openclaw-plugins/oneclaw-workflows ${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw/durable-work",
+    "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work/openclaw.plugin.json",
   ));
-  assert.match(
-    dockerfile,
-    /chmod -R a\+rX[\s\S]*\$\{OPENCLAW_PLUGINS_DIR\}\/node_modules\/@oneclaw\/durable-work/,
-  );
+  assert.ok(dockerfile.includes("['durable-work', '0.7.3']"));
 });
 
-test("Dockerfile installs checksummed OneClaw Channel artifacts beside one shared Runtime Event SDK", () => {
+test("Dockerfile installs official OneClaw packages beside one shared Runtime Event SDK", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-  assert.ok(dockerfile.includes("COPY resources/oneclaw-packages /tmp/oneclaw-packages"));
-  assert.ok(dockerfile.includes("sha256sum -c checksums.sha256"));
-  assert.ok(dockerfile.includes("oneclaw-runtime-events-0.1.0.tgz"));
-  assert.ok(dockerfile.includes("oneclaw-channel-0.1.0.tgz"));
-  assert.ok(dockerfile.includes("npm install --omit=dev --legacy-peer-deps"));
-  assert.ok(dockerfile.includes("root !== workflow || root !== channel"));
-  assert.ok(dockerfile.includes("/node_modules/@oneclaw/channel/package.json', 'utf8'"));
-  assert.ok(!dockerfile.includes("require('@oneclaw/channel/package.json')"));
+  assert.ok(dockerfile.includes("@oneclaw-plugins/runtime-events"));
+  assert.ok(dockerfile.includes("@oneclaw-plugins/channel/package.json"));
+  assert.ok(dockerfile.includes("root !== channel"));
+  assert.ok(dockerfile.includes("['channel', '0.1.1']"));
+  assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));
+  assert.ok(!dockerfile.includes("@oneclaw/channel"));
 });

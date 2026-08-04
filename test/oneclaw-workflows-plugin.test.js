@@ -47,6 +47,9 @@ test("structured input and connection authorization use OneClaw Channel only", (
   assert.equal(fs.existsSync(path.join(repoRoot, "src", "interactions", "broker.js")), false);
   assert.equal(fs.existsSync(path.join(repoRoot, "src", "repair", "interactions.js")), false);
   assert.match(source, /api\.runtime\.tasks\.managedFlows\.fromToolContext/);
+  assert.match(source, /const correlation = activeCorrelation\(toolCallId, eventRuntime, context\)/);
+  assert.match(source, /oneclaw\.activeRunsBySessionKey/);
+  assert.match(source, /oneclaw\.attentionRespondersByAccountId/);
   assert.match(source, /runtimeContexts\.register/);
   assert.match(runtimeSource, /task\.snapshot/);
   assert.match(source, /name: 'request_user_input'/);

@@ -443,9 +443,9 @@ function createWorkTool(api, context, methodRepository = {
       // context during Doctor/registry audits. Resolve the session-scoped
       // managed-flow runtime only when the model actually invokes the tool.
       const runtime = api.runtime.tasks.managedFlows.fromToolContext(context);
-      const correlation = eventRuntime.correlations?.get(toolCallId);
-      const sessionKey = correlation?.sessionKey ?? context.sessionKey;
-      const runId = correlation?.runId;
+      const correlation = activeCorrelation(toolCallId, eventRuntime, context);
+      const sessionKey = correlation.sessionKey;
+      const runId = correlation.runId;
       await eventRuntime.reconciler?.rememberInvocation(sessionKey, runId);
       const withTaskEvent = async (value, flow) => {
         if (!flow) return jsonResult(value);
@@ -703,11 +703,15 @@ function createWorkTool(api, context, methodRepository = {
 function activeCorrelation(toolCallId, eventRuntime, context) {
   const correlation = eventRuntime.correlations?.get(toolCallId);
   const activeRuns = globalThis[Symbol.for('oneclaw.activeRunsBySessionKey')];
-  const activeRun = activeRuns?.get(context.sessionKey)
-    ?? (activeRuns?.size === 1 ? activeRuns.values().next().value : undefined);
+  const activeRun = context.sessionKey
+    ? activeRuns?.get(context.sessionKey)
+    : (activeRuns?.size === 1 ? activeRuns.values().next().value : undefined);
   return {
-    runId: correlation?.runId ?? context.runId ?? activeRun?.runId,
-    sessionKey: correlation?.sessionKey ?? context.sessionKey ?? activeRun?.sessionKey,
+    // The Channel owns the API-allocated public runId. OpenClaw 2026.7.1
+    // does not reliably carry replyOptions.runId into before_tool_call, so an
+    // active Channel lease is more authoritative than hook metadata.
+    runId: activeRun?.runId ?? correlation?.runId ?? context.runId,
+    sessionKey: activeRun?.sessionKey ?? correlation?.sessionKey ?? context.sessionKey,
   };
 }
 
@@ -787,8 +791,12 @@ export default definePluginEntry({
     api.on('before_tool_call', (event, context) => {
       if (!relevantTools.has(event.toolName)) return;
       const toolCallId = event.toolCallId ?? context.toolCallId;
-      const runId = event.runId ?? context.runId;
       const sessionKey = context.sessionKey;
+      const activeRuns = globalThis[Symbol.for('oneclaw.activeRunsBySessionKey')];
+      const activeRun = sessionKey
+        ? activeRuns?.get(sessionKey)
+        : (activeRuns?.size === 1 ? activeRuns.values().next().value : undefined);
+      const runId = activeRun?.runId ?? event.runId ?? context.runId;
       if (!toolCallId || !runId || !sessionKey) return;
       correlations.set(toolCallId, { runId, sessionKey, updatedAt: Date.now() });
     });
@@ -834,18 +842,22 @@ export default definePluginEntry({
     );
 
     let attentionLease;
+    let registeredResponder;
     let reconcileTimer;
     api.registerService({
       id: 'oneclaw-workflow-event-reconciliation',
       async start() {
+        registeredResponder = {
+          respond: (command) => channelAttentionController.respond(command),
+        };
         attentionLease = api.runtime.channel.runtimeContexts.register({
           channelId: 'oneclaw',
           accountId: 'default',
           capability: 'attention-responder',
-          context: {
-            respond: (command) => channelAttentionController.respond(command),
-          },
+          context: registeredResponder,
         });
+        const responders = globalThis[Symbol.for('oneclaw.attentionRespondersByAccountId')] ??= new Map();
+        responders.set('default', registeredResponder);
         const reconcile = async () => {
           try {
             await reconciler.reconcile();
@@ -866,12 +878,16 @@ export default definePluginEntry({
         channelAttentionController.close();
         attentionLease?.dispose();
         attentionLease = undefined;
+        const responders = globalThis[Symbol.for('oneclaw.attentionRespondersByAccountId')];
+        if (responders?.get('default') === registeredResponder) responders.delete('default');
+        registeredResponder = undefined;
       },
     });
   },
 });
 
 export const testing = {
+  activeCorrelation,
   createWorkTool,
   createRequestUserInputTool,
   createRequestConnectionTool,

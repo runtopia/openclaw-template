@@ -43,6 +43,14 @@ test("workflow task snapshots use monotonic protocol revisions and full state", 
   assert.equal(waiting.payload.phase, "waiting_input");
   assert.equal(waiting.payload.steps[0].status, "waiting");
   assert.equal(waiting.payload.attentionSummary, "Choose the target audience");
+
+  const succeeded = taskSnapshotEvent(flow({
+    revision: 2,
+    status: "succeeded",
+    updatedAt: 1_300,
+  }), "run_123");
+  assert.equal(succeeded.payload.phase, "completed");
+  assert.equal(succeeded.payload.steps[0].status, "completed");
 });
 
 test("workflow reconciliation closes the state-commit/event-publish crash gap", async () => {
@@ -176,6 +184,7 @@ test("connection authorization uses direct OneClaw Channel attention events", as
   await new Promise((resolve) => setImmediate(resolve));
   const created = published[0];
   assert.equal(created.type, "attention.created");
+  assert.equal(created.producer, "attention");
   assert.equal(created.payload.kind, "connection");
   assert.equal(created.payload.actions[0].label, "授权 Gmail");
   assert.equal(created.payload.actions[0].command.actionId, "connect:gmail");
@@ -247,6 +256,7 @@ test("structured input uses direct OneClaw Channel attention events", async (t) 
   await new Promise((resolve) => setImmediate(resolve));
   const attention = published[0];
   assert.equal(attention.type, "attention.created");
+  assert.equal(attention.producer, "attention");
   assert.equal(attention.payload.kind, "business_input");
   const optionId = attention.payload.questions[0].options[0].id;
   const command = {

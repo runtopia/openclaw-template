@@ -86,7 +86,7 @@ export function decodeAttentionAnswers(answers, mappings) {
 function channelAttentionEvent(entry, type, now) {
   return {
     type,
-    producer: 'oneclaw-workflows',
+    producer: 'attention',
     runId: entry.runId,
     resourceId: entry.attentionId,
     revision: entry.revision,
@@ -392,6 +392,7 @@ function normalizeEventRegistry(value) {
 function taskPhase(flow) {
   switch (flow.status) {
     case 'completed':
+    case 'succeeded':
       return 'completed';
     case 'failed':
       return 'failed';

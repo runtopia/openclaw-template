@@ -59,7 +59,6 @@ FROM node:24.15.0-bookworm
 ARG DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
 ARG DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG ONECLAW_NPM_REGISTRY=https://registry.npmjs.org
 
 RUN npm config set registry "${NPM_REGISTRY}"
 
@@ -204,6 +203,7 @@ RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_mo
 # The template is a package consumer. Plugin source, manifests, and internal
 # dependency declarations stay in their own packages; this lockfile pins the
 # exact set consumed by the cloud Runtime image.
+ARG ONECLAW_NPM_REGISTRY=https://registry.npmjs.org
 COPY resources/openclaw-plugin-bundle /tmp/openclaw-plugin-bundle
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   cd /tmp/openclaw-plugin-bundle \

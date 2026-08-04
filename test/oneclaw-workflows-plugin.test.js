@@ -3,70 +3,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { resolvePreinstalledPluginPaths } from "../src/config/plugins.js";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const pluginDir = path.join(
-  repoRoot,
-  "resources",
-  "openclaw-plugins",
-  "oneclaw-workflows",
-);
-
-test("OneClaw Durable Work declares Channel-native user interactions", () => {
-  const manifest = JSON.parse(fs.readFileSync(
-    path.join(pluginDir, "openclaw.plugin.json"),
-    "utf8",
-  ));
-  const pkg = JSON.parse(fs.readFileSync(path.join(pluginDir, "package.json"), "utf8"));
-
-  assert.equal(manifest.id, "oneclaw-workflows");
-  assert.deepEqual(manifest.contracts.tools, [
-    "oneclaw_work",
-    "request_user_input",
-    "request_connection",
-  ]);
-  assert.equal(pkg.name, "@oneclaw/durable-work");
-  assert.equal(pkg.version, manifest.version);
-  assert.equal(pkg.openclaw.extensions[0], "./index.mjs");
-  assert.equal(pkg.dependencies["@oneclaw/runtime-events"], "0.1.0");
-  assert.equal(pkg.peerDependencies.openclaw, "2026.7.1");
-});
-
-test("structured input and connection authorization use OneClaw Channel only", () => {
-  const source = fs.readFileSync(path.join(pluginDir, "index.mjs"), "utf8");
-  const runtimeSource = fs.readFileSync(
-    path.join(pluginDir, "runtime-integration.mjs"),
-    "utf8",
-  );
-
-  assert.doesNotMatch(source, /INTERACTION_BROKER|requestAttention|flushBrokerEvents/);
-  assert.doesNotMatch(runtimeSource, /INTERACTION_BROKER|\/v1\/attentions|\/v1\/input/);
-  assert.equal(fs.existsSync(path.join(repoRoot, "src", "interactions", "broker.js")), false);
-  assert.equal(fs.existsSync(path.join(repoRoot, "src", "repair", "interactions.js")), false);
-  assert.match(source, /api\.runtime\.tasks\.managedFlows\.fromToolContext/);
-  assert.match(source, /const correlation = activeCorrelation\(toolCallId, eventRuntime, context\)/);
-  assert.match(source, /oneclaw\.activeRunsBySessionKey/);
-  assert.match(source, /oneclaw\.attentionRespondersByAccountId/);
-  assert.match(source, /runtimeContexts\.register/);
-  assert.match(runtimeSource, /task\.snapshot/);
-  assert.match(source, /name: 'request_user_input'/);
-  assert.match(source, /name: 'request_connection'/);
-  assert.match(source, /native authorization card/);
-  assert.match(runtimeSource, /kind: 'business_input'/);
-  assert.match(runtimeSource, /kind: 'connection'/);
-  assert.match(runtimeSource, /attention\.created/);
-  assert.match(runtimeSource, /attention\.resolved/);
-});
-
-test("preinstalled plugin discovery includes the image-bundled workflow plugin", () => {
+test("preinstalled plugin discovery includes the npm-installed workflow plugin", () => {
   const pluginsDir = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-workflows-plugins-"));
   const installedPlugin = path.join(
     pluginsDir,
     "node_modules",
-    "@oneclaw",
+    "@oneclaw-plugins",
     "durable-work",
   );
   fs.mkdirSync(installedPlugin, { recursive: true });

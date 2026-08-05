@@ -23,7 +23,7 @@ test("bundled employee catalog is excluded from ordinary discovery and install r
     fs.mkdirSync(packageDir, { recursive: true });
     fs.writeFileSync(
       path.join(packageDir, "package.json"),
-      JSON.stringify({ name: "@oneclaw-plugins/employee-catalog", version: "0.5.0" }),
+      JSON.stringify({ name: "@oneclaw-plugins/employee-catalog", version: "0.5.2" }),
     );
     const env = { OPENCLAW_PLUGINS_DIR: pluginsDir };
 

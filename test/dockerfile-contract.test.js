@@ -170,4 +170,14 @@ test("Dockerfile gives orchestration plugins native bundled-plugin trust", () =>
       "/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-employee-catalog",
     ),
   );
+  assert.ok(
+    dockerfile.includes(
+      'test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work"',
+    ),
+  );
+  assert.ok(
+    dockerfile.includes(
+      'test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog"',
+    ),
+  );
 });

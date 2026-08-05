@@ -228,7 +228,7 @@ For platform dashboards, do not expose `OPENCLAW_GATEWAY_TOKEN` to browsers. Use
 
 **Q: Why are plugins baked into the image rather than installed at runtime?**
 
-A: OpenClaw's plugin discovery does not scan global `node_modules`. Plugins are installed into `/opt/openclaw-plugins` during the Docker build and normally declared via `plugins.load.paths` in `openclaw.json`. The Gateway-privileged `oneclaw-workflows` and `oneclaw-employee-catalog` packages are copied from the same exact npm lock into OpenClaw's immutable bundled extension tree instead. This avoids a large runtime `cp` on every boot, preserves OpenClaw's plugin trust checks, and ensures the `/data` volume mount does not shadow plugin files.
+A: OpenClaw's plugin discovery does not scan global `node_modules`. Plugins are installed into `/opt/openclaw-plugins` during the Docker build and normally declared via `plugins.load.paths` in `openclaw.json`. The Gateway-privileged `oneclaw-workflows` and `oneclaw-employee-catalog` packages are copied from the same exact npm lock into OpenClaw's immutable bundled extension tree instead, then their ordinary `/opt` copies are removed so a persisted install index cannot shadow the trusted versions. This avoids a large runtime `cp` on every boot, preserves OpenClaw's plugin trust checks, and ensures the `/data` volume mount does not shadow plugin files.
 
 ## Support
 

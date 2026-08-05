@@ -20,10 +20,11 @@
 //
 // durable-work and employee-catalog are intentionally absent from both lists
 // below. The Dockerfile copies their exact locked packages into OpenClaw's
-// immutable dist/extensions tree. They call privileged Gateway APIs, which
-// OpenClaw permits only for bundled or catalog-trusted official plugins. Adding
-// their /opt paths or install records here would rediscover them with origin
-// config/global and shadow the trusted bundled candidates.
+// immutable dist/extensions tree, then removes the ordinary /opt copies. They
+// call privileged Gateway APIs, which OpenClaw permits only for bundled or
+// catalog-trusted official plugins. Adding or retaining their /opt paths or
+// install records would rediscover them with origin config/global and shadow
+// the trusted bundled candidates.
 
 import fs from "node:fs";
 import path from "node:path";

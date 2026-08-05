@@ -252,6 +252,13 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw/package.json" \
   && node --input-type=module -e "import { createRequire } from 'node:module'; const root = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json').resolve('@oneclaw-plugins/runtime-events'); const channel = createRequire('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json').resolve('@oneclaw-plugins/runtime-events'); if (root !== channel) throw new Error('OneClaw Runtime Event SDK did not resolve to one top-level package');" \
   && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const require = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelPackage = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json', 'utf8')); const versions = new Map([['clawrouters', '0.4.1'], ['channel', '0.1.4'], ['openclaw-search', '0.2.0'], ['durable-work', '0.8.2'], ['employee-catalog', '0.4.12']]); for (const [name, expected] of versions) { const pkg = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/' + name + '/package.json', 'utf8')); if (pkg.version !== expected) throw new Error('Unexpected ' + name + ' version: ' + pkg.version); } if (require('@oneclaw-plugins/runtime-events').runtimeEventSdkVersion() !== '0.1.1') throw new Error('Unexpected Runtime Event SDK version'); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');" \
+  # Do not leave ordinary copies behind: a persisted OpenClaw install index can
+  # rediscover them with global origin and shadow the bundled trusted copies.
+  && rm -rf \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work" \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog" \
+  && test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work" \
+  && test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog" \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 
 COPY scripts ./scripts

@@ -22,7 +22,7 @@ test("preinstalled employee catalog is discovered and recorded", () => {
     fs.mkdirSync(packageDir, { recursive: true });
     fs.writeFileSync(
       path.join(packageDir, "package.json"),
-      JSON.stringify({ name: "@oneclaw-plugins/employee-catalog", version: "0.4.8" }),
+      JSON.stringify({ name: "@oneclaw-plugins/employee-catalog", version: "0.4.12" }),
     );
     const env = { OPENCLAW_PLUGINS_DIR: pluginsDir };
 
@@ -31,9 +31,9 @@ test("preinstalled employee catalog is discovered and recorded", () => {
       source: "npm",
       spec: "@oneclaw-plugins/employee-catalog",
       resolvedName: "@oneclaw-plugins/employee-catalog",
-      resolvedSpec: "@oneclaw-plugins/employee-catalog@0.4.8",
-      version: "0.4.8",
-      resolvedVersion: "0.4.8",
+      resolvedSpec: "@oneclaw-plugins/employee-catalog@0.4.12",
+      version: "0.4.12",
+      resolvedVersion: "0.4.12",
       installPath: packageDir,
       installedAt: "1970-01-01T00:00:00.000Z",
     });

@@ -14,8 +14,8 @@ const ONECLAW_PACKAGES = {
   "@oneclaw-plugins/runtime-events": "0.1.1",
   "@oneclaw-plugins/channel": "0.1.4",
   "@oneclaw-plugins/openclaw-search": "0.2.0",
-  "@oneclaw-plugins/durable-work": "0.7.3",
-  "@oneclaw-plugins/employee-catalog": "0.4.8",
+  "@oneclaw-plugins/durable-work": "0.8.2",
+  "@oneclaw-plugins/employee-catalog": "0.4.12",
 };
 
 test("cloud Runtime declares exact official OneClaw plugin versions", () => {

@@ -11,8 +11,8 @@ const lockfile = JSON.parse(fs.readFileSync(path.join(bundleDir, "package-lock.j
 
 const ONECLAW_PACKAGES = {
   "@oneclaw-plugins/clawrouters": "0.4.1",
-  "@oneclaw-plugins/runtime-events": "0.1.1",
-  "@oneclaw-plugins/channel": "0.1.7",
+  "@oneclaw-plugins/runtime-events": "0.1.2",
+  "@oneclaw-plugins/channel": "0.1.8",
   "@oneclaw-plugins/openclaw-search": "0.2.0",
   "@oneclaw-plugins/durable-work": "0.9.2",
   "@oneclaw-plugins/employee-catalog": "0.5.2",

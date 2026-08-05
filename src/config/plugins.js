@@ -15,13 +15,24 @@
 //
 // Discovery only makes a plugin's code findable; activation still requires
 // plugins.entries.<id>.enabled=true (set by auto-config for clawrouters and by
-// runtime defaults for OneClaw orchestration and Channel plugins), so listing all paths here is harmless
-// even when a given channel isn't configured.
+// runtime defaults for OneClaw orchestration and Channel plugins), so listing
+// these paths here is harmless even when a given channel isn't configured.
+//
+// durable-work and employee-catalog are intentionally absent from both lists
+// below. The Dockerfile copies their exact locked packages into OpenClaw's
+// immutable dist/extensions tree. They call privileged Gateway APIs, which
+// OpenClaw permits only for bundled or catalog-trusted official plugins. Adding
+// their /opt paths or install records here would rediscover them with origin
+// config/global and shadow the trusted bundled candidates.
 
 import fs from "node:fs";
 import path from "node:path";
 
 const DEFAULT_PLUGINS_DIR = "/opt/openclaw-plugins";
+const BUNDLED_ORCHESTRATION_PLUGIN_IDS = [
+  "oneclaw-workflows",
+  "oneclaw-employee-catalog",
+];
 
 // npm package names of the plugins baked into the image (Dockerfile keeps this
 // list in sync). Telegram is built into openclaw core — no plugin here.
@@ -30,8 +41,6 @@ const DEFAULT_PLUGINS_DIR = "/opt/openclaw-plugins";
 const PREINSTALLED_PACKAGES = [
   "@oneclaw-plugins/clawrouters",
   "@oneclaw-plugins/openclaw-search",
-  "@oneclaw-plugins/durable-work",
-  "@oneclaw-plugins/employee-catalog",
   "@oneclaw-plugins/channel",
   "@openclaw/slack",
   "@openclaw/discord",
@@ -47,8 +56,6 @@ const OFFICIAL_NPM_PLUGIN_INSTALLS = [
   { pluginId: "feishu", packageName: "@openclaw/feishu" },
   { pluginId: "whatsapp", packageName: "@openclaw/whatsapp" },
   { pluginId: "oneclaw-search", packageName: "@oneclaw-plugins/openclaw-search" },
-  { pluginId: "oneclaw-workflows", packageName: "@oneclaw-plugins/durable-work" },
-  { pluginId: "oneclaw-employee-catalog", packageName: "@oneclaw-plugins/employee-catalog" },
   { pluginId: "oneclaw-channel", packageName: "@oneclaw-plugins/channel" },
 ];
 
@@ -109,13 +116,24 @@ export function buildPreinstalledPluginInstallRecords(env = process.env) {
 
 export function applyPreinstalledPluginInstallRecords(cfg, env = process.env) {
   const records = buildPreinstalledPluginInstallRecords(env);
-  if (Object.keys(records).length === 0) return false;
-  cfg.plugins ??= {};
-  cfg.plugins.installs = {
-    ...(cfg.plugins.installs || {}),
-    ...records,
-  };
-  return true;
+  let changed = false;
+
+  for (const pluginId of BUNDLED_ORCHESTRATION_PLUGIN_IDS) {
+    if (!Object.hasOwn(cfg.plugins?.installs || {}, pluginId)) continue;
+    delete cfg.plugins.installs[pluginId];
+    changed = true;
+  }
+
+  if (Object.keys(records).length > 0) {
+    cfg.plugins ??= {};
+    cfg.plugins.installs = {
+      ...(cfg.plugins.installs || {}),
+      ...records,
+    };
+    changed = true;
+  }
+
+  return changed;
 }
 
 export function cleanupStalePreinstalledExtensions(stateDir, env = process.env) {

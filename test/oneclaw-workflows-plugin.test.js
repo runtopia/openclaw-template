@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { resolvePreinstalledPluginPaths } from "../src/config/plugins.js";
 
-test("preinstalled plugin discovery includes the npm-installed workflow plugin", () => {
+test("preinstalled plugin discovery excludes the bundled workflow plugin", () => {
   const pluginsDir = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-workflows-plugins-"));
   const installedPlugin = path.join(
     pluginsDir,
@@ -18,5 +18,5 @@ test("preinstalled plugin discovery includes the npm-installed workflow plugin",
 
   const paths = resolvePreinstalledPluginPaths({ OPENCLAW_PLUGINS_DIR: pluginsDir });
 
-  assert.deepEqual(paths, [installedPlugin]);
+  assert.deepEqual(paths, []);
 });

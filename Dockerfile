@@ -211,6 +211,19 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && mkdir -p ${OPENCLAW_PLUGINS_DIR}/node_modules \
   && cp package.json package-lock.json ${OPENCLAW_PLUGINS_DIR}/ \
   && cp -a node_modules/. ${OPENCLAW_PLUGINS_DIR}/node_modules/ \
+  # These orchestration plugins call privileged Gateway APIs. Copy their exact
+  # locked packages into OpenClaw's immutable bundled tree so the host grants
+  # native bundled-plugin trust without weakening its trust checks.
+  && cp -a "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work" \
+       /usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-workflows \
+  && cp -a "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog" \
+       /usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-employee-catalog \
+  && for plugin in oneclaw-workflows oneclaw-employee-catalog; do \
+       plugin_dir="/usr/local/lib/node_modules/openclaw/dist/extensions/${plugin}"; \
+       mkdir -p "${plugin_dir}/node_modules"; \
+       ln -s /usr/local/lib/node_modules/openclaw "${plugin_dir}/node_modules/openclaw"; \
+       test -f "${plugin_dir}/openclaw.plugin.json"; \
+     done \
   # Do not install each plugin's large OpenClaw peer dependency. The validated
   # global host is linked into the standalone /opt project instead.
   && if [ ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw" ]; then \

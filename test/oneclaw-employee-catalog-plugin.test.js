@@ -5,11 +5,12 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  applyPreinstalledPluginInstallRecords,
   buildPreinstalledPluginInstallRecords,
   resolvePreinstalledPluginPaths,
 } from "../src/config/plugins.js";
 
-test("preinstalled employee catalog is discovered and recorded", () => {
+test("bundled employee catalog is excluded from ordinary discovery and install records", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-employee-catalog-"));
   try {
     const pluginsDir = path.join(root, "plugins");
@@ -26,17 +27,22 @@ test("preinstalled employee catalog is discovered and recorded", () => {
     );
     const env = { OPENCLAW_PLUGINS_DIR: pluginsDir };
 
-    assert.deepEqual(resolvePreinstalledPluginPaths(env), [packageDir]);
-    assert.deepEqual(buildPreinstalledPluginInstallRecords(env)["oneclaw-employee-catalog"], {
-      source: "npm",
-      spec: "@oneclaw-plugins/employee-catalog",
-      resolvedName: "@oneclaw-plugins/employee-catalog",
-      resolvedSpec: "@oneclaw-plugins/employee-catalog@0.4.12",
-      version: "0.4.12",
-      resolvedVersion: "0.4.12",
-      installPath: packageDir,
-      installedAt: "1970-01-01T00:00:00.000Z",
-    });
+    assert.deepEqual(resolvePreinstalledPluginPaths(env), []);
+    assert.equal(
+      buildPreinstalledPluginInstallRecords(env)["oneclaw-employee-catalog"],
+      undefined,
+    );
+
+    const cfg = {
+      plugins: {
+        installs: {
+          "oneclaw-workflows": { installPath: "/old/durable-work" },
+          "oneclaw-employee-catalog": { installPath: packageDir },
+        },
+      },
+    };
+    assert.equal(applyPreinstalledPluginInstallRecords(cfg, env), true);
+    assert.deepEqual(cfg.plugins.installs, {});
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

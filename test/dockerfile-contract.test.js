@@ -156,3 +156,18 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
   assert.ok(dockerfile.includes("['employee-catalog', '0.4.12']"));
   assert.ok(!dockerfile.includes("@oneclaw/channel"));
 });
+
+test("Dockerfile gives orchestration plugins native bundled-plugin trust", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+
+  assert.ok(
+    dockerfile.includes(
+      "/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-workflows",
+    ),
+  );
+  assert.ok(
+    dockerfile.includes(
+      "/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-employee-catalog",
+    ),
+  );
+});

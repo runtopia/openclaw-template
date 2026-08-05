@@ -62,7 +62,7 @@ test("runtime defaults extend only an already-restrictive plugin allowlist", () 
   assert.deepEqual(nonRestrictive.plugins.allow, []);
 });
 
-test("fresh config loads and enables the preinstalled OneClaw orchestration and Channel packages", () => {
+test("fresh config enables bundled OneClaw orchestration and loads the Channel package", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-workflows-config-"));
   const pluginsDir = path.join(root, "plugins");
   const installedPlugin = path.join(
@@ -95,11 +95,9 @@ test("fresh config loads and enables the preinstalled OneClaw orchestration and 
     env: { OPENCLAW_PLUGINS_DIR: pluginsDir },
   });
 
-  assert.deepEqual(cfg.plugins.load.paths, [
-    installedPlugin,
-    installedEmployeeCatalog,
-    installedChannel,
-  ]);
+  assert.deepEqual(cfg.plugins.load.paths, [installedChannel]);
+  assert.equal(cfg.plugins.installs?.["oneclaw-workflows"], undefined);
+  assert.equal(cfg.plugins.installs?.["oneclaw-employee-catalog"], undefined);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
   assert.equal(
     cfg.plugins.entries["oneclaw-workflows"].hooks.allowConversationAccess,

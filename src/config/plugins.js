@@ -18,19 +18,20 @@
 // runtime defaults for OneClaw orchestration and Channel plugins), so listing
 // these paths here is harmless even when a given channel isn't configured.
 //
-// durable-work and employee-catalog are intentionally absent from both lists
-// below. The Dockerfile copies their exact locked packages into OpenClaw's
-// immutable dist/extensions tree, then removes the ordinary /opt copies. They
-// call privileged Gateway APIs, which OpenClaw permits only for bundled or
-// catalog-trusted official plugins. Adding or retaining their /opt paths or
-// install records would rediscover them with origin config/global and shadow
-// the trusted bundled candidates.
+// Channel, durable-work, and employee-catalog are intentionally absent from
+// both lists below. The Dockerfile copies their exact locked packages into
+// OpenClaw's immutable dist/extensions tree, then removes the ordinary /opt
+// copies. They call privileged Gateway APIs, which OpenClaw permits only for
+// bundled or catalog-trusted official plugins. Adding or retaining their /opt
+// paths or install records would rediscover them with origin config/global and
+// shadow the trusted bundled candidates.
 
 import fs from "node:fs";
 import path from "node:path";
 
 const DEFAULT_PLUGINS_DIR = "/opt/openclaw-plugins";
-const BUNDLED_ORCHESTRATION_PLUGIN_IDS = [
+const BUNDLED_ONECLAW_PLUGIN_IDS = [
+  "oneclaw-channel",
   "oneclaw-workflows",
   "oneclaw-employee-catalog",
 ];
@@ -42,7 +43,6 @@ const BUNDLED_ORCHESTRATION_PLUGIN_IDS = [
 const PREINSTALLED_PACKAGES = [
   "@oneclaw-plugins/clawrouters",
   "@oneclaw-plugins/openclaw-search",
-  "@oneclaw-plugins/channel",
   "@openclaw/slack",
   "@openclaw/discord",
   "@openclaw/feishu",
@@ -57,7 +57,6 @@ const OFFICIAL_NPM_PLUGIN_INSTALLS = [
   { pluginId: "feishu", packageName: "@openclaw/feishu" },
   { pluginId: "whatsapp", packageName: "@openclaw/whatsapp" },
   { pluginId: "oneclaw-search", packageName: "@oneclaw-plugins/openclaw-search" },
-  { pluginId: "oneclaw-channel", packageName: "@oneclaw-plugins/channel" },
 ];
 
 const PREINSTALLED_PLUGIN_IDS = [
@@ -119,7 +118,7 @@ export function applyPreinstalledPluginInstallRecords(cfg, env = process.env) {
   const records = buildPreinstalledPluginInstallRecords(env);
   let changed = false;
 
-  for (const pluginId of BUNDLED_ORCHESTRATION_PLUGIN_IDS) {
+  for (const pluginId of BUNDLED_ONECLAW_PLUGIN_IDS) {
     if (!Object.hasOwn(cfg.plugins?.installs || {}, pluginId)) continue;
     delete cfg.plugins.installs[pluginId];
     changed = true;

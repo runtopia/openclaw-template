@@ -157,9 +157,14 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
   assert.ok(!dockerfile.includes("@oneclaw/channel"));
 });
 
-test("Dockerfile gives orchestration plugins native bundled-plugin trust", () => {
+test("Dockerfile gives privileged OneClaw plugins native bundled-plugin trust", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 
+  assert.ok(
+    dockerfile.includes(
+      "/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-channel",
+    ),
+  );
   assert.ok(
     dockerfile.includes(
       "/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-workflows",
@@ -172,6 +177,11 @@ test("Dockerfile gives orchestration plugins native bundled-plugin trust", () =>
   );
   assert.ok(
     dockerfile.includes(
+      'test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel"',
+    ),
+  );
+  assert.ok(
+    dockerfile.includes(
       'test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work"',
     ),
   );
@@ -180,4 +190,8 @@ test("Dockerfile gives orchestration plugins native bundled-plugin trust", () =>
       'test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog"',
     ),
   );
+  assert.ok(dockerfile.includes(
+    '"${channel_dir}/node_modules/@oneclaw-plugins/runtime-events"',
+  ));
+  assert.ok(dockerfile.includes("channelRequire.resolve('openclaw')"));
 });

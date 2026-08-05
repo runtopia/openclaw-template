@@ -5,12 +5,13 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  applyPreinstalledPluginInstallRecords,
   buildPreinstalledPluginInstallRecords,
   resolvePreinstalledPluginPaths,
 } from "../src/config/plugins.js";
 import { buildOneclawChannelStatus } from "../src/integration/oneclaw.js";
 
-test("preinstalled OneClaw Channel is discovered and recorded with its package identity", () => {
+test("bundled OneClaw Channel is excluded from ordinary discovery and install records", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-channel-plugin-"));
   try {
     const pluginsDir = path.join(root, "plugins");
@@ -22,17 +23,18 @@ test("preinstalled OneClaw Channel is discovered and recorded with its package i
     );
     const env = { OPENCLAW_PLUGINS_DIR: pluginsDir };
 
-    assert.deepEqual(resolvePreinstalledPluginPaths(env), [packageDir]);
-    assert.deepEqual(buildPreinstalledPluginInstallRecords(env)["oneclaw-channel"], {
-      source: "npm",
-      spec: "@oneclaw-plugins/channel",
-      resolvedName: "@oneclaw-plugins/channel",
-      resolvedSpec: "@oneclaw-plugins/channel@0.1.5",
-      version: "0.1.5",
-      resolvedVersion: "0.1.5",
-      installPath: packageDir,
-      installedAt: "1970-01-01T00:00:00.000Z",
-    });
+    assert.deepEqual(resolvePreinstalledPluginPaths(env), []);
+    assert.equal(buildPreinstalledPluginInstallRecords(env)["oneclaw-channel"], undefined);
+
+    const cfg = {
+      plugins: {
+        installs: {
+          "oneclaw-channel": { installPath: packageDir, version: "0.1.5" },
+        },
+      },
+    };
+    assert.equal(applyPreinstalledPluginInstallRecords(cfg, env), true);
+    assert.equal(cfg.plugins.installs["oneclaw-channel"], undefined);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

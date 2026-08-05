@@ -18,7 +18,7 @@ test("preinstalled OneClaw Channel is discovered and recorded with its package i
     fs.mkdirSync(packageDir, { recursive: true });
     fs.writeFileSync(
       path.join(packageDir, "package.json"),
-      JSON.stringify({ name: "@oneclaw-plugins/channel", version: "0.1.3" }),
+      JSON.stringify({ name: "@oneclaw-plugins/channel", version: "0.1.4" }),
     );
     const env = { OPENCLAW_PLUGINS_DIR: pluginsDir };
 
@@ -27,9 +27,9 @@ test("preinstalled OneClaw Channel is discovered and recorded with its package i
       source: "npm",
       spec: "@oneclaw-plugins/channel",
       resolvedName: "@oneclaw-plugins/channel",
-      resolvedSpec: "@oneclaw-plugins/channel@0.1.3",
-      version: "0.1.3",
-      resolvedVersion: "0.1.3",
+      resolvedSpec: "@oneclaw-plugins/channel@0.1.4",
+      version: "0.1.4",
+      resolvedVersion: "0.1.4",
       installPath: packageDir,
       installedAt: "1970-01-01T00:00:00.000Z",
     });

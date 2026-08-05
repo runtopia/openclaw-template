@@ -12,10 +12,10 @@ const lockfile = JSON.parse(fs.readFileSync(path.join(bundleDir, "package-lock.j
 const ONECLAW_PACKAGES = {
   "@oneclaw-plugins/clawrouters": "0.4.1",
   "@oneclaw-plugins/runtime-events": "0.1.1",
-  "@oneclaw-plugins/channel": "0.1.4",
+  "@oneclaw-plugins/channel": "0.1.5",
   "@oneclaw-plugins/openclaw-search": "0.2.0",
-  "@oneclaw-plugins/durable-work": "0.8.2",
-  "@oneclaw-plugins/employee-catalog": "0.4.12",
+  "@oneclaw-plugins/durable-work": "0.9.1",
+  "@oneclaw-plugins/employee-catalog": "0.5.0",
 };
 
 test("cloud Runtime declares exact official OneClaw plugin versions", () => {

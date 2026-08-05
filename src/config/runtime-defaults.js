@@ -11,6 +11,7 @@ const CLAWROUTERS_EMBEDDING_MODEL = "auto";
 const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
 const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
 const ONECLAW_WORKFLOWS_PLUGIN_ID = "oneclaw-workflows";
+const ONECLAW_EMPLOYEE_CATALOG_PLUGIN_ID = "oneclaw-employee-catalog";
 const ONECLAW_CHANNEL_PLUGIN_ID = "oneclaw-channel";
 const WORKBOARD_PLUGIN_ID = "workboard";
 const OPENCLAW_PROVIDER_PINNED_AGENT_RUNTIME = {
@@ -166,6 +167,27 @@ function applyOneclawChannelPatch(cfg) {
   return changed;
 }
 
+function applyOneclawEmployeeCatalogPatch(cfg) {
+  const plugins = ensureObject(cfg, "plugins");
+  const pluginEntries = ensureObject(plugins, "entries");
+  const employeeCatalog = ensureObject(pluginEntries, ONECLAW_EMPLOYEE_CATALOG_PLUGIN_ID);
+  let changed = setJsonValue(employeeCatalog, "enabled", true);
+  const hooks = ensureObject(employeeCatalog, "hooks");
+  // Employee completion reconciliation observes the coordinating conversation.
+  // Image-bundled third-party plugins need this trust grant explicitly.
+  changed = setJsonValue(hooks, "allowConversationAccess", true) || changed;
+
+  if (
+    Array.isArray(plugins.allow)
+    && plugins.allow.length > 0
+    && !plugins.allow.includes(ONECLAW_EMPLOYEE_CATALOG_PLUGIN_ID)
+  ) {
+    plugins.allow = [...plugins.allow, ONECLAW_EMPLOYEE_CATALOG_PLUGIN_ID];
+    changed = true;
+  }
+  return changed;
+}
+
 function applyWorkboardPatch(cfg) {
   const plugins = ensureObject(cfg, "plugins");
   const pluginEntries = ensureObject(plugins, "entries");
@@ -233,6 +255,7 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   const codingAgent = ensureObject(skillEntries, "coding-agent");
   changed = setJsonValue(codingAgent, "enabled", true) || changed;
   changed = applyOneclawWorkflowsPatch(cfg) || changed;
+  changed = applyOneclawEmployeeCatalogPatch(cfg) || changed;
   changed = applyOneclawChannelPatch(cfg) || changed;
   changed = applyWorkboardPatch(cfg) || changed;
 

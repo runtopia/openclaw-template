@@ -15,7 +15,7 @@
 //
 // Discovery only makes a plugin's code findable; activation still requires
 // plugins.entries.<id>.enabled=true (set by auto-config for clawrouters and by
-// runtime defaults for OneClaw Channel), so listing all paths here is harmless
+// runtime defaults for OneClaw orchestration and Channel plugins), so listing all paths here is harmless
 // even when a given channel isn't configured.
 
 import fs from "node:fs";

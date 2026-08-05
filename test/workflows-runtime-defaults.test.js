@@ -9,13 +9,18 @@ import {
   generateConfigDirect,
 } from "../src/config/generate.js";
 
-test("runtime defaults enable Durable Work, OneClaw Channel, Workboard, and the native plan tool without provider credentials", () => {
+test("runtime defaults enable OneClaw orchestration, Channel, Workboard, and the native plan tool without provider credentials", () => {
   const cfg = {};
 
   assert.equal(applyRuntimeDefaults(cfg, {}), true);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
   assert.equal(
     cfg.plugins.entries["oneclaw-workflows"].hooks.allowConversationAccess,
+    true,
+  );
+  assert.equal(cfg.plugins.entries["oneclaw-employee-catalog"].enabled, true);
+  assert.equal(
+    cfg.plugins.entries["oneclaw-employee-catalog"].hooks.allowConversationAccess,
     true,
   );
   assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
@@ -50,13 +55,14 @@ test("runtime defaults extend only an already-restrictive plugin allowlist", () 
   assert.deepEqual(restrictive.plugins.allow, [
     "clawrouters",
     "oneclaw-workflows",
+    "oneclaw-employee-catalog",
     "oneclaw-channel",
     "workboard",
   ]);
   assert.deepEqual(nonRestrictive.plugins.allow, []);
 });
 
-test("fresh config loads and enables the preinstalled Durable Work and Channel packages", () => {
+test("fresh config loads and enables the preinstalled OneClaw orchestration and Channel packages", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-workflows-config-"));
   const pluginsDir = path.join(root, "plugins");
   const installedPlugin = path.join(
@@ -71,7 +77,14 @@ test("fresh config loads and enables the preinstalled Durable Work and Channel p
     "@oneclaw-plugins",
     "channel",
   );
+  const installedEmployeeCatalog = path.join(
+    pluginsDir,
+    "node_modules",
+    "@oneclaw-plugins",
+    "employee-catalog",
+  );
   fs.mkdirSync(installedPlugin, { recursive: true });
+  fs.mkdirSync(installedEmployeeCatalog, { recursive: true });
   fs.mkdirSync(installedChannel, { recursive: true });
   const configPath = path.join(root, "state", "openclaw.json");
 
@@ -82,10 +95,19 @@ test("fresh config loads and enables the preinstalled Durable Work and Channel p
     env: { OPENCLAW_PLUGINS_DIR: pluginsDir },
   });
 
-  assert.deepEqual(cfg.plugins.load.paths, [installedPlugin, installedChannel]);
+  assert.deepEqual(cfg.plugins.load.paths, [
+    installedPlugin,
+    installedEmployeeCatalog,
+    installedChannel,
+  ]);
   assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
   assert.equal(
     cfg.plugins.entries["oneclaw-workflows"].hooks.allowConversationAccess,
+    true,
+  );
+  assert.equal(cfg.plugins.entries["oneclaw-employee-catalog"].enabled, true);
+  assert.equal(
+    cfg.plugins.entries["oneclaw-employee-catalog"].hooks.allowConversationAccess,
     true,
   );
   assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);

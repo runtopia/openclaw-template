@@ -3,7 +3,10 @@ import childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { createGatewayManager } from "../src/gateway/manager.js";
+import {
+  createGatewayManager,
+  DEFAULT_GATEWAY_START_TIMEOUT_MS,
+} from "../src/gateway/manager.js";
 
 class FakeProc extends EventEmitter {
   constructor(id) {
@@ -22,6 +25,10 @@ class FakeProc extends EventEmitter {
     return true;
   }
 }
+
+test("gateway startup allows first-boot plugin preparation to finish", () => {
+  assert.equal(DEFAULT_GATEWAY_START_TIMEOUT_MS, 180_000);
+});
 
 test("gateway restart requests are coalesced while a restart is already in flight", async (t) => {
   const originalSpawn = childProcess.spawn;
@@ -56,6 +63,7 @@ test("gateway restart requests are coalesced while a restart is already in fligh
     internalGatewayHost: "127.0.0.1",
     gatewayToken: "test-token",
     isConfigured: () => true,
+    gatewayStartTimeoutMs: 5_000,
   });
   t.after(() => gateway.stopGateway());
 
@@ -100,6 +108,7 @@ test("gateway runner exit does not crash-loop when gateway http is still reachab
     internalGatewayHost: "127.0.0.1",
     gatewayToken: "test-token",
     isConfigured: () => true,
+    gatewayStartTimeoutMs: 5_000,
   });
   t.after(() => gateway.stopGateway());
 
@@ -147,6 +156,7 @@ test("gateway graceful exit waits for in-process restart before spawning replace
     internalGatewayHost: "127.0.0.1",
     gatewayToken: "test-token",
     isConfigured: () => true,
+    gatewayStartTimeoutMs: 5_000,
     gracefulRestartAdoptionMs: 700,
   });
   t.after(() => gateway.stopGateway());
@@ -194,6 +204,7 @@ test("gateway graceful service restart recovers without crash backoff", async (t
     internalGatewayHost: "127.0.0.1",
     gatewayToken: "test-token",
     isConfigured: () => true,
+    gatewayStartTimeoutMs: 5_000,
     gracefulRestartAdoptionMs: 300,
   });
   t.after(() => gateway.stopGateway());

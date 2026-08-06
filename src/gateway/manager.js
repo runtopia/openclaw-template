@@ -3,7 +3,9 @@
 import childProcess from "node:child_process";
 import fs from "node:fs";
 
-export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured, gatewayEnv = {}, gracefulRestartAdoptionMs = 5_000 }) {
+export const DEFAULT_GATEWAY_START_TIMEOUT_MS = 180_000;
+
+export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured, gatewayEnv = {}, gatewayStartTimeoutMs = DEFAULT_GATEWAY_START_TIMEOUT_MS, gracefulRestartAdoptionMs = 5_000 }) {
   const GATEWAY_TARGET = `http://${internalGatewayHost}:${internalGatewayPort}`;
 
   const LOG_BUFFER_MAX = 500;
@@ -27,7 +29,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
   }
 
   async function waitForGatewayHttpReady(opts = {}) {
-    const timeoutMs = opts.timeoutMs ?? 60_000;
+    const timeoutMs = opts.timeoutMs ?? gatewayStartTimeoutMs;
     const start = Date.now();
     const endpoints = ["/openclaw", "/", "/health"];
     while (Date.now() - start < timeoutMs) {
@@ -162,7 +164,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
 
   async function startGatewayAndWait() {
     await startGateway();
-    const ready = await waitForGatewayHttpReady({ timeoutMs: 60_000 });
+    const ready = await waitForGatewayHttpReady();
     if (!ready) throw new Error("Gateway HTTP listener did not become ready in time");
     consecutiveCrashes = 0; // 成功就绪，重置崩溃计数
   }
@@ -214,8 +216,8 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
 
     if (!waitReady) {
       // 触发后台启动但不等待就绪。修复助手必须立即拿回控制权——否则当
-      // gateway 起不来时（正是用户求助修复助手的场景），这里会阻塞最长
-      // 60s 再抛错，把聊天卡死并以错误中断。调用方随后用 isGatewayReady /
+      // gateway 起不来时（正是用户求助修复助手的场景），这里会阻塞整个
+      // startup readiness timeout 再抛错，把聊天卡死并以错误中断。调用方随后用 isGatewayReady /
       // getRecentLogs（即 AI 的 get_status / read_logs 工具）观察新进程。
       gatewayRestarting.catch((err) =>
         console.error(`[gateway] background restart did not become ready: ${err.message}`));

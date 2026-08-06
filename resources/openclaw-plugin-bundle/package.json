@@ -4,7 +4,7 @@
   "private": true,
   "description": "Exact plugin versions preinstalled by the OneClaw cloud Runtime image.",
   "dependencies": {
-    "@oneclaw-plugins/channel": "0.1.10",
+    "@oneclaw-plugins/channel": "0.1.11",
     "@oneclaw-plugins/durable-work": "0.9.2",
     "@oneclaw-plugins/employee-catalog": "0.5.2",
     "@oneclaw-plugins/openclaw-search": "0.2.0",

@@ -141,7 +141,7 @@ test("Dockerfile patches Memory Core and bundles Durable Work outside the data v
   assert.ok(dockerfile.includes(
     "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work/openclaw.plugin.json",
   ));
-  assert.ok(dockerfile.includes("['durable-work', '0.9.14']"));
+  assert.ok(dockerfile.includes("['durable-work', '0.9.15']"));
 });
 
 test("Dockerfile installs official OneClaw packages beside one shared Runtime Event SDK", () => {
@@ -152,7 +152,7 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
     "patch-oneclaw-channel-delivery.mjs",
   ));
   assert.ok(dockerfile.includes("root !== channel"));
-  assert.ok(dockerfile.includes("['channel', '0.1.11']"));
+  assert.ok(dockerfile.includes("['channel', '0.1.13']"));
   assert.ok(dockerfile.includes("runtimeEventSdkVersion() !== '0.1.2'"));
   assert.ok(dockerfile.includes("['clawrouters', '0.4.1']"));
   assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));

@@ -190,6 +190,7 @@ ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts/patch-openclaw-chat-images.js \
      scripts/patch-openclaw-memory-migration.mjs \
+     scripts/patch-oneclaw-channel-delivery.mjs \
      scripts/patch-weixin-http-routes.js \
      scripts/patch-weixin-access-policy.js \
      ./scripts/
@@ -211,6 +212,10 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && mkdir -p ${OPENCLAW_PLUGINS_DIR}/node_modules \
   && cp package.json package-lock.json ${OPENCLAW_PLUGINS_DIR}/ \
   && cp -a node_modules/. ${OPENCLAW_PLUGINS_DIR}/node_modules/ \
+  # Keep generic text, image, and file delivery on message(action=send).
+  # Provider-specific actions such as sendAttachment are not Channel-neutral.
+  && node /app/scripts/patch-oneclaw-channel-delivery.mjs \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel" \
   # These first-party plugins call privileged Gateway APIs. Copy their exact
   # locked packages into OpenClaw's immutable bundled tree so the host grants
   # native bundled-plugin trust without weakening its trust checks.

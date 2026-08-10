@@ -18,12 +18,14 @@ function registerDeliveryPromptHook(api) {
 \t});
 }
 function configureOneClawControlGateway() {}
+function configureOneClawNativeGoalResolver() {}
 function registerSideEffectHooks() {}
 function registerNativeCronPlanProjectionHooks() {}
 const oneclawPlugin = {};
 const plugin = {
 \tregister(api) {
 \t\tconfigureOneClawControlGateway(api.runtime?.gateway);
+\t\tconfigureOneClawNativeGoalResolver(() => null);
 \t\tregisterDeliveryPromptHook(api);
 \t\tregisterSideEffectHooks(api);
 \t\tregisterNativeCronPlanProjectionHooks(api);

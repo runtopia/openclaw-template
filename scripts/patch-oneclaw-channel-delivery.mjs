@@ -37,11 +37,9 @@ function registerOneClawMessageDeliveryHook(api) {
 \t\treturn { params: { ...event.params, action: "send" } };
 \t});
 }`;
-const REGISTER_HOOKS_ORIGINAL = `\t\tconfigureOneClawControlGateway(api.runtime?.gateway);
-\t\tregisterDeliveryPromptHook(api);
+const REGISTER_HOOKS_ORIGINAL = `\t\tregisterDeliveryPromptHook(api);
 \t\tregisterSideEffectHooks(api);`;
-const REGISTER_HOOKS_PATCHED = `\t\tconfigureOneClawControlGateway(api.runtime?.gateway);
-\t\tregisterDeliveryPromptHook(api);
+const REGISTER_HOOKS_PATCHED = `\t\tregisterDeliveryPromptHook(api);
 \t\tregisterOneClawMessageDeliveryHook(api);
 \t\tregisterSideEffectHooks(api);`;
 

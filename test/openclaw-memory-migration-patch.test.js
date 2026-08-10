@@ -48,6 +48,41 @@ test("Memory Core migration patch fails closed when upstream anchors change", ()
   );
 });
 
+test("Memory Core migration patch accepts the 2026.7.1-2 canonical index migration", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-memory-7-1-2-"));
+  const distDir = path.join(root, "dist");
+  const doctorPath = path.join(distDir, relativeDoctorPath);
+  fs.mkdirSync(path.dirname(doctorPath), { recursive: true });
+  fs.writeFileSync(
+    doctorPath,
+    [
+      testing.upstreamCanonicalIndexResolution,
+      testing.duplicateDreamingOriginal,
+    ].join("\n"),
+  );
+
+  assert.equal(patchOpenclawMemoryMigration(distDir), 1);
+  const patched = fs.readFileSync(doctorPath, "utf8");
+  assert.match(patched, /keeping canonical per-agent SQLite rows/);
+  assert.match(patched, /archive duplicate legacy dreaming state/);
+  assert.equal(patchOpenclawMemoryMigration(distDir), 0);
+});
+
+test("Memory Core migration patch skips when upstream resolves both conflicts", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-memory-upstream-fixed-"));
+  const distDir = path.join(root, "dist");
+  const doctorPath = path.join(distDir, relativeDoctorPath);
+  fs.mkdirSync(path.dirname(doctorPath), { recursive: true });
+  const upstream = [
+    testing.upstreamCanonicalIndexResolution,
+    testing.upstreamCanonicalDreamingResolution,
+  ].join("\n");
+  fs.writeFileSync(doctorPath, upstream);
+
+  assert.equal(patchOpenclawMemoryMigration(distDir), 0);
+  assert.equal(fs.readFileSync(doctorPath, "utf8"), upstream);
+});
+
 test("Memory Core migration patch CLI honors an explicit dist directory", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-memory-cli-"));
   const distDir = path.join(root, "custom-dist");

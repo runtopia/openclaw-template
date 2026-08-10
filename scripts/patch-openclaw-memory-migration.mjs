@@ -71,6 +71,17 @@ const DUPLICATE_DREAMING_PATCHED = `\t\t\tif ((await Promise.all(targetNamespace
 \t\t\t\tcontinue;
 \t\t\t}`;
 
+// OpenClaw 2026.7.1-2 replaced the legacy row-copy implementation with a
+// comparison-first migration that already archives conflicting memory-index
+// sources after keeping canonical SQLite state. A later upstream build also
+// resolves duplicate dreaming state itself. Detect those shipped behaviors so
+// this fail-closed patch supports both 2026.7.1 bundle layouts without treating
+// an upstream fix as a missing anchor.
+const UPSTREAM_CANONICAL_DREAMING_RESOLUTION =
+  'Resolved Memory Core ${source.label} legacy conflict by keeping canonical SQLite plugin state';
+const UPSTREAM_CANONICAL_INDEX_RESOLUTION =
+  'Resolved Memory Core legacy memory index conflict for agent ${params.source.agentId} by keeping canonical per-agent SQLite rows';
+
 function replaceExactlyOnce(content, original, patched, label) {
   if (content.includes(patched)) {
     return { content, changed: false };
@@ -117,18 +128,28 @@ export function patchOpenclawMemoryMigration(distDir) {
     throw error;
   }
 
+  if (
+    content.includes(UPSTREAM_CANONICAL_DREAMING_RESOLUTION)
+    && content.includes(UPSTREAM_CANONICAL_INDEX_RESOLUTION)
+  ) {
+    console.log('[patch-openclaw-memory-migration] Upstream runtime already resolves legacy conflicts; skipped.');
+    return 0;
+  }
+
   let normalizedEarlyPatch = false;
   if (content.includes(EARLY_META_CONFLICT_PATCH)) {
     content = content.replace(EARLY_META_CONFLICT_PATCH, UPSTREAM_META_CONFLICT_HANDLER);
     normalizedEarlyPatch = true;
   }
 
-  const metaResult = replaceExactlyOnce(
-    content,
-    META_ASSERT_ORIGINAL,
-    META_ASSERT_PATCHED,
-    'legacy meta conflict',
-  );
+  const metaResult = content.includes(UPSTREAM_CANONICAL_INDEX_RESOLUTION)
+    ? { content, changed: false }
+    : replaceExactlyOnce(
+        content,
+        META_ASSERT_ORIGINAL,
+        META_ASSERT_PATCHED,
+        'legacy meta conflict',
+      );
   const dreamingResult = replaceExactlyOnce(
     metaResult.content,
     DUPLICATE_DREAMING_ORIGINAL,
@@ -148,6 +169,8 @@ export function patchOpenclawMemoryMigration(distDir) {
 export const testing = {
   duplicateDreamingOriginal: DUPLICATE_DREAMING_ORIGINAL,
   metaAssertOriginal: META_ASSERT_ORIGINAL,
+  upstreamCanonicalDreamingResolution: UPSTREAM_CANONICAL_DREAMING_RESOLUTION,
+  upstreamCanonicalIndexResolution: UPSTREAM_CANONICAL_INDEX_RESOLUTION,
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {

@@ -186,7 +186,7 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v12
+ARG CACHEBUST_PLUGINS=v13
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts/patch-openclaw-chat-images.js \
@@ -208,7 +208,8 @@ RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_mo
 ARG ONECLAW_NPM_REGISTRY=https://registry.npmjs.org
 COPY resources/openclaw-plugin-bundle /tmp/openclaw-plugin-bundle
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-  cd /tmp/openclaw-plugin-bundle \
+  test -n "${CACHEBUST_PLUGINS}" \
+  && cd /tmp/openclaw-plugin-bundle \
   && npm ci --registry="${ONECLAW_NPM_REGISTRY}" --omit=dev --legacy-peer-deps --no-audit --no-fund \
   && mkdir -p ${OPENCLAW_PLUGINS_DIR}/node_modules \
   && cp package.json package-lock.json ${OPENCLAW_PLUGINS_DIR}/ \
@@ -243,12 +244,19 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && if [ ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw" ]; then \
        ln -s /usr/local/lib/node_modules/openclaw "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw"; \
      fi \
-  # OpenClaw's post-core plugin smoke check requires every official plugin
-  # that declares the host as a peerDependency to resolve that peer from the
-  # plugin's own node_modules. The host is installed globally, outside this
-  # standalone /opt npm project, so npm cannot create these links itself.
-  && for plugin in slack discord feishu whatsapp; do \
-       plugin_dir="${OPENCLAW_PLUGINS_DIR}/node_modules/@openclaw/${plugin}"; \
+  # OpenClaw 2026.7.1-2 audits every SQLite-indexed plugin that declares an
+  # openclaw peerDependency at <plugin>/node_modules/openclaw. A project-root
+  # link is sufficient for Node resolution but not for this strict payload
+  # smoke check, so link the global host inside every external preinstalled
+  # plugin recorded by src/config/plugin-install-index.js.
+  && for plugin_dir in \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/clawrouters" \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/openclaw-search" \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@openclaw/slack" \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@openclaw/discord" \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@openclaw/feishu" \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@openclaw/whatsapp" \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@tencent-weixin/openclaw-weixin"; do \
        mkdir -p "${plugin_dir}/node_modules"; \
        if [ ! -e "${plugin_dir}/node_modules/openclaw" ]; then \
          ln -s /usr/local/lib/node_modules/openclaw "${plugin_dir}/node_modules/openclaw"; \

@@ -119,17 +119,39 @@ test("Dockerfile aligns OpenClaw core to Desktop 2026.7.1-2", () => {
       `@openclaw/${plugin} should match the host runtime`,
     );
   }
+  for (const packagePath of [
+    "@oneclaw-plugins/clawrouters",
+    "@oneclaw-plugins/openclaw-search",
+    "@openclaw/slack",
+    "@openclaw/discord",
+    "@openclaw/feishu",
+    "@openclaw/whatsapp",
+    "@tencent-weixin/openclaw-weixin",
+  ]) {
+    assert.ok(
+      dockerfile.includes(`"${'${OPENCLAW_PLUGINS_DIR}'}/node_modules/${packagePath}"`),
+      `${packagePath} should receive a plugin-local OpenClaw peer link`,
+    );
+  }
   assert.ok(
     dockerfile.includes(
       'ln -s /usr/local/lib/node_modules/openclaw "${plugin_dir}/node_modules/openclaw"',
     ),
-    "official plugins should resolve their globally installed OpenClaw peer",
+    "all SQLite-indexed plugins should resolve their globally installed OpenClaw peer",
   );
   assert.ok(
     dockerfile.includes(
       'test -f "${plugin_dir}/node_modules/openclaw/package.json"',
     ),
-    "the image build should fail if an official plugin cannot resolve its OpenClaw peer",
+    "the image build should fail if an indexed plugin cannot resolve its OpenClaw peer",
+  );
+  assert.ok(
+    dockerfile.includes("ARG CACHEBUST_PLUGINS=v13"),
+    "the fixed plugin filesystem layer must not reuse the pre-fix build cache",
+  );
+  assert.ok(
+    dockerfile.includes('test -n "${CACHEBUST_PLUGINS}"'),
+    "the plugin install layer should consume its cache-buster argument",
   );
 });
 

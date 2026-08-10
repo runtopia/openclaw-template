@@ -12,7 +12,7 @@ const lockfile = JSON.parse(fs.readFileSync(path.join(bundleDir, "package-lock.j
 const ONECLAW_PACKAGES = {
   "@oneclaw-plugins/clawrouters": "0.4.1",
   "@oneclaw-plugins/runtime-events": "0.1.2",
-  "@oneclaw-plugins/channel": "0.1.18",
+  "@oneclaw-plugins/channel": "0.1.19",
   "@oneclaw-plugins/openclaw-search": "0.2.0",
 };
 

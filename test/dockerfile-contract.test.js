@@ -174,7 +174,7 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
     "patch-oneclaw-channel-delivery.mjs",
   ));
   assert.ok(dockerfile.includes("root !== channel"));
-  assert.ok(dockerfile.includes("['channel', '0.1.16']"));
+  assert.ok(dockerfile.includes("['channel', '0.1.17']"));
   assert.ok(dockerfile.includes("runtimeEventSdkVersion() !== '0.1.2'"));
   assert.ok(dockerfile.includes("['clawrouters', '0.4.1']"));
   assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));

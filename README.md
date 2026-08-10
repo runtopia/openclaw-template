@@ -39,14 +39,16 @@ With `CLAWROUTERS_API_KEY`, fresh and existing instances converge on the same ru
 - `tools.web.search` selects the image-bundled `oneclaw-search` provider. Search calls use the same user child key and go to ClawRouters `/api/v1/search`; SearXNG/Tavily credentials, caching, fallback, and Credits billing remain server-side.
 - An explicitly selected third-party search provider or `enabled=false` setting is preserved.
 
-### Durable work and structured input
+### Native orchestration and structured input
 
-The image also bundles `oneclaw-workflows`. Fresh and existing instances enable
-its durable `oneclaw_work` tool and OpenClaw's native structured
-`update_plan` tool by default. Structured input and external-app authorization
-are published directly as OneClaw Channel Attention events. Clients answer with
-Channel control commands, so there is no secondary interaction service or
-repair endpoint.
+Employees and teams use OpenClaw's native Agent Sessions, `sessions_spawn`,
+`sessions_yield`, child-session history, Background Tasks, Workboard, and the
+structured `update_plan` tool. The retired `oneclaw-workflows` and
+`oneclaw-employee-catalog` plugins are removed from persisted configuration at
+startup and are not installed in the image. Structured input and external-app
+authorization are published directly as OneClaw Channel Attention events.
+Clients answer with Channel control commands, so there is no secondary
+interaction service or repair endpoint.
 
 ## Environment Variables
 
@@ -228,7 +230,7 @@ For platform dashboards, do not expose `OPENCLAW_GATEWAY_TOKEN` to browsers. Use
 
 **Q: Why are plugins baked into the image rather than installed at runtime?**
 
-A: OpenClaw's plugin discovery does not scan global `node_modules`. Plugins are installed into `/opt/openclaw-plugins` during the Docker build and normally declared via `plugins.load.paths` in `openclaw.json`. The Gateway-privileged `oneclaw-channel`, `oneclaw-workflows`, and `oneclaw-employee-catalog` packages are copied from the same exact npm lock into OpenClaw's immutable bundled extension tree instead, then their ordinary `/opt` copies are removed so a persisted install index cannot shadow the trusted versions. Channel explicitly links the global OpenClaw host and the locked Runtime Events SDK (plus its `ajv` and `ws` runtime dependencies) from its bundled directory. This avoids a large runtime `cp` on every boot, preserves OpenClaw's plugin trust checks, and ensures the `/data` volume mount does not shadow plugin files.
+A: OpenClaw's plugin discovery does not scan global `node_modules`. Plugins are installed into `/opt/openclaw-plugins` during the Docker build and normally declared via `plugins.load.paths` in `openclaw.json`. Before Gateway launch, the wrapper also registers those immutable packages in OpenClaw's canonical `state/openclaw.sqlite` installed-plugin index; this prevents startup Doctor from downloading configured channels into `/data`. Once that index is durable, stale `/data` extension copies and matching managed npm projects are removed. The Gateway-privileged `oneclaw-channel` package is copied from the same exact npm lock into OpenClaw's immutable bundled extension tree instead, then its ordinary `/opt` copy is removed so a persisted install index cannot shadow the trusted version. Channel explicitly links the global OpenClaw host and the locked Runtime Events SDK (plus its `ajv` and `ws` runtime dependencies) from its bundled directory. This avoids a large runtime `cp` or npm install on every boot, preserves OpenClaw's plugin trust checks, and ensures the `/data` volume mount does not shadow plugin files.
 
 ## Support
 

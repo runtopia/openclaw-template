@@ -26,9 +26,15 @@ import { createRepairRouter } from "./repair/router.js";
 import { createSkillsRouter } from "./skills/router.js";
 import { readEnvProviderKey, readDefaultProviderKey } from "./repair/ai-key.js";
 import { applyRuntimeDefaults, generateConfigDirect } from "./config/generate.js";
+import { syncPreinstalledPluginInstallIndex } from "./config/plugin-install-index.js";
 import { patchConfig, setIn } from "./config/edit.js";
 import { reconcileAllChannels } from "./channels/manifest.js";
-import { applyPreinstalledPluginInstallRecords, cleanupStalePreinstalledExtensions, resolvePreinstalledPluginPaths } from "./config/plugins.js";
+import {
+  buildPreinstalledPluginInstallRecords,
+  cleanupStalePreinstalledExtensions,
+  removeLegacyPreinstalledPluginInstallRecords,
+  resolvePreinstalledPluginPaths,
+} from "./config/plugins.js";
 import { createAuth } from "./proxy/auth.js";
 import { createBrowserSessionManager } from "./proxy/browser-session.js";
 import { createReverseProxy } from "./proxy/reverse-proxy.js";
@@ -162,7 +168,16 @@ function ensureConfig() {
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
   fs.mkdirSync(MAIN_WORKSPACE_DIR, { recursive: true });
   fs.mkdirSync(path.join(STATE_DIR, "credentials"), { recursive: true });
-  cleanupStalePreinstalledExtensions(STATE_DIR);
+  const preinstalledRecords = buildPreinstalledPluginInstallRecords();
+  const pluginIndex = syncPreinstalledPluginInstallIndex(STATE_DIR, preinstalledRecords);
+  if (pluginIndex.ok && pluginIndex.changed) {
+    console.log("[sidecar] synchronized preinstalled plugin SQLite records");
+  } else if (!pluginIndex.ok) {
+    console.warn(`[sidecar] failed to synchronize preinstalled plugin SQLite records: ${pluginIndex.error}`);
+  }
+  cleanupStalePreinstalledExtensions(STATE_DIR, process.env, {
+    installIndexReady: pluginIndex.ok,
+  });
 
   if (!hasApiKeys()) {
     console.log("[sidecar] no API keys — skipping config generation");
@@ -189,8 +204,8 @@ function ensureConfig() {
       ]);
       const loadPaths = resolvePreinstalledPluginPaths();
       if (loadPaths.length > 0) setIn(cfg, "plugins.load.paths", loadPaths);
-      if (applyPreinstalledPluginInstallRecords(cfg)) {
-        console.log("[sidecar] patched preinstalled official plugin install records");
+      if (removeLegacyPreinstalledPluginInstallRecords(cfg)) {
+        console.log("[sidecar] removed legacy JSON plugin install records");
       }
       if (applyRuntimeDefaults(cfg, process.env)) {
         console.log("[sidecar] patched runtime defaults");
@@ -210,8 +225,8 @@ function ensureConfig() {
     env: process.env,
   });
   patchConfig(CONFIG_PATH, (cfg) => {
-    if (applyPreinstalledPluginInstallRecords(cfg)) {
-      console.log("[sidecar] patched preinstalled official plugin install records");
+    if (removeLegacyPreinstalledPluginInstallRecords(cfg)) {
+      console.log("[sidecar] removed legacy JSON plugin install records");
     }
   });
   console.log("[sidecar] openclaw.json ready");

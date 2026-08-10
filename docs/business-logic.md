@@ -123,7 +123,7 @@ flowchart LR
 
 首次启动时，如果存在至少一个模型 provider key，wrapper 会生成 `openclaw.json`：
 
-1. 选择 provider，优先级为 `CLAWROUTERS_API_KEY`、Anthropic、OpenAI、Gemini、OpenRouter、DeepSeek。OpenAI / OpenAI Codex provider 在未显式选择 runtime 时会 pin 到内置 `pi` runtime，避免 OpenClaw 2026.7.1 首启下载外置 Codex harness。
+1. 选择 provider，优先级为 `CLAWROUTERS_API_KEY`、Anthropic、OpenAI、Gemini、OpenRouter、DeepSeek。OpenAI / OpenAI Codex provider 在未显式选择 runtime 时会 pin 到内置 `pi` runtime，避免 OpenClaw 2026.7.1-2 首启下载外置 Codex harness。
 2. 写入 gateway 配置：loopback、内部端口、token auth、`/openclaw` basePath、allowed origins。
 3. 写入 models provider。ClawRouters 使用 env secret ref，不把 key 明文写入配置。
 4. 写入 agent defaults，包括 workspace、默认模型、heartbeat、上下文压缩和 ClawRouters memory search。
@@ -135,7 +135,7 @@ flowchart LR
 
 - gateway token、端口、bind、trusted proxies。
 - Control UI base path 和 allowed origins。
-- 预装插件 install records。
+- 将 `/opt` 预装插件写入 `state/openclaw.sqlite` 的权威 install records，并清理旧 JSON 记录与重复的 `/data` 插件副本。
 - runtime defaults。
 - 当前 env 中启用的通道。
 
@@ -367,7 +367,7 @@ flowchart TD
 镜像构建：
 
 - 基础镜像：`node:24-bookworm`。
-- 安装 OpenClaw core，当前 Dockerfile pin 到 `openclaw@2026.7.1`。
+- 安装 OpenClaw core，当前 Dockerfile pin 到 `openclaw@2026.7.1-2`。
 - 预装 ClawRouters、OneClaw Search、OneClaw Durable Work、Slack、Discord、Feishu、WhatsApp、WeChat 插件到 `/opt/openclaw-plugins`。
 - 安装 wrapper 依赖 `express`、`http-proxy`、`ws`。
 - 运行时通过 `start.sh` 启动。
@@ -406,7 +406,7 @@ Docker：
 
 结构化输入：
 
-- `request_user_input` 和外部应用授权均由 Runtime Plugin 直接发布
+- `request_user_input` 和外部应用授权均由 OneClaw Channel 直接发布
   OneClaw Channel Attention 事件。
 - 客户端通过 `command.attention.respond` 回答，Runtime Plugin 发布
   `attention.resolved` 并恢复原工具调用。

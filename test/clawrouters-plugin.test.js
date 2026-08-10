@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   buildPreinstalledPluginInstallRecords,
+  removeLegacyPreinstalledPluginInstallRecords,
   resolvePreinstalledPluginPaths,
 } from "../src/config/plugins.js";
 
@@ -37,6 +38,18 @@ test("preinstalled ClawRouters npm package is discovered and recorded", () => {
       installPath: packageDir,
       installedAt: "1970-01-01T00:00:00.000Z",
     });
+
+    const cfg = {
+      plugins: {
+        installs: {
+          clawrouters: { installPath: "/legacy/config/path" },
+          custom: { installPath: "/user/custom" },
+        },
+      },
+    };
+    assert.equal(removeLegacyPreinstalledPluginInstallRecords(cfg, env), true);
+    assert.equal(cfg.plugins.installs.clawrouters, undefined);
+    assert.deepEqual(cfg.plugins.installs.custom, { installPath: "/user/custom" });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

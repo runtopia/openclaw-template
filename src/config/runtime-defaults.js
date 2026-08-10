@@ -10,10 +10,12 @@ const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWR
 const CLAWROUTERS_EMBEDDING_MODEL = "auto";
 const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
 const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
-const ONECLAW_WORKFLOWS_PLUGIN_ID = "oneclaw-workflows";
-const ONECLAW_EMPLOYEE_CATALOG_PLUGIN_ID = "oneclaw-employee-catalog";
 const ONECLAW_CHANNEL_PLUGIN_ID = "oneclaw-channel";
 const WORKBOARD_PLUGIN_ID = "workboard";
+const RETIRED_ONECLAW_COLLABORATION_PLUGIN_IDS = new Set([
+  "oneclaw-workflows",
+  "oneclaw-employee-catalog",
+]);
 const OPENCLAW_PROVIDER_PINNED_AGENT_RUNTIME = {
   openai: "pi",
   "openai-codex": "pi",
@@ -117,39 +119,6 @@ function applyOneclawWebSearchPatch(cfg) {
   return changed;
 }
 
-function applyOneclawWorkflowsPatch(cfg) {
-  const plugins = ensureObject(cfg, "plugins");
-  const pluginEntries = ensureObject(plugins, "entries");
-  const workflowsPlugin = ensureObject(pluginEntries, ONECLAW_WORKFLOWS_PLUGIN_ID);
-  let changed = setJsonValue(workflowsPlugin, "enabled", true);
-  const workflowHooks = ensureObject(workflowsPlugin, "hooks");
-  // OpenClaw treats image-bundled third-party plugins as non-core plugins.
-  // The implicit Task Dock must observe agent_end so it can publish a terminal
-  // snapshot, which requires this explicit conversation-hook capability.
-  changed = setJsonValue(workflowHooks, "allowConversationAccess", true) || changed;
-
-  // An existing non-empty plugins.allow is an exclusive allowlist. Keep that
-  // user policy intact while ensuring the image-bundled workflow plugin is not
-  // accidentally excluded. Do not turn an empty/non-restrictive list into a
-  // restrictive one.
-  if (
-    Array.isArray(plugins.allow)
-    && plugins.allow.length > 0
-    && !plugins.allow.includes(ONECLAW_WORKFLOWS_PLUGIN_ID)
-  ) {
-    plugins.allow = [...plugins.allow, ONECLAW_WORKFLOWS_PLUGIN_ID];
-    changed = true;
-  }
-
-  const tools = ensureObject(cfg, "tools");
-  const experimental = ensureObject(tools, "experimental");
-  if (experimental.planTool === undefined) {
-    experimental.planTool = true;
-    changed = true;
-  }
-  return changed;
-}
-
 function applyOneclawChannelPatch(cfg) {
   const plugins = ensureObject(cfg, "plugins");
   const pluginEntries = ensureObject(plugins, "entries");
@@ -167,25 +136,38 @@ function applyOneclawChannelPatch(cfg) {
   return changed;
 }
 
-function applyOneclawEmployeeCatalogPatch(cfg) {
-  const plugins = ensureObject(cfg, "plugins");
-  const pluginEntries = ensureObject(plugins, "entries");
-  const employeeCatalog = ensureObject(pluginEntries, ONECLAW_EMPLOYEE_CATALOG_PLUGIN_ID);
-  let changed = setJsonValue(employeeCatalog, "enabled", true);
-  const hooks = ensureObject(employeeCatalog, "hooks");
-  // Employee completion reconciliation observes the coordinating conversation.
-  // Image-bundled third-party plugins need this trust grant explicitly.
-  changed = setJsonValue(hooks, "allowConversationAccess", true) || changed;
+function removeRetiredOneclawCollaborationPlugins(cfg) {
+  const plugins = cfg.plugins;
+  if (!plugins || typeof plugins !== "object" || Array.isArray(plugins)) return false;
+  let changed = false;
 
-  if (
-    Array.isArray(plugins.allow)
-    && plugins.allow.length > 0
-    && !plugins.allow.includes(ONECLAW_EMPLOYEE_CATALOG_PLUGIN_ID)
-  ) {
-    plugins.allow = [...plugins.allow, ONECLAW_EMPLOYEE_CATALOG_PLUGIN_ID];
-    changed = true;
+  if (plugins.entries && typeof plugins.entries === "object" && !Array.isArray(plugins.entries)) {
+    for (const pluginId of RETIRED_ONECLAW_COLLABORATION_PLUGIN_IDS) {
+      if (!Object.hasOwn(plugins.entries, pluginId)) continue;
+      delete plugins.entries[pluginId];
+      changed = true;
+    }
   }
+
+  if (Array.isArray(plugins.allow)) {
+    const nextAllow = plugins.allow.filter(
+      (pluginId) => !RETIRED_ONECLAW_COLLABORATION_PLUGIN_IDS.has(pluginId),
+    );
+    if (nextAllow.length !== plugins.allow.length) {
+      plugins.allow = nextAllow;
+      changed = true;
+    }
+  }
+
   return changed;
+}
+
+function applyNativePlanToolPatch(cfg) {
+  const tools = ensureObject(cfg, "tools");
+  const experimental = ensureObject(tools, "experimental");
+  if (experimental.planTool !== undefined) return false;
+  experimental.planTool = true;
+  return true;
 }
 
 function applyWorkboardPatch(cfg) {
@@ -254,10 +236,10 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   const skillEntries = ensureObject(skills, "entries");
   const codingAgent = ensureObject(skillEntries, "coding-agent");
   changed = setJsonValue(codingAgent, "enabled", true) || changed;
-  changed = applyOneclawWorkflowsPatch(cfg) || changed;
-  changed = applyOneclawEmployeeCatalogPatch(cfg) || changed;
+  changed = removeRetiredOneclawCollaborationPlugins(cfg) || changed;
   changed = applyOneclawChannelPatch(cfg) || changed;
   changed = applyWorkboardPatch(cfg) || changed;
+  changed = applyNativePlanToolPatch(cfg) || changed;
 
   const hasKey = hasClawroutersKey(env);
   const provider = cfg?.models?.providers?.clawrouters;

@@ -5,8 +5,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  applyPreinstalledPluginInstallRecords,
   buildPreinstalledPluginInstallRecords,
+  removeLegacyPreinstalledPluginInstallRecords,
   resolvePreinstalledPluginPaths,
 } from "../src/config/plugins.js";
 import { buildOneclawChannelStatus } from "../src/integration/oneclaw.js";
@@ -30,11 +30,17 @@ test("bundled OneClaw Channel is excluded from ordinary discovery and install re
       plugins: {
         installs: {
           "oneclaw-channel": { installPath: packageDir, version: "0.1.13" },
+          "oneclaw-workflows": { installPath: "/old/durable-work" },
+          "oneclaw-employee-catalog": { installPath: "/old/employee-catalog" },
+          whatsapp: { installPath: "/old/whatsapp" },
         },
       },
     };
-    assert.equal(applyPreinstalledPluginInstallRecords(cfg, env), true);
+    assert.equal(removeLegacyPreinstalledPluginInstallRecords(cfg, env), true);
     assert.equal(cfg.plugins.installs["oneclaw-channel"], undefined);
+    assert.equal(cfg.plugins.installs["oneclaw-workflows"], undefined);
+    assert.equal(cfg.plugins.installs["oneclaw-employee-catalog"], undefined);
+    assert.deepEqual(cfg.plugins.installs.whatsapp, { installPath: "/old/whatsapp" });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

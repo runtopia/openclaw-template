@@ -109,7 +109,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Pin OpenClaw core to the same runtime shipped by OneClaw Desktop. The
 # sidecar's runtime patches and first-party plugins are validated against this
 # exact host version.
-ARG OPENCLAW_VERSION=2026.7.1
+ARG OPENCLAW_VERSION=2026.7.1-2
 ENV OPENCLAW_VERSION=${OPENCLAW_VERSION}
 ARG CLAWHUB_VERSION=0.23.1
 ARG CODEX_VERSION=0.144.4
@@ -178,14 +178,15 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #     - slack / discord / feishu / whatsapp are official standalone packages.
 #     - wechat has no official package; @tencent-weixin/openclaw-weixin is the
 #       third-party plugin (channel id "openclaw-weixin", versioned separately).
-#   ClawRouters and the other first-party OneClaw plugins are exact npm packages
-#   published from runtopia/oneclaw-plugins.
+#   ClawRouters, Search, and Channel are exact npm packages published from
+#   runtopia/oneclaw-plugins. Employee orchestration uses OpenClaw's native
+#   Agent Sessions, Background Tasks, Workboard, and update_plan capabilities.
 #   Exact top-level versions and their complete dependency graph are locked in
 #   resources/openclaw-plugin-bundle/package-lock.json.
 #
 # CACHEBUST_PLUGINS: increment to force-reinstall all plugins (e.g. after
 # pinning a new version or when the layer is stale from a prior @latest build).
-ARG CACHEBUST_PLUGINS=v11
+ARG CACHEBUST_PLUGINS=v12
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 WORKDIR /app
 COPY scripts/patch-openclaw-chat-images.js \
@@ -216,16 +217,12 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   # Provider-specific actions such as sendAttachment are not Channel-neutral.
   && node /app/scripts/patch-oneclaw-channel-delivery.mjs \
        "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel" \
-  # These first-party plugins call privileged Gateway APIs. Copy their exact
-  # locked packages into OpenClaw's immutable bundled tree so the host grants
-  # native bundled-plugin trust without weakening its trust checks.
+  # Channel calls privileged Gateway APIs. Copy its exact locked package into
+  # OpenClaw's immutable bundled tree so the host grants native bundled-plugin
+  # trust without weakening its trust checks.
   && cp -a "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel" \
        /usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-channel \
-  && cp -a "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work" \
-       /usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-workflows \
-  && cp -a "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog" \
-       /usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-employee-catalog \
-  && for plugin in oneclaw-channel oneclaw-workflows oneclaw-employee-catalog; do \
+  && for plugin in oneclaw-channel; do \
        plugin_dir="/usr/local/lib/node_modules/openclaw/dist/extensions/${plugin}"; \
        mkdir -p "${plugin_dir}/node_modules"; \
        ln -s /usr/local/lib/node_modules/openclaw "${plugin_dir}/node_modules/openclaw"; \
@@ -264,20 +261,14 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/clawrouters/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/openclaw-search/openclaw.plugin.json" \
-  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work/openclaw.plugin.json" \
-  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw/package.json" \
   && node --input-type=module -e "import { createRequire } from 'node:module'; const rootRequire = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelRequire = createRequire('/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-channel/package.json'); for (const dependency of ['@oneclaw-plugins/runtime-events', 'ajv', 'ws']) { const root = rootRequire.resolve(dependency); const channel = channelRequire.resolve(dependency); if (root !== channel) throw new Error('Bundled OneClaw Channel did not resolve shared ' + dependency); } const openclaw = channelRequire.resolve('openclaw'); if (!openclaw.startsWith('/usr/local/lib/node_modules/openclaw/')) throw new Error('Bundled OneClaw Channel did not resolve the global OpenClaw host');" \
-  && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const require = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelPackage = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json', 'utf8')); const versions = new Map([['clawrouters', '0.4.1'], ['channel', '0.1.13'], ['openclaw-search', '0.2.0'], ['durable-work', '0.9.15'], ['employee-catalog', '0.5.12']]); for (const [name, expected] of versions) { const pkg = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/' + name + '/package.json', 'utf8')); if (pkg.version !== expected) throw new Error('Unexpected ' + name + ' version: ' + pkg.version); } if (require('@oneclaw-plugins/runtime-events').runtimeEventSdkVersion() !== '0.1.2') throw new Error('Unexpected Runtime Event SDK version'); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');" \
+  && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const require = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelPackage = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/package.json', 'utf8')); const versions = new Map([['clawrouters', '0.4.1'], ['channel', '0.1.13'], ['openclaw-search', '0.2.0']]); for (const [name, expected] of versions) { const pkg = JSON.parse(fs.readFileSync('${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/' + name + '/package.json', 'utf8')); if (pkg.version !== expected) throw new Error('Unexpected ' + name + ' version: ' + pkg.version); } if (require('@oneclaw-plugins/runtime-events').runtimeEventSdkVersion() !== '0.1.2') throw new Error('Unexpected Runtime Event SDK version'); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');" \
   # Do not leave ordinary copies behind: a persisted OpenClaw install index can
   # rediscover them with global origin and shadow the bundled trusted copies.
   && rm -rf \
        "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel" \
-       "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work" \
-       "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog" \
   && test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel" \
-  && test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work" \
-  && test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog" \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 
 COPY scripts ./scripts

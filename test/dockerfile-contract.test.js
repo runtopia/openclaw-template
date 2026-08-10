@@ -89,13 +89,13 @@ test("Dockerfile installs the locked plugin bundle outside the data volume", () 
   assert.ok(!dockerfile.includes("COPY resources/oneclaw-packages"));
 });
 
-test("Dockerfile aligns OpenClaw core and official plugins to Desktop 2026.7.1", () => {
+test("Dockerfile aligns OpenClaw core to Desktop 2026.7.1-2", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   const pluginBundle = JSON.parse(fs.readFileSync(
     path.join(repoRoot, "resources", "openclaw-plugin-bundle", "package.json"),
     "utf8",
   ));
-  assert.ok(dockerfile.includes("ARG OPENCLAW_VERSION=2026.7.1"));
+  assert.ok(dockerfile.includes("ARG OPENCLAW_VERSION=2026.7.1-2"));
   assert.equal(
     pluginBundle.dependencies["@oneclaw-plugins/clawrouters"],
     "0.4.1",
@@ -133,15 +133,15 @@ test("Dockerfile aligns OpenClaw core and official plugins to Desktop 2026.7.1",
   );
 });
 
-test("Dockerfile patches Memory Core and bundles Durable Work outside the data volume", () => {
+test("Dockerfile patches Memory Core without bundling retired collaboration plugins", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   assert.ok(dockerfile.includes(
     "RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_modules/openclaw/dist",
   ));
-  assert.ok(dockerfile.includes(
-    "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work/openclaw.plugin.json",
-  ));
-  assert.ok(dockerfile.includes("['durable-work', '0.9.15']"));
+  assert.ok(!dockerfile.includes("@oneclaw-plugins/durable-work"));
+  assert.ok(!dockerfile.includes("@oneclaw-plugins/employee-catalog"));
+  assert.ok(!dockerfile.includes("dist/extensions/oneclaw-workflows"));
+  assert.ok(!dockerfile.includes("dist/extensions/oneclaw-employee-catalog"));
 });
 
 test("Dockerfile installs official OneClaw packages beside one shared Runtime Event SDK", () => {
@@ -156,11 +156,10 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
   assert.ok(dockerfile.includes("runtimeEventSdkVersion() !== '0.1.2'"));
   assert.ok(dockerfile.includes("['clawrouters', '0.4.1']"));
   assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));
-  assert.ok(dockerfile.includes("['employee-catalog', '0.5.12']"));
   assert.ok(!dockerfile.includes("@oneclaw/channel"));
 });
 
-test("Dockerfile gives privileged OneClaw plugins native bundled-plugin trust", () => {
+test("Dockerfile gives privileged OneClaw Channel native bundled-plugin trust", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 
   assert.ok(
@@ -170,27 +169,7 @@ test("Dockerfile gives privileged OneClaw plugins native bundled-plugin trust", 
   );
   assert.ok(
     dockerfile.includes(
-      "/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-workflows",
-    ),
-  );
-  assert.ok(
-    dockerfile.includes(
-      "/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-employee-catalog",
-    ),
-  );
-  assert.ok(
-    dockerfile.includes(
       'test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel"',
-    ),
-  );
-  assert.ok(
-    dockerfile.includes(
-      'test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/durable-work"',
-    ),
-  );
-  assert.ok(
-    dockerfile.includes(
-      'test ! -e "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/employee-catalog"',
     ),
   );
   assert.ok(dockerfile.includes(

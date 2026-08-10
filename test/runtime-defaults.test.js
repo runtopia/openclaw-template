@@ -9,20 +9,10 @@ import {
   generateConfigDirect,
 } from "../src/config/generate.js";
 
-test("runtime defaults enable OneClaw orchestration, Channel, Workboard, and the native plan tool without provider credentials", () => {
+test("runtime defaults enable Channel, Workboard, and the native plan tool without provider credentials", () => {
   const cfg = {};
 
   assert.equal(applyRuntimeDefaults(cfg, {}), true);
-  assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
-  assert.equal(
-    cfg.plugins.entries["oneclaw-workflows"].hooks.allowConversationAccess,
-    true,
-  );
-  assert.equal(cfg.plugins.entries["oneclaw-employee-catalog"].enabled, true);
-  assert.equal(
-    cfg.plugins.entries["oneclaw-employee-catalog"].hooks.allowConversationAccess,
-    true,
-  );
   assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
   assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);
@@ -34,7 +24,26 @@ test("runtime defaults preserve an explicit plan-tool opt-out", () => {
   applyRuntimeDefaults(cfg, {});
 
   assert.equal(cfg.tools.experimental.planTool, false);
-  assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
+});
+
+test("runtime defaults remove retired collaboration plugin registrations", () => {
+  const cfg = {
+    plugins: {
+      allow: ["clawrouters", "oneclaw-workflows", "oneclaw-employee-catalog"],
+      entries: {
+        "oneclaw-workflows": { enabled: true },
+        "oneclaw-employee-catalog": { enabled: true },
+        custom: { enabled: true },
+      },
+    },
+  };
+
+  applyRuntimeDefaults(cfg, {});
+
+  assert.equal(cfg.plugins.entries["oneclaw-workflows"], undefined);
+  assert.equal(cfg.plugins.entries["oneclaw-employee-catalog"], undefined);
+  assert.deepEqual(cfg.plugins.entries.custom, { enabled: true });
+  assert.deepEqual(cfg.plugins.allow, ["clawrouters", "oneclaw-channel", "workboard"]);
 });
 
 test("runtime defaults preserve an explicit Workboard opt-out", () => {
@@ -54,37 +63,21 @@ test("runtime defaults extend only an already-restrictive plugin allowlist", () 
 
   assert.deepEqual(restrictive.plugins.allow, [
     "clawrouters",
-    "oneclaw-workflows",
-    "oneclaw-employee-catalog",
     "oneclaw-channel",
     "workboard",
   ]);
   assert.deepEqual(nonRestrictive.plugins.allow, []);
 });
 
-test("fresh config enables bundled OneClaw orchestration and Channel without ordinary install records", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-workflows-config-"));
+test("fresh config enables bundled OneClaw Channel and native orchestration without ordinary install records", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-native-orchestration-config-"));
   const pluginsDir = path.join(root, "plugins");
-  const installedPlugin = path.join(
-    pluginsDir,
-    "node_modules",
-    "@oneclaw-plugins",
-    "durable-work",
-  );
   const installedChannel = path.join(
     pluginsDir,
     "node_modules",
     "@oneclaw-plugins",
     "channel",
   );
-  const installedEmployeeCatalog = path.join(
-    pluginsDir,
-    "node_modules",
-    "@oneclaw-plugins",
-    "employee-catalog",
-  );
-  fs.mkdirSync(installedPlugin, { recursive: true });
-  fs.mkdirSync(installedEmployeeCatalog, { recursive: true });
   fs.mkdirSync(installedChannel, { recursive: true });
   const configPath = path.join(root, "state", "openclaw.json");
 
@@ -99,16 +92,8 @@ test("fresh config enables bundled OneClaw orchestration and Channel without ord
   assert.equal(cfg.plugins.installs?.["oneclaw-workflows"], undefined);
   assert.equal(cfg.plugins.installs?.["oneclaw-employee-catalog"], undefined);
   assert.equal(cfg.plugins.installs?.["oneclaw-channel"], undefined);
-  assert.equal(cfg.plugins.entries["oneclaw-workflows"].enabled, true);
-  assert.equal(
-    cfg.plugins.entries["oneclaw-workflows"].hooks.allowConversationAccess,
-    true,
-  );
-  assert.equal(cfg.plugins.entries["oneclaw-employee-catalog"].enabled, true);
-  assert.equal(
-    cfg.plugins.entries["oneclaw-employee-catalog"].hooks.allowConversationAccess,
-    true,
-  );
+  assert.equal(cfg.plugins.entries["oneclaw-workflows"], undefined);
+  assert.equal(cfg.plugins.entries["oneclaw-employee-catalog"], undefined);
   assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
   assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);

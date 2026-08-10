@@ -14,8 +14,6 @@ const ONECLAW_PACKAGES = {
   "@oneclaw-plugins/runtime-events": "0.1.2",
   "@oneclaw-plugins/channel": "0.1.13",
   "@oneclaw-plugins/openclaw-search": "0.2.0",
-  "@oneclaw-plugins/durable-work": "0.9.15",
-  "@oneclaw-plugins/employee-catalog": "0.5.12",
 };
 
 test("cloud Runtime declares exact official OneClaw plugin versions", () => {
@@ -29,6 +27,17 @@ test("cloud Runtime declares exact official OneClaw plugin versions", () => {
     assert.equal(entry.version, version);
     assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//u);
     assert.match(entry.integrity, /^sha512-/u);
+  }
+});
+
+test("cloud Runtime does not ship retired collaboration plugins", () => {
+  for (const packageName of [
+    "@oneclaw-plugins/durable-work",
+    "@oneclaw-plugins/employee-catalog",
+  ]) {
+    assert.equal(manifest.dependencies[packageName], undefined);
+    assert.equal(lockfile.packages[""].dependencies[packageName], undefined);
+    assert.equal(lockfile.packages[`node_modules/${packageName}`], undefined);
   }
 });
 

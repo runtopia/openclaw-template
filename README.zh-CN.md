@@ -39,12 +39,14 @@ Wrapper（Express 监听 PORT）
 - `tools.web.search` 默认选择镜像内置的 `oneclaw-search` provider，复用用户 child key 调用 ClawRouters `/api/v1/search`；SearXNG/Tavily 密钥、缓存、故障回退和积分计费均留在服务端。
 - 用户显式选择的其他搜索 provider 或 `enabled=false` 关闭状态不会被覆盖。
 
-### 持久任务与结构化输入
+### 原生编排与结构化输入
 
-镜像同时内置 `oneclaw-workflows`。新实例和已有实例默认启用持久任务工具
-`oneclaw_work`，并开启 OpenClaw 原生的结构化 `update_plan` 工具。插件的
-结构化提问与外部应用授权都会直接发布为 OneClaw Channel Attention 事件，
-客户端通过 Channel 控制命令回复，不存在第二套交互服务或 repair 接口。
+员工和员工团直接使用 OpenClaw 原生 Agent Session、`sessions_spawn`、
+`sessions_yield`、子 Session 历史、后台任务、Workboard 和结构化
+`update_plan` 工具。已退役的 `oneclaw-workflows` 与
+`oneclaw-employee-catalog` 插件不再安装，启动时还会从持久化配置中清理旧注册。
+结构化提问与外部应用授权直接发布为 OneClaw Channel Attention 事件，客户端
+通过 Channel 控制命令回复，不存在第二套交互服务或 repair 接口。
 
 ## 环境变量
 
@@ -224,7 +226,7 @@ A：如果未设置 `OPENCLAW_GATEWAY_TOKEN`，Wrapper 在首次启动时自动�
 
 **Q：为什么插件预装在镜像中而不是运行时安装？**
 
-A：OpenClaw 的插件发现机制不扫描全局 `node_modules`。插件在 Docker 构建阶段安装到 `/opt/openclaw-plugins`，并通过 `openclaw.json` 中的 `plugins.load.paths` 声明。这样可避免每次启动时的大量文件复制，同时确保 `/data` Volume 挂载不会覆盖插件文件。
+A：OpenClaw 的插件发现机制不扫描全局 `node_modules`。插件在 Docker 构建阶段安装到 `/opt/openclaw-plugins`，并通过 `openclaw.json` 中的 `plugins.load.paths` 声明。Gateway 启动前，Wrapper 还会把这些不可变包写入 OpenClaw 权威的 `state/openclaw.sqlite` 插件安装索引，避免启动 Doctor 再次下载微信、WhatsApp 等已配置渠道。索引写入成功后才会清理 `/data` 中的重复插件副本和对应 npm project。这样可避免每次启动时的大量文件复制或联网安装，同时确保 `/data` Volume 挂载不会覆盖插件文件。
 
 ## 支持
 

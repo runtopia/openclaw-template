@@ -15,23 +15,23 @@
 //
 // Discovery only makes a plugin's code findable; activation still requires
 // plugins.entries.<id>.enabled=true (set by auto-config for clawrouters and by
-// runtime defaults for OneClaw orchestration and Channel plugins), so listing
+// runtime defaults for OneClaw Channel), so listing
 // these paths here is harmless even when a given channel isn't configured.
 //
-// Channel, durable-work, and employee-catalog are intentionally absent from
-// both lists below. The Dockerfile copies their exact locked packages into
-// OpenClaw's immutable dist/extensions tree, then removes the ordinary /opt
-// copies. They call privileged Gateway APIs, which OpenClaw permits only for
-// bundled or catalog-trusted official plugins. Adding or retaining their /opt
-// paths or install records would rediscover them with origin config/global and
-// shadow the trusted bundled candidates.
+// Channel is intentionally absent from both lists below. The Dockerfile copies
+// its exact locked package into OpenClaw's immutable dist/extensions tree, then
+// removes the ordinary /opt copy. It calls privileged Gateway APIs, which
+// OpenClaw permits only for bundled or catalog-trusted official plugins. Adding
+// or retaining its /opt path or install record would shadow the trusted copy.
 
 import fs from "node:fs";
 import path from "node:path";
 
 const DEFAULT_PLUGINS_DIR = "/opt/openclaw-plugins";
-const BUNDLED_ONECLAW_PLUGIN_IDS = [
+const NON_DISCOVERABLE_PLUGIN_INSTALL_IDS = [
   "oneclaw-channel",
+  // Retired native-orchestration predecessors. Remove persisted install
+  // records left by older cloud images even though they are no longer shipped.
   "oneclaw-workflows",
   "oneclaw-employee-catalog",
 ];
@@ -56,6 +56,7 @@ const OFFICIAL_NPM_PLUGIN_INSTALLS = [
   { pluginId: "discord", packageName: "@openclaw/discord" },
   { pluginId: "feishu", packageName: "@openclaw/feishu" },
   { pluginId: "whatsapp", packageName: "@openclaw/whatsapp" },
+  { pluginId: "openclaw-weixin", packageName: "@tencent-weixin/openclaw-weixin" },
   { pluginId: "oneclaw-search", packageName: "@oneclaw-plugins/openclaw-search" },
 ];
 
@@ -114,30 +115,48 @@ export function buildPreinstalledPluginInstallRecords(env = process.env) {
   return records;
 }
 
-export function applyPreinstalledPluginInstallRecords(cfg, env = process.env) {
+export function removeLegacyPreinstalledPluginInstallRecords(cfg, env = process.env) {
   const records = buildPreinstalledPluginInstallRecords(env);
+  const legacyRecordIds = new Set([
+    ...NON_DISCOVERABLE_PLUGIN_INSTALL_IDS,
+    ...Object.keys(records),
+  ]);
   let changed = false;
 
-  for (const pluginId of BUNDLED_ONECLAW_PLUGIN_IDS) {
+  // OpenClaw 2026.7.1-2 owns install metadata in state/openclaw.sqlite.
+  // Remove legacy JSON records so startup migration cannot compete with the
+  // canonical SQLite records synchronized before Gateway launch.
+  for (const pluginId of legacyRecordIds) {
     if (!Object.hasOwn(cfg.plugins?.installs || {}, pluginId)) continue;
     delete cfg.plugins.installs[pluginId];
     changed = true;
   }
-
-  if (Object.keys(records).length > 0) {
-    cfg.plugins ??= {};
-    cfg.plugins.installs = {
-      ...(cfg.plugins.installs || {}),
-      ...records,
-    };
-    changed = true;
+  if (cfg.plugins?.installs && Object.keys(cfg.plugins.installs).length === 0) {
+    delete cfg.plugins.installs;
   }
 
   return changed;
 }
 
-export function cleanupStalePreinstalledExtensions(stateDir, env = process.env) {
-  if (resolvePreinstalledPluginPaths(env).length === 0) return;
+function isExpectedManagedProject(projectDir, packageName, pluginId) {
+  const packageDir = path.join(projectDir, "node_modules", ...packageName.split("/"));
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(packageDir, "openclaw.plugin.json"), "utf8"),
+    );
+    return pkg.name === packageName && manifest.id === pluginId;
+  } catch {
+    return false;
+  }
+}
+
+export function cleanupStalePreinstalledExtensions(
+  stateDir,
+  env = process.env,
+  { installIndexReady = false } = {},
+) {
+  if (!installIndexReady || resolvePreinstalledPluginPaths(env).length === 0) return;
   const extensionsDir = path.join(stateDir, "extensions");
   for (const id of PREINSTALLED_PLUGIN_IDS) {
     const stalePath = path.join(extensionsDir, id);
@@ -147,6 +166,32 @@ export function cleanupStalePreinstalledExtensions(stateDir, env = process.env) 
       console.log(`[plugins] removed stale volume extension ${stalePath}`);
     } catch (err) {
       console.warn(`[plugins] failed to remove stale volume extension ${stalePath}: ${err.message}`);
+    }
+  }
+
+  // OpenClaw Doctor's npm installer creates one isolated project per package.
+  // Once SQLite points at the immutable /opt copy, remove only projects whose
+  // package and plugin identities exactly match an image-preinstalled plugin.
+  const projectsDir = path.join(stateDir, "npm", "projects");
+  let projects = [];
+  try {
+    projects = fs.readdirSync(projectsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(projectsDir, entry.name));
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      console.warn(`[plugins] failed to scan stale npm projects: ${err.message}`);
+    }
+  }
+  for (const projectDir of projects) {
+    const matched = OFFICIAL_NPM_PLUGIN_INSTALLS.some(({ pluginId, packageName }) =>
+      isExpectedManagedProject(projectDir, packageName, pluginId));
+    if (!matched) continue;
+    try {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      console.log(`[plugins] removed stale managed npm project ${projectDir}`);
+    } catch (err) {
+      console.warn(`[plugins] failed to remove stale npm project ${projectDir}: ${err.message}`);
     }
   }
 }

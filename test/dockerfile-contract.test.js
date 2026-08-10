@@ -146,7 +146,7 @@ test("Dockerfile aligns OpenClaw core to Desktop 2026.7.1-2", () => {
     "the image build should fail if an indexed plugin cannot resolve its OpenClaw peer",
   );
   assert.ok(
-    dockerfile.includes("ARG CACHEBUST_PLUGINS=v13"),
+    dockerfile.includes("ARG CACHEBUST_PLUGINS=v14"),
     "the fixed plugin filesystem layer must not reuse the pre-fix build cache",
   );
   assert.ok(
@@ -174,7 +174,7 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
     "patch-oneclaw-channel-delivery.mjs",
   ));
   assert.ok(dockerfile.includes("root !== channel"));
-  assert.ok(dockerfile.includes("['channel', '0.1.13']"));
+  assert.ok(dockerfile.includes("['channel', '0.1.16']"));
   assert.ok(dockerfile.includes("runtimeEventSdkVersion() !== '0.1.2'"));
   assert.ok(dockerfile.includes("['clawrouters', '0.4.1']"));
   assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));

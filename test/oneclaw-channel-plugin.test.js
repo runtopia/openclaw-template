@@ -19,7 +19,7 @@ test("bundled OneClaw Channel is excluded from ordinary discovery and install re
     fs.mkdirSync(packageDir, { recursive: true });
     fs.writeFileSync(
       path.join(packageDir, "package.json"),
-      JSON.stringify({ name: "@oneclaw-plugins/channel", version: "0.1.13" }),
+      JSON.stringify({ name: "@oneclaw-plugins/channel", version: "0.1.16" }),
     );
     const env = { OPENCLAW_PLUGINS_DIR: pluginsDir };
 
@@ -29,7 +29,7 @@ test("bundled OneClaw Channel is excluded from ordinary discovery and install re
     const cfg = {
       plugins: {
         installs: {
-          "oneclaw-channel": { installPath: packageDir, version: "0.1.13" },
+          "oneclaw-channel": { installPath: packageDir, version: "0.1.16" },
           "oneclaw-workflows": { installPath: "/old/durable-work" },
           "oneclaw-employee-catalog": { installPath: "/old/employee-catalog" },
           whatsapp: { installPath: "/old/whatsapp" },

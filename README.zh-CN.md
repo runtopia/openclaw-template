@@ -12,6 +12,13 @@
 - **修复控制台**在 `/repair/*` — AI 诊断对话、网关重启、WhatsApp/微信扫码绑定
 - **健康检查端点** `/health`
 - **登录页** `/login`（由 `SETUP_PASSWORD` 保护）
+- **与 OneClaw Desktop 同源的常用 skills**：默认启用轻量的 skill 查找和自我改进；文档四件套可在构建时开启
+
+Docker 默认使用轻量 `cloud` profile：保留 Gateway、MCP、summarize、轻量 skills
+和全部渠道插件，不安装 ClawHub 独立 CLI、浏览器系统库、文档/OCR 运行时、
+本地 Agent CLI 与冷门 Go skill 工具。需要 PDF/XLSX/DOCX/PPTX 时使用
+`--build-arg ONECLAW_DOCUMENT_SKILLS=1`；完整工具链使用
+`--build-arg ONECLAW_RUNTIME_PROFILE=full`。
 
 ## 架构
 
@@ -28,7 +35,7 @@ Wrapper（Express 监听 PORT）
 ### 生命周期
 
 1. **启动**：Wrapper 读取环境变量 → 写入 `openclaw.json`（幂等）→ 启动 `openclaw gateway` → 等待网关就绪 → 开始处理流量。
-2. **运行时**：自动恢复网关崩溃（指数退避，最多 5 次）。在设置了平台环境变量时，向 oneclaw_web 上报心跳、统计和人格信息。
+2. **运行时**：Agent、模型、Key、渠道和绑定配置由 OpenClaw 热加载，不重启 Gateway；仅显式“重启”操作会重启。网关异常退出时自动恢复（指数退避，最多 5 次）。
 3. **修复**：`/repair/*` 端点供 oneclaw_web 面板（或直接 API 调用）使用，支持 AI 诊断、网关重启，以及 WhatsApp/微信 QR 绑定流程。
 
 ### 默认记忆与联网搜索
@@ -109,12 +116,21 @@ OpenAI 直连 provider 默认使用 OpenClaw 内置 agent runtime，与 OneClaw 
 | `PROXY_TIMEOUT_MS` | `600000` | 反向代理超时（毫秒） |
 | `GATEWAY_CHAT_COMPLETIONS_ENABLED` | 关闭 | 启用 `POST /v1/chat/completions`（同时开启 `/v1/models` 和 `/v1/embeddings`） |
 | `GATEWAY_RESPONSES_ENABLED` | 关闭 | 启用 `POST /v1/responses` |
+| `ONECLAW_PREINSTALLED_SKILLS_ENABLED` | 开启 | 设为 `false` 可关闭镜像预装的常用 skills |
+
+`ONECLAW_RUNTIME_PROFILE` 和 `ONECLAW_DOCUMENT_SKILLS` 是镜像**构建参数**，不是 Railway 运行时变量。
 
 ## 本地 Docker 运行
 
 ```bash
 # 构建镜像
 docker build -t openclaw-railway-template .
+
+# 可选：增加 PDF/XLSX/DOCX/PPTX 运行时
+docker build --build-arg ONECLAW_DOCUMENT_SKILLS=1 -t openclaw-railway-template:documents .
+
+# 可选：包含完整本地工具链的镜像
+docker build --build-arg ONECLAW_RUNTIME_PROFILE=full -t openclaw-railway-template:full .
 
 # 运行容器
 docker run --rm -p 8080:8080 \
@@ -141,11 +157,15 @@ docker run --rm -p 8080:8080 \
 
 ## Railway 部署
 
-1. Fork 或在 Railway 中使用本模板。
-2. 在 `/data` 挂载一个 **Volume**。
-3. 在 Railway Variables 中设置**环境变量**（见上表）。
-4. 开启**公开网络**（自动分配 `*.up.railway.app` 域名）。
-5. 部署 — 容器启动时自动配置。
+1. 在 CI 中构建默认 `cloud` 镜像并推送到 Registry，建议用版本号或 digest 固定版本。
+2. Railway Service 选择 **Docker Image** 作为 Source，填写预构建镜像地址；Railway 不再执行项目构建。
+3. 在 `/data` 挂载一个 **Volume**，并设置环境变量。
+4. 开启**公开网络**（自动分配 `*.up.railway.app` 域名）并部署。
+
+镜像中已包含 OpenClaw、wrapper、渠道插件和所选 skills；容器启动阶段不执行
+`npm install`、`pip install`、Go 编译或大目录复制。平台下发的普通配置变更直接热加载。
+注意：修改 Railway Variables 本身仍会由 Railway 创建新 Deployment；通过 OneClaw/OpenClaw
+运行时接口修改 Agent、模型 Key 或渠道配置则无需重启。
 
 部署前检查清单：
 - `/data` 已挂载 Volume
@@ -168,7 +188,7 @@ src/
 ├── skills/                # 修复助手 AI 工具定义
 └── public/                # 静态页面：login.html，loading.html
 start.sh                   # Docker 启动脚本：修复 /data 权限 → gosu 降权 → node src/index.js
-Dockerfile                 # 单阶段构建：安装 OpenClaw core + 插件到 /opt/openclaw-plugins
+Dockerfile                 # cloud/full 两种 profile；插件与常用 skills 固化在 /opt
 railway.toml               # Railway 部署配置
 docker-compose.yml         # 本地开发 compose
 ```

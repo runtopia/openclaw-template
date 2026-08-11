@@ -2,9 +2,18 @@
 set -euo pipefail
 
 required_bins=(
-  ffmpeg gh jq rg tmux unzip
-  summarize gog himalaya nano-pdf op uv
+  ffmpeg gh jq rg tmux unzip summarize
 )
+
+documents_enabled=0
+if [[ "${ONECLAW_DOCUMENT_SKILLS:-0}" == "1" || "${ONECLAW_RUNTIME_PROFILE:-cloud}" == "full" ]]; then
+  documents_enabled=1
+  required_bins+=(pdftotext qpdf)
+fi
+
+if [[ "${ONECLAW_RUNTIME_PROFILE:-cloud}" == "full" ]]; then
+  required_bins+=(gog blogwatcher gifgrep wacli codex gemini oracle xurl himalaya nano-pdf op uv)
+fi
 
 for binary in "${required_bins[@]}"; do
   command -v "$binary" >/dev/null || {
@@ -12,6 +21,18 @@ for binary in "${required_bins[@]}"; do
     exit 1
   }
 done
+
+if [[ "$documents_enabled" == "1" ]]; then
+python - <<'PY'
+import openpyxl
+import pdfplumber
+import pptx
+import pypdf
+import reportlab
+PY
+
+node -e "require('docx'); require('pptxgenjs')"
+fi
 
 status_json="$(mktemp)"
 trap 'rm -f "$status_json"' EXIT
@@ -22,9 +43,18 @@ const fs = require("node:fs");
 const data = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const skills = Array.isArray(data) ? data : (data.skills || data.result?.skills || []);
 const supported = new Set([
-  "1password", "coding-agent", "github", "gog", "himalaya", "nano-pdf", "summarize", "weather",
-  "notion", "slack", "discord", "feishu", "blogwatcher", "gifgrep", "wacli",
+  "github", "summarize", "weather",
+  "notion", "slack", "discord", "feishu",
+  "find-skills", "self-improving-agent",
 ]);
+if (process.env.ONECLAW_DOCUMENT_SKILLS === "1" || process.env.ONECLAW_RUNTIME_PROFILE === "full") {
+  for (const slug of ["pdf", "xlsx", "docx", "pptx"]) supported.add(slug);
+}
+if (process.env.ONECLAW_RUNTIME_PROFILE === "full") {
+  for (const slug of ["1password", "himalaya", "nano-pdf", "coding-agent", "gog", "blogwatcher", "gifgrep", "wacli"]) {
+    supported.add(slug);
+  }
+}
 const failures = [];
 for (const skill of skills) {
   const slug = skill?.name || skill?.slug || skill?.skillKey;

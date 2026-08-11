@@ -1,0 +1,53 @@
+{
+  "generatedAt": "2026-08-06T08:51:12.175Z",
+  "skills": [
+    {
+      "slug": "pdf",
+      "version": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb",
+      "repo": "anthropics/skills",
+      "repoPath": "skills/pdf",
+      "ref": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb",
+      "commit": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb"
+    },
+    {
+      "slug": "xlsx",
+      "version": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb",
+      "repo": "anthropics/skills",
+      "repoPath": "skills/xlsx",
+      "ref": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb",
+      "commit": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb"
+    },
+    {
+      "slug": "docx",
+      "version": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb",
+      "repo": "anthropics/skills",
+      "repoPath": "skills/docx",
+      "ref": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb",
+      "commit": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb"
+    },
+    {
+      "slug": "pptx",
+      "version": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb",
+      "repo": "anthropics/skills",
+      "repoPath": "skills/pptx",
+      "ref": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb",
+      "commit": "b29e7cf65e5cb78a5ac33d582270551bc74a14eb"
+    },
+    {
+      "slug": "find-skills",
+      "version": "e173b8c88f2581cfdaa1b6767c6519a08155790e",
+      "repo": "vercel-labs/skills",
+      "repoPath": "skills/find-skills",
+      "ref": "e173b8c88f2581cfdaa1b6767c6519a08155790e",
+      "commit": "e173b8c88f2581cfdaa1b6767c6519a08155790e"
+    },
+    {
+      "slug": "self-improving-agent",
+      "version": "114ca7b5572258bb4c68ad6095f79ab981962d95",
+      "repo": "peterskoett/self-improving-agent",
+      "repoPath": "self-improving-agent",
+      "ref": "114ca7b5572258bb4c68ad6095f79ab981962d95",
+      "commit": "114ca7b5572258bb4c68ad6095f79ab981962d95"
+    }
+  ]
+}

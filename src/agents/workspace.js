@@ -71,7 +71,8 @@ export function migrateAgentWorkspaces({ workspaceRoot, configPath }) {
   }
 
   if (!configPath || !fs.existsSync(configPath)) return { mainWorkspace, migratedAgents: [] };
-  const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const previousConfig = fs.readFileSync(configPath, "utf8");
+  const cfg = JSON.parse(previousConfig);
   if (!cfg.agents || typeof cfg.agents !== "object") cfg.agents = {};
   if (!cfg.agents.defaults || typeof cfg.agents.defaults !== "object") cfg.agents.defaults = {};
   cfg.agents.defaults.workspace = mainWorkspace;
@@ -104,6 +105,7 @@ export function migrateAgentWorkspaces({ workspaceRoot, configPath }) {
     fs.mkdirSync(destination, { recursive: true });
     agent.workspace = destination;
   }
-  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+  const nextConfig = JSON.stringify(cfg, null, 2);
+  if (nextConfig !== previousConfig) fs.writeFileSync(configPath, nextConfig);
   return { mainWorkspace, migratedAgents };
 }

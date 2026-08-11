@@ -81,7 +81,7 @@ open http://localhost:8080/openclaw  # password: test (via /login)
 - **src/skills/** — AI 工具定义（repair assistant 工具集）
 - **src/public/** — 静态页面：`login.html`（登录页）、`loading.html`（启动等待页）
 - **start.sh** — Docker 启动脚本：修复 `/data` 权限 → gosu 降权 → `node /app/src/index.js`
-- **Dockerfile** — 单阶段构建：安装 OpenClaw core、预装插件到 `/opt/openclaw-plugins`（Channel 和编排插件同步内置到 OpenClaw `dist/extensions`）、安装 wrapper 依赖
+- **Dockerfile** — 默认 `cloud` 轻量 profile（文档运行时用 `ONECLAW_DOCUMENT_SKILLS=1`，完整工具链用 `ONECLAW_RUNTIME_PROFILE=full`）；安装 OpenClaw core、预装插件到 `/opt/openclaw-plugins`、预装 skills 定义到 `/opt/oneclaw-skills`，并安装 wrapper 依赖
 
 ### Environment Variables
 
@@ -183,3 +183,6 @@ Edit channel-specific env handling in `src/channels/` — each channel has its o
 14. **All app-facing interaction uses OneClaw Channel** → The old private Interaction Broker and `/repair/interactions/input` route have been removed and must not be reintroduced. `request_user_input`, Task, Attention, Approval, account/connection authorization, permission, Artifact, and other app-facing behavior publish OneClaw Channel Protocol events directly and receive answers through Channel control commands.
 
 15. **WeChat access policy is image-patched** → `@tencent-weixin/openclaw-weixin@2.4.6` hardcodes pairing and originally treated an empty allow list as allowed. The Dockerfile runs `scripts/patch-weixin-access-policy.js` against the installed plugin so it reads `channels.openclaw-weixin.dmPolicy/allowFrom` and account overrides from `openclaw.json`. The patch also makes `allowFrom=["*"]` the only public-access wildcard; an empty list stays strict. When bumping the WeChat plugin, run `node --test test/weixin-access-policy-patch.test.js` and verify the Docker patch target still exists.
+
+16. **Cloud startup and skill bundle stay volume-free** → `start.sh` performs recursive ownership repair only once per volume (`.oneclaw-ownership-v1`), and subsequent boots only chown the three top-level directories. Common Desktop-aligned skills (`pdf`, `xlsx`, `docx`, `pptx`, `find-skills`, `self-improving-agent`) are commit-pinned under `/opt/oneclaw-skills` and loaded through `skills.load.extraDirs`; do not copy them into `/data` on startup. Managed/workspace skills have higher OpenClaw precedence and remain the user override path. The default `cloud` build enables the two lightweight skills and omits document/OCR dependencies, extended local agent CLIs, browser libraries, standalone ClawHub, and niche Go binaries. `ONECLAW_DOCUMENT_SKILLS=1` adds the document runtimes; `ONECLAW_RUNTIME_PROFILE=full` restores the complete toolchain.
+17. **Normal runtime config changes MUST stay restart-free** → OpenClaw 2026.7.1 hot-reloads `openclaw.json` changes. Agent/model/key/channel/binding updates must write config or use Gateway RPC and let the running process converge. Only the explicit runtime restart command and `/repair/restart` may call `restartGateway`; do not add post-update restarts back to channel bind/unbind or platform config polling.

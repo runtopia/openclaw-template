@@ -1,0 +1,88 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  applyPreinstalledSkillsDefaults,
+  resolvePreinstalledSkills,
+} from "../src/config/preinstalled-skills.js";
+
+function createBundle() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-preinstalled-skills-"));
+  fs.mkdirSync(path.join(root, "pdf"), { recursive: true });
+  fs.mkdirSync(path.join(root, "xlsx"), { recursive: true });
+  fs.writeFileSync(path.join(root, "pdf", "SKILL.md"), "# PDF\n");
+  fs.writeFileSync(path.join(root, "xlsx", "SKILL.md"), "# XLSX\n");
+  fs.writeFileSync(path.join(root, ".preinstalled-manifest.json"), JSON.stringify({
+    skills: [
+      { slug: "pdf", feature: "documents", autoEnable: true },
+      { slug: "xlsx", autoEnable: true },
+      { slug: "missing", autoEnable: true },
+      { slug: "../unsafe", autoEnable: true },
+    ],
+  }));
+  return root;
+}
+
+test("preinstalled skills load from an immutable extra directory without overriding opt-outs", (t) => {
+  const root = createBundle();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cfg = {
+    skills: {
+      load: { extraDirs: ["/custom/skills"] },
+      entries: { pdf: { enabled: false, env: { EXISTING: "1" } } },
+    },
+  };
+
+  assert.equal(applyPreinstalledSkillsDefaults(cfg, {
+    ONECLAW_PREINSTALLED_SKILLS_DIR: root,
+    ONECLAW_DOCUMENT_SKILLS: "1",
+  }), true);
+  assert.deepEqual(cfg.skills.load.extraDirs, ["/custom/skills", root]);
+  assert.deepEqual(cfg.skills.entries.pdf, { enabled: false, env: { EXISTING: "1" } });
+  assert.deepEqual(cfg.skills.entries.xlsx, { enabled: true });
+  assert.equal(cfg.skills.entries.missing, undefined);
+  assert.equal(applyPreinstalledSkillsDefaults(cfg, {
+    ONECLAW_PREINSTALLED_SKILLS_DIR: root,
+    ONECLAW_DOCUMENT_SKILLS: "1",
+  }), false);
+});
+
+test("document skills stay disabled in the lean image and enable in document/full builds", (t) => {
+  const root = createBundle();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const lean = {};
+  applyPreinstalledSkillsDefaults(lean, { ONECLAW_PREINSTALLED_SKILLS_DIR: root });
+  assert.equal(lean.skills.entries.pdf.enabled, false);
+  assert.equal(lean.skills.entries.xlsx.enabled, true);
+
+  const documents = {};
+  applyPreinstalledSkillsDefaults(documents, {
+    ONECLAW_PREINSTALLED_SKILLS_DIR: root,
+    ONECLAW_DOCUMENT_SKILLS: "1",
+  });
+  assert.equal(documents.skills.entries.pdf.enabled, true);
+
+  const full = {};
+  applyPreinstalledSkillsDefaults(full, {
+    ONECLAW_PREINSTALLED_SKILLS_DIR: root,
+    ONECLAW_RUNTIME_PROFILE: "full",
+  });
+  assert.equal(full.skills.entries.pdf.enabled, true);
+});
+
+test("preinstalled skills can be disabled and malformed bundles are ignored", (t) => {
+  const root = createBundle();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  assert.equal(resolvePreinstalledSkills({
+    ONECLAW_PREINSTALLED_SKILLS_DIR: root,
+    ONECLAW_PREINSTALLED_SKILLS_ENABLED: "false",
+  }), null);
+  assert.equal(applyPreinstalledSkillsDefaults({}, {
+    ONECLAW_PREINSTALLED_SKILLS_DIR: path.join(root, "missing"),
+  }), false);
+});

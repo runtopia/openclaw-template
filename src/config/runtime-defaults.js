@@ -5,6 +5,8 @@
 // generate.js imports and re-exports applyRuntimeDefaults (and the two
 // shared helpers below) so the public API of generate.js is unchanged.
 
+import { applyPreinstalledSkillsDefaults } from "./preinstalled-skills.js";
+
 const DEFAULT_HEARTBEAT = { every: "2h", target: "last" };
 const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" };
 const CLAWROUTERS_EMBEDDING_MODEL = "auto";
@@ -232,14 +234,20 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   const defaults = ensureObject(agents, "defaults");
   changed = setJsonValue(defaults, "heartbeat", DEFAULT_HEARTBEAT) || changed;
 
-  const skills = ensureObject(cfg, "skills");
-  const skillEntries = ensureObject(skills, "entries");
-  const codingAgent = ensureObject(skillEntries, "coding-agent");
-  changed = setJsonValue(codingAgent, "enabled", true) || changed;
+  // The cloud profile intentionally omits the heavyweight Codex/Gemini CLIs.
+  // Keep the bundled coding-agent opt-in there; the full profile retains the
+  // previous always-enabled behavior.
+  if (env.ONECLAW_RUNTIME_PROFILE?.trim().toLowerCase() !== "cloud") {
+    const skills = ensureObject(cfg, "skills");
+    const skillEntries = ensureObject(skills, "entries");
+    const codingAgent = ensureObject(skillEntries, "coding-agent");
+    changed = setJsonValue(codingAgent, "enabled", true) || changed;
+  }
   changed = removeRetiredOneclawCollaborationPlugins(cfg) || changed;
   changed = applyOneclawChannelPatch(cfg) || changed;
   changed = applyWorkboardPatch(cfg) || changed;
   changed = applyNativePlanToolPatch(cfg) || changed;
+  changed = applyPreinstalledSkillsDefaults(cfg, env) || changed;
 
   const hasKey = hasClawroutersKey(env);
   const provider = cfg?.models?.providers?.clawrouters;

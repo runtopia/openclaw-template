@@ -8,13 +8,13 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 test("Dockerfile installs unzip for custom skill archives", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-  assert.match(dockerfile, /^\s*unzip\s*\\$/m);
+  assert.ok(dockerfile.includes("python3 ripgrep tmux unzip"));
 });
 
 test("Dockerfile preinstalls portable builtin skill dependencies", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   for (const aptPackage of ["ffmpeg", "gh", "jq", "ripgrep", "tmux"]) {
-    assert.match(dockerfile, new RegExp(`^\\s*${aptPackage}\\s*\\\\$`, "m"));
+    assert.ok(dockerfile.includes(aptPackage), `${aptPackage} should be installed`);
   }
   for (const npmPackage of [
     "clawhub@${CLAWHUB_VERSION}",
@@ -46,12 +46,57 @@ test("Dockerfile preinstalls portable builtin skill dependencies", () => {
   assert.ok(!dockerfile.includes("github.com/steipete/wacli/"));
 });
 
+test("cloud is the lean default while full retains extended skill tools", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  assert.match(dockerfile, /^ARG ONECLAW_RUNTIME_PROFILE=cloud$/m);
+  assert.match(dockerfile, /^ARG ONECLAW_DOCUMENT_SKILLS=0$/m);
+  assert.ok(dockerfile.includes('if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]'));
+  assert.ok(dockerfile.includes("Skipping extended Go skill tools"));
+  assert.ok(dockerfile.includes("Skipping extended agent CLIs"));
+  assert.ok(dockerfile.includes("Skipping xurl"));
+});
+
+test("Dockerfile bundles the pinned Desktop common skills outside the data volume", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  const skillsRoot = path.join(repoRoot, "resources", "preinstalled-skills");
+  const manifest = JSON.parse(fs.readFileSync(
+    path.join(skillsRoot, ".preinstalled-manifest.json"),
+    "utf8",
+  ));
+  const lock = JSON.parse(fs.readFileSync(
+    path.join(skillsRoot, ".preinstalled-lock.json"),
+    "utf8",
+  ));
+  const expected = ["pdf", "xlsx", "docx", "pptx", "find-skills", "self-improving-agent"];
+
+  assert.ok(dockerfile.includes("COPY resources/preinstalled-skills ${ONECLAW_PREINSTALLED_SKILLS_DIR}"));
+  assert.deepEqual(manifest.skills.map((skill) => skill.slug), expected);
+  assert.deepEqual(lock.skills.map((skill) => skill.slug), expected);
+  for (const skill of manifest.skills) {
+    assert.match(skill.ref, /^[0-9a-f]{40}$/u);
+    assert.equal(skill.version, skill.ref);
+    assert.equal(lock.skills.find((entry) => entry.slug === skill.slug)?.commit, skill.ref);
+    assert.ok(fs.existsSync(path.join(skillsRoot, skill.slug, "SKILL.md")));
+  }
+  const bundledTests = fs.readdirSync(skillsRoot, { recursive: true })
+    .filter((entry) => /(?:^|\/)test(?:s)?\/|\.test\.[cm]?[jt]s$/u.test(String(entry)));
+  assert.deepEqual(bundledTests, [], "runtime skill bundles should not ship upstream test fixtures");
+});
+
+test("startup ownership repair is recursive only for a one-time migration", () => {
+  const startup = fs.readFileSync(path.join(repoRoot, "start.sh"), "utf8");
+  assert.ok(startup.includes('OWNERSHIP_MARKER="$STATE_DIR/.oneclaw-ownership-v1"'));
+  assert.match(startup, /if \[ ! -f "\$OWNERSHIP_MARKER" \]; then[\s\S]*chown -R/);
+  assert.doesNotMatch(startup, /chown -R openclaw:openclaw \/data(?:\s|$)/);
+});
+
 test("Dockerfile includes complete Linux template skill dependencies", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm$/m);
-  for (const aptPackage of ["poppler-utils", "tesseract-ocr", "python3-venv"]) {
-    assert.match(dockerfile, new RegExp(`^\\s*${aptPackage}\\s*\\\\$`, "m"));
+  for (const aptPackage of ["poppler-utils", "qpdf", "tesseract-ocr", "python3-venv"]) {
+    assert.ok(dockerfile.includes(aptPackage), `${aptPackage} should be available in document/full builds`);
   }
+  assert.ok(dockerfile.includes('[ "${ONECLAW_DOCUMENT_SKILLS}" = "1" ]'));
   assert.ok(dockerfile.includes("@steipete/summarize@${SUMMARIZE_VERSION}"));
   assert.ok(dockerfile.includes("ARG SUMMARIZE_VERSION=0.11.1"));
   assert.ok(dockerfile.includes("github.com/steipete/gogcli/cmd/gog@v0.9.0"));
@@ -59,18 +104,34 @@ test("Dockerfile includes complete Linux template skill dependencies", () => {
   assert.ok(dockerfile.includes("himalaya.${archive_arch}-linux.tgz"));
   assert.ok(dockerfile.includes("sha256sum -c -"));
   assert.ok(dockerfile.includes("ARG OP_VERSION=2.35.0"));
-  assert.ok(dockerfile.includes("FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword"));
-  assert.ok(dockerfile.includes("COPY --from=builtin-skill-onepassword /usr/local/bin/op /usr/local/bin/op"));
+  assert.ok(dockerfile.includes("FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword-source"));
+  assert.ok(dockerfile.includes("COPY --from=builtin-skill-onepassword /out/ /usr/local/bin/"));
   assert.ok(dockerfile.includes("nano-pdf==0.2.1"));
   assert.ok(dockerfile.includes("ARG UV_VERSION=0.8.14"));
   assert.ok(dockerfile.includes("uv==${UV_VERSION}"));
+  for (const pythonPackage of [
+    "openpyxl==3.1.5",
+    "python-pptx==1.0.2",
+    "pypdf==6.15.0",
+    "reportlab==5.0.0",
+    "pdfplumber==0.11.10",
+  ]) {
+    assert.ok(dockerfile.includes(pythonPackage), `${pythonPackage} should be installed`);
+  }
+  const skillRuntime = JSON.parse(fs.readFileSync(
+    path.join(repoRoot, "resources", "preinstalled-skill-runtime", "package.json"),
+    "utf8",
+  ));
+  assert.equal(skillRuntime.dependencies.docx, "9.7.1");
+  assert.equal(skillRuntime.dependencies.pptxgenjs, "4.0.1");
+  assert.ok(dockerfile.includes("NODE_PATH=/opt/oneclaw-preinstalled-skill-runtime/node_modules"));
   assert.ok(dockerfile.includes("/opt/oneclaw-python/bin"));
 });
 
 test("image includes a Linux template skill smoke verifier", () => {
   const script = fs.readFileSync(path.join(repoRoot, "scripts/verify-linux-template-skills.sh"), "utf8");
   assert.match(script, /openclaw skills list --agent main --json/);
-  for (const binary of ["summarize", "gog", "himalaya", "nano-pdf", "uv"]) {
+  for (const binary of ["summarize", "gog", "himalaya", "nano-pdf", "uv", "qpdf", "pptxgenjs"]) {
     assert.ok(script.includes(binary), `${binary} should be verified`);
   }
   assert.doesNotMatch(script, /apple-notes|apple-reminders|things-mac/);

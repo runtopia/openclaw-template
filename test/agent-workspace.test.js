@@ -30,7 +30,9 @@ test("migrateAgentWorkspaces moves legacy main and hired files idempotently", ()
   }));
 
   migrateAgentWorkspaces({ workspaceRoot: root, configPath });
+  const configInode = fs.statSync(configPath).ino;
   migrateAgentWorkspaces({ workspaceRoot: root, configPath });
+  assert.equal(fs.statSync(configPath).ino, configInode, "idempotent migration should not rewrite config");
 
   assert.equal(fs.readFileSync(path.join(root, "agents", "main", "SOUL.md"), "utf8"), "legacy main");
   assert.equal(fs.readFileSync(path.join(root, "agents", "oneclaw-emp-1", "SOUL.md"), "utf8"), "legacy hired");

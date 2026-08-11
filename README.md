@@ -12,6 +12,14 @@ Deploy **OpenClaw** (an AI coding assistant platform) on Railway as a single con
 - **Repair console** at `/repair/*` — AI diagnostic chat, gateway restart, QR binding for WhatsApp/WeChat
 - **Health endpoint** at `/health`
 - **Login page** at `/login` (protected by `SETUP_PASSWORD`)
+- **Pinned common skills** from OneClaw Desktop: lightweight discovery and self-improvement by default, with document skills available at build time
+
+The default Docker build uses the lean `cloud` runtime profile. It keeps the
+Gateway, MCP, summarize, lightweight skills, and all channel plugins. It omits
+the standalone ClawHub CLI, browser libraries, document/OCR runtimes,
+heavyweight local agent CLIs, and niche Go binaries. Build with
+`--build-arg ONECLAW_DOCUMENT_SKILLS=1` for PDF/XLSX/DOCX/PPTX support, or
+`--build-arg ONECLAW_RUNTIME_PROFILE=full` for the complete toolchain.
 
 ## Architecture
 
@@ -28,7 +36,7 @@ Wrapper (Express on PORT)
 ### Lifecycle
 
 1. **Startup**: wrapper reads env vars → writes `openclaw.json` (idempotent) → spawns `openclaw gateway` → waits for gateway readiness → begins serving traffic.
-2. **Runtime**: auto-heals gateway crashes (exponential backoff, max 5 restarts). Sends heartbeat/stats/personality to oneclaw_web when platform env vars are set.
+2. **Runtime**: OpenClaw hot-reloads Agent, model, key, channel, and binding changes without restarting the Gateway. Only explicit restart operations restart it. Unexpected crashes still auto-heal with exponential backoff.
 3. **Repair**: `/repair/*` endpoints let oneclaw_web's panel (or direct API calls) run AI diagnostics, restart the gateway, or trigger QR binding flows for WhatsApp/WeChat.
 
 ### Default memory and web search
@@ -111,12 +119,21 @@ this avoids a multi-GB Codex harness download during the first cloud boot.
 | `PROXY_TIMEOUT_MS` | `600000` | Reverse proxy timeout |
 | `GATEWAY_CHAT_COMPLETIONS_ENABLED` | off | Enable `POST /v1/chat/completions` (also enables `/v1/models` and `/v1/embeddings`) |
 | `GATEWAY_RESPONSES_ENABLED` | off | Enable `POST /v1/responses` |
+| `ONECLAW_PREINSTALLED_SKILLS_ENABLED` | on | Set to `false` to disable image-bundled common skills |
+
+`ONECLAW_RUNTIME_PROFILE` and `ONECLAW_DOCUMENT_SKILLS` are image build arguments, not Railway runtime variables.
 
 ## Local Docker Run
 
 ```bash
 # Build
 docker build -t openclaw-railway-template .
+
+# Optional PDF/XLSX/DOCX/PPTX runtime
+docker build --build-arg ONECLAW_DOCUMENT_SKILLS=1 -t openclaw-railway-template:documents .
+
+# Optional complete local-tool image
+docker build --build-arg ONECLAW_RUNTIME_PROFILE=full -t openclaw-railway-template:full .
 
 # Run
 docker run --rm -p 8080:8080 \
@@ -143,11 +160,16 @@ Add channel tokens as additional `-e` flags:
 
 ## Railway Deployment
 
-1. Fork or use this template in Railway.
-2. Mount a **Volume** at `/data`.
-3. Set **environment variables** in Railway Variables (see above).
-4. Enable **public networking** (assigns `*.up.railway.app` domain).
-5. Deploy — the container auto-configures on startup.
+1. Build the default `cloud` image in CI and push it to a registry, pinned by version tag or digest.
+2. Set the Railway service Source to **Docker Image** and enter that image reference, so Railway does not rebuild the repository.
+3. Mount a **Volume** at `/data` and set the runtime variables.
+4. Enable **public networking** and deploy.
+
+The image already contains OpenClaw, the wrapper, channel plugins, and the
+selected skills. Startup performs no npm/pip installs, Go builds, or large
+directory copies. Normal configuration delivered through OneClaw/OpenClaw is
+hot-reloaded. Changing Railway Variables itself still creates a new Railway
+deployment; changing Agents, model keys, or channels through the runtime does not.
 
 Checklist:
 - Volume mounted at `/data`
@@ -170,7 +192,7 @@ src/
 ├── skills/                # AI tool definitions for repair assistant
 └── public/                # Static pages: login.html, loading.html
 start.sh                   # Docker entrypoint: fix /data permissions → gosu → node src/index.js
-Dockerfile                 # Single-stage build: installs OpenClaw core + plugins into /opt/openclaw-plugins
+Dockerfile                 # Cloud/full profiles; immutable plugins and common skills under /opt
 railway.toml               # Railway deployment config
 docker-compose.yml         # Local development compose
 ```

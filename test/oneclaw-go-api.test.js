@@ -1547,7 +1547,7 @@ test("failed cron deletion is acknowledged as retryable instead of false success
   );
 });
 
-test("command polling applies regular channel config updates", async () => {
+test("command polling hot-reloads regular channel config updates without restarting", async () => {
   const workspaceDir = makeWorkspace();
   const stateDir = makeWorkspace();
   let restartCalls = 0;
@@ -1603,7 +1603,7 @@ test("command polling applies regular channel config updates", async () => {
   assert.equal(account.dmPolicy, "allowlist");
   assert.deepEqual(account.allowFrom, ["tg-owner"]);
   assert.deepEqual(cfg.bindings, [{ agentId: "oneclaw-emp-1", match: { channel: "telegram", accountId: "oneclaw-emp-1" } }]);
-  assert.equal(restartCalls, 1);
+  assert.equal(restartCalls, 0);
 });
 
 function writePairingSdkStub(source) {
@@ -2115,9 +2115,6 @@ test("wechat bind command enables openclaw-weixin config before starting login",
         qrExpiresAt: "2026-07-09T11:20:00.000Z",
       });
     }
-    if (url === "http://gateway.local/repair/restart") {
-      return jsonResponse({ ok: true, pending: true });
-    }
     if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
       channelStates.push(JSON.parse(opts.body).data);
       return jsonResponse({ ok: true });
@@ -2619,7 +2616,7 @@ test("wechat bind command reports plugin login failures instead of keeping stale
   );
 });
 
-test("unbind channel command removes runtime binding and restarts gateway", async () => {
+test("unbind channel command removes runtime binding without restarting gateway", async () => {
   const workspaceDir = makeWorkspace();
   let unbindCalls = 0;
   let restartCalls = 0;
@@ -2678,5 +2675,5 @@ test("unbind channel command removes runtime binding and restarts gateway", asyn
   }
 
   assert.equal(unbindCalls, 1);
-  assert.equal(restartCalls, 1);
+  assert.equal(restartCalls, 0);
 });

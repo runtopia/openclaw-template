@@ -11,6 +11,10 @@
 # Railway healthcheck 打 /health，wrapper 存活即 200，不依赖 gateway。
 set -e
 
+# Keep one timestamp across the root-owned volume preparation and Node startup
+# so logs can distinguish volume work from Gateway initialization.
+export ONECLAW_CONTAINER_START_MS="${ONECLAW_CONTAINER_START_MS:-$(date +%s%3N)}"
+
 # 必须 export：index.js 读 process.env.OPENCLAW_STATE_DIR，未导出则回退到
 # os.homedir()/.openclaw（容器临时层，非 /data volume），重新部署即丢数据。
 export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
@@ -24,10 +28,16 @@ if [ -z "$CLAWROUTERS_API_KEY" ] && [ -n "$CLAWROUTERS_KEY" ]; then
 fi
 
 if [ "$(id -u)" = "0" ]; then
-  # Railway volume 挂载后是 root:root，修复权限后降权
-  chown -R openclaw:openclaw /data
-  mkdir -p "$STATE_DIR" "$WORKSPACE_DIR"
-  chown -R openclaw:openclaw "$STATE_DIR" "$WORKSPACE_DIR"
+  # Railway mounts a new volume as root:root. Recursively chown it only once:
+  # doing `chown -R /data` on every restart makes startup O(volume size).
+  mkdir -p /data "$STATE_DIR" "$WORKSPACE_DIR"
+  chown openclaw:openclaw /data "$STATE_DIR" "$WORKSPACE_DIR"
+  OWNERSHIP_MARKER="$STATE_DIR/.oneclaw-ownership-v1"
+  if [ ! -f "$OWNERSHIP_MARKER" ]; then
+    chown -R openclaw:openclaw "$STATE_DIR" "$WORKSPACE_DIR"
+    install -o openclaw -g openclaw -m 0644 /dev/null "$OWNERSHIP_MARKER"
+    echo "[boot] one-time volume ownership migration completed in $(( $(date +%s%3N) - ONECLAW_CONTAINER_START_MS ))ms"
+  fi
   exec gosu openclaw node /app/src/index.js
 fi
 

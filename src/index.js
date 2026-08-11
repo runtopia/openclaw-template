@@ -54,6 +54,11 @@ const STATE_DIR = process.env.OPENCLAW_STATE_DIR?.trim() || path.join(os.homedir
 const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE_DIR?.trim() || path.join(STATE_DIR, "workspace");
 const MAIN_WORKSPACE_DIR = agentWorkspace(WORKSPACE_DIR, "main");
 const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
+const CONTAINER_STARTED_AT = Number(process.env.ONECLAW_CONTAINER_START_MS) || Date.now();
+
+function bootElapsedMs() {
+  return Math.max(0, Date.now() - CONTAINER_STARTED_AT);
+}
 
 const OPENCLAW_ENTRY = process.env.OPENCLAW_ENTRY?.trim() || "/usr/local/lib/node_modules/openclaw/dist/entry.js";
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
@@ -164,6 +169,7 @@ function runCmd(cmd, args, opts = {}) {
 // ── 写配置（幂等）────────────────────────────────────────────────────────────
 
 function ensureConfig() {
+  const startedAt = Date.now();
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
   fs.mkdirSync(MAIN_WORKSPACE_DIR, { recursive: true });
@@ -181,6 +187,7 @@ function ensureConfig() {
 
   if (!hasApiKeys()) {
     console.log("[sidecar] no API keys — skipping config generation");
+    console.log(`[boot] config skipped in ${Date.now() - startedAt}ms (total ${bootElapsedMs()}ms)`);
     return;
   }
 
@@ -212,6 +219,7 @@ function ensureConfig() {
       }
     });
     reconcileAllChannels({ env: process.env, stateDir: STATE_DIR });
+    console.log(`[boot] config reconciliation completed in ${Date.now() - startedAt}ms (total ${bootElapsedMs()}ms)`);
     return;
   }
 
@@ -230,6 +238,7 @@ function ensureConfig() {
     }
   });
   console.log("[sidecar] openclaw.json ready");
+  console.log(`[boot] initial config generated in ${Date.now() - startedAt}ms (total ${bootElapsedMs()}ms)`);
 }
 
 // ── 初始化 workspace 文件（SOUL.md、AGENTS.md、IDENTITY.md 等）─────────────
@@ -404,6 +413,7 @@ app.use((req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`[sidecar] listening on port ${PORT}`);
+  console.log(`[boot] wrapper listening after ${bootElapsedMs()}ms`);
   console.log(`[sidecar] repair API: http://localhost:${PORT}/repair`);
   console.log(`[sidecar] oneclaw heartbeat: ${ONECLAW_INSTANCE_ID ? "enabled" : "disabled"}`);
 
@@ -416,7 +426,7 @@ const server = app.listen(PORT, () => {
     gateway.ensureGatewayRunning()
       .then(async () => {
         gatewayRpc.start();
-        console.log("[sidecar] gateway ready");
+        console.log(`[sidecar] gateway ready after ${bootElapsedMs()}ms`);
         await oneclaw.sendHeartbeat();
         await ensureWorkspaceFiles();
         const runtimeProfile = await oneclaw.fetchPersonality();

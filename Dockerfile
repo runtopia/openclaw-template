@@ -1,8 +1,11 @@
 ARG OP_VERSION=2.35.0
+ARG ONECLAW_RUNTIME_PROFILE=cloud
+ARG ONECLAW_DOCUMENT_SKILLS=0
 
 FROM golang:1.26.5-bookworm AS builtin-skill-go-tools
 
 ARG GO_PROXY=https://goproxy.cn,direct
+ARG ONECLAW_RUNTIME_PROFILE
 
 # Go-based dependencies declared by OpenClaw's bundled skills. Keep these in a
 # builder stage so the runtime image only receives the resulting executables.
@@ -24,14 +27,18 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
       attempt=$((attempt + 1)); \
     done; \
   }; \
-  install_go_tool github.com/Hyaxia/blogwatcher/cmd/blogwatcher@v0.0.3; \
-  install_go_tool github.com/steipete/blucli/cmd/blu@v0.1.5; \
-  install_go_tool github.com/steipete/eightctl/cmd/eightctl@v0.0.0-20260713021800-e05b8da853b9; \
-  install_go_tool github.com/steipete/gifgrep/cmd/gifgrep@v0.3.0; \
-  install_go_tool github.com/steipete/ordercli/cmd/ordercli@v0.1.0; \
-  install_go_tool github.com/steipete/sonoscli/cmd/sonos@v0.3.3; \
-  install_go_tool github.com/steipete/gogcli/cmd/gog@v0.9.0; \
-  install_go_tool github.com/openclaw/wacli/cmd/wacli@v0.12.0
+  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+    install_go_tool github.com/Hyaxia/blogwatcher/cmd/blogwatcher@v0.0.3; \
+    install_go_tool github.com/steipete/blucli/cmd/blu@v0.1.5; \
+    install_go_tool github.com/steipete/eightctl/cmd/eightctl@v0.0.0-20260713021800-e05b8da853b9; \
+    install_go_tool github.com/steipete/gifgrep/cmd/gifgrep@v0.3.0; \
+    install_go_tool github.com/steipete/ordercli/cmd/ordercli@v0.1.0; \
+    install_go_tool github.com/steipete/sonoscli/cmd/sonos@v0.3.3; \
+    install_go_tool github.com/steipete/gogcli/cmd/gog@v0.9.0; \
+    install_go_tool github.com/openclaw/wacli/cmd/wacli@v0.12.0; \
+  else \
+    echo "Skipping extended Go skill tools for ${ONECLAW_RUNTIME_PROFILE} profile"; \
+  fi
 
 # Reuse the runtime base, which already includes curl, tar, and CA certificates.
 # This avoids a second apt update/install during every cold build.
@@ -39,23 +46,42 @@ FROM node:24.15.0-bookworm AS builtin-skill-himalaya
 
 ARG TARGETARCH
 ARG HIMALAYA_VERSION=1.2.0
-RUN case "${TARGETARCH}" in \
-       amd64) archive_arch=x86_64; archive_sha=e04e6382e3e664ef34b01afa1a2216113194a2975d2859727647b22d9b36d4e4 ;; \
-       arm64) archive_arch=aarch64; archive_sha=643020b220991fac67726f3be11310fcf806e757feadbbab3efbddd713597872 ;; \
-       *) echo "unsupported Himalaya target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-     esac \
-  && curl -fsSL -o /tmp/himalaya.tgz \
-       "https://github.com/pimalaya/himalaya/releases/download/v${HIMALAYA_VERSION}/himalaya.${archive_arch}-linux.tgz" \
-  && echo "${archive_sha}  /tmp/himalaya.tgz" | sha256sum -c - \
-  && mkdir -p /out \
-  && tar -xzf /tmp/himalaya.tgz -C /out himalaya
+ARG ONECLAW_RUNTIME_PROFILE
+RUN set -eu; \
+  mkdir -p /out; \
+  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+    case "${TARGETARCH}" in \
+      amd64) archive_arch=x86_64; archive_sha=e04e6382e3e664ef34b01afa1a2216113194a2975d2859727647b22d9b36d4e4 ;; \
+      arm64) archive_arch=aarch64; archive_sha=643020b220991fac67726f3be11310fcf806e757feadbbab3efbddd713597872 ;; \
+      *) echo "unsupported Himalaya target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/himalaya.tgz \
+      "https://github.com/pimalaya/himalaya/releases/download/v${HIMALAYA_VERSION}/himalaya.${archive_arch}-linux.tgz"; \
+    echo "${archive_sha}  /tmp/himalaya.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/himalaya.tgz -C /out himalaya; \
+  else \
+    echo "Skipping Himalaya for ${ONECLAW_RUNTIME_PROFILE} profile"; \
+  fi
 
-FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword
+FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword-source
+FROM node:24.15.0-bookworm AS builtin-skill-onepassword
+ARG ONECLAW_RUNTIME_PROFILE
+COPY --from=builtin-skill-onepassword-source /usr/local/bin/op /tmp/op
+RUN mkdir -p /out \
+  && if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+       cp /tmp/op /out/op; \
+     else \
+       echo "Skipping 1Password CLI for ${ONECLAW_RUNTIME_PROFILE} profile"; \
+     fi
 
 # OpenClaw 2026.7.1 requires a Node build with a WAL-reset-safe embedded
 # SQLite. Keep the Runtime image on the same version used by Channel CI.
 FROM node:24.15.0-bookworm
 
+ARG ONECLAW_RUNTIME_PROFILE
+ENV ONECLAW_RUNTIME_PROFILE=${ONECLAW_RUNTIME_PROFILE}
+ARG ONECLAW_DOCUMENT_SKILLS
+ENV ONECLAW_DOCUMENT_SKILLS=${ONECLAW_DOCUMENT_SKILLS}
 ARG DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
 ARG DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
 ARG NPM_REGISTRY=https://registry.npmmirror.com
@@ -70,41 +96,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     /etc/apt/sources.list.d/debian.sources \
   && rm -f /etc/apt/apt.conf.d/docker-clean \
   && apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    ffmpeg \
-    gh \
-    git \
-    gosu \
-    jq \
-    procps \
-    poppler-utils \
-    python3 \
-    python3-venv \
-    ripgrep \
-    tesseract-ocr \
-    tmux \
-    unzip \
-    build-essential \
-    # Browser dependencies for Chrome/Chromium web browsing capability
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libdrm2 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libxss1 \
-    libasound2 \
-    libgtk-3-0 \
-    libxshmfence1 \
-    libgconf-2-4 \
-    libxtst6 \
-    libatspi2.0-0 \
-    libxkbcommon0 \
-    fonts-liberation
+  && runtime_packages="ca-certificates curl ffmpeg gh git gosu jq procps python3 ripgrep tmux unzip" \
+  && if [ "${ONECLAW_DOCUMENT_SKILLS}" = "1" ] || [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+       runtime_packages="${runtime_packages} poppler-utils qpdf python3-venv tesseract-ocr"; \
+     fi \
+  && if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+       runtime_packages="${runtime_packages} build-essential libnss3 libnspr4 libatk1.0-0 libdrm2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libxss1 libasound2 libgtk-3-0 libxshmfence1 libgconf-2-4 libxtst6 libatspi2.0-0 libxkbcommon0 fonts-liberation"; \
+     fi \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${runtime_packages}
 
 # Pin OpenClaw core to the same runtime shipped by OneClaw Desktop. The
 # sidecar's runtime patches and first-party plugins are validated against this
@@ -121,12 +120,17 @@ ARG SUMMARIZE_VERSION=0.11.1
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install -g --prefer-offline --no-audit --no-fund \
       openclaw@${OPENCLAW_VERSION} \
-      clawhub@${CLAWHUB_VERSION} \
-      @openai/codex@${CODEX_VERSION} \
-      @google/gemini-cli@${GEMINI_CLI_VERSION} \
       mcporter@${MCPORTER_VERSION} \
-      @steipete/oracle@${ORACLE_VERSION} \
-      @steipete/summarize@${SUMMARIZE_VERSION}
+      @steipete/summarize@${SUMMARIZE_VERSION} \
+  && if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+       npm install -g --prefer-offline --no-audit --no-fund \
+         clawhub@${CLAWHUB_VERSION} \
+         @openai/codex@${CODEX_VERSION} \
+         @google/gemini-cli@${GEMINI_CLI_VERSION} \
+         @steipete/oracle@${ORACLE_VERSION}; \
+     else \
+       echo "Skipping extended agent CLIs for ${ONECLAW_RUNTIME_PROFILE} profile"; \
+     fi
 
 # xurl's npm postinstall downloads its platform binary from GitHub with a
 # single https.get() call and no retry. Keep it in a separate layer so a
@@ -134,31 +138,46 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 # the complete global toolchain.
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   set -eu; \
-  for attempt in 1 2 3; do \
-    if npm install -g --prefer-offline --no-audit --no-fund \
-         @xdevplatform/xurl@${XURL_VERSION}; then \
-      break; \
-    fi; \
-    if [ "${attempt}" -eq 3 ]; then \
-      echo "xurl install failed after ${attempt} attempts" >&2; \
-      exit 1; \
-    fi; \
-    delay=$((attempt * 5)); \
-    echo "xurl install attempt ${attempt} failed; retrying in ${delay}s" >&2; \
-    sleep "${delay}"; \
-  done
+  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+    for attempt in 1 2 3; do \
+      if npm install -g --prefer-offline --no-audit --no-fund \
+           @xdevplatform/xurl@${XURL_VERSION}; then \
+        break; \
+      fi; \
+      if [ "${attempt}" -eq 3 ]; then \
+        echo "xurl install failed after ${attempt} attempts" >&2; \
+        exit 1; \
+      fi; \
+      delay=$((attempt * 5)); \
+      echo "xurl install attempt ${attempt} failed; retrying in ${delay}s" >&2; \
+      sleep "${delay}"; \
+    done; \
+  else \
+    echo "Skipping xurl for ${ONECLAW_RUNTIME_PROFILE} profile"; \
+  fi
 
 COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
-COPY --from=builtin-skill-himalaya /out/himalaya /usr/local/bin/himalaya
-COPY --from=builtin-skill-onepassword /usr/local/bin/op /usr/local/bin/op
+COPY --from=builtin-skill-himalaya /out/ /usr/local/bin/
+COPY --from=builtin-skill-onepassword /out/ /usr/local/bin/
 
 ARG UV_VERSION=0.8.14
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-  python3 -m venv /opt/oneclaw-python \
-  && /opt/oneclaw-python/bin/pip install --index-url "${PIP_INDEX_URL}" \
-       nano-pdf==0.2.1 \
-       uv==${UV_VERSION}
+  set -eu; \
+  if [ "${ONECLAW_DOCUMENT_SKILLS}" = "1" ] || [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+    python3 -m venv /opt/oneclaw-python; \
+    /opt/oneclaw-python/bin/pip install --index-url "${PIP_INDEX_URL}" \
+      openpyxl==3.1.5 \
+      python-pptx==1.0.2 \
+      pypdf==6.15.0 \
+      reportlab==5.0.0 \
+      pdfplumber==0.11.10; \
+  fi; \
+  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+    /opt/oneclaw-python/bin/pip install --index-url "${PIP_INDEX_URL}" \
+      nano-pdf==0.2.1 \
+      uv==${UV_VERSION}; \
+  fi
 ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 
 # Pre-install plugins OUTSIDE the /data volume, into a fixed image path.
@@ -289,6 +308,33 @@ RUN --mount=type=cache,target=/root/.cache/node/corepack,sharing=locked \
     --mount=type=cache,target=/root/.local/share/pnpm/store/v3,sharing=locked \
   corepack enable \
   && pnpm install --frozen-lockfile --prod
+
+# Keep the small document runtime and skill content after the much larger
+# plugin/app dependency layers. Updating a skill must not invalidate the
+# locked channel plugin installation cache.
+COPY resources/preinstalled-skill-runtime /tmp/oneclaw-preinstalled-skill-runtime
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+  set -eu; \
+  if [ "${ONECLAW_DOCUMENT_SKILLS}" = "1" ] || [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
+    cd /tmp/oneclaw-preinstalled-skill-runtime; \
+    npm ci --omit=dev --no-audit --no-fund; \
+  fi; \
+  mv /tmp/oneclaw-preinstalled-skill-runtime /opt/oneclaw-preinstalled-skill-runtime; \
+  chmod -R a+rX /opt/oneclaw-preinstalled-skill-runtime
+ENV NODE_PATH=/opt/oneclaw-preinstalled-skill-runtime/node_modules
+
+# Small, commit-pinned common skills shared with OneClaw Desktop. Definitions
+# stay in immutable /opt and never copy into the Railway volume. The default
+# cloud image enables only lightweight skills; document skills and their
+# heavier runtimes require ONECLAW_DOCUMENT_SKILLS=1 (or the full profile).
+ENV ONECLAW_PREINSTALLED_SKILLS_DIR=/opt/oneclaw-skills
+COPY resources/preinstalled-skills ${ONECLAW_PREINSTALLED_SKILLS_DIR}
+RUN test -f ${ONECLAW_PREINSTALLED_SKILLS_DIR}/.preinstalled-manifest.json \
+  && test -f ${ONECLAW_PREINSTALLED_SKILLS_DIR}/.preinstalled-lock.json \
+  && for skill in pdf xlsx docx pptx find-skills self-improving-agent; do \
+       test -f "${ONECLAW_PREINSTALLED_SKILLS_DIR}/${skill}/SKILL.md"; \
+     done \
+  && chmod -R a+rX ${ONECLAW_PREINSTALLED_SKILLS_DIR}
 
 # Cache buster - change this to force rebuild
 ARG CACHEBUST=v20260212-chromium

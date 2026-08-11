@@ -1518,10 +1518,9 @@ export function createOneclawIntegration({
     const agentId = runtimeAgentId(payload, employeeId);
     const accountId = String(payload?.account_id || payload?.accountId || agentId).trim();
     setChannelAccountConfig(runtimeChannel, accountId, agentId, incoming, { stateDir: stateDir || path.dirname(workspaceDir) });
-    if (typeof restartGateway === "function") {
-      const result = await restartGateway({ waitReady: false });
-      if (!result?.coalesced) gatewayRpc?.restart?.();
-    }
+    // OpenClaw watches openclaw.json and applies channel/account changes in
+    // process. Restarting here turns a millisecond config update into a full
+    // Railway-visible outage and can interrupt active conversations.
   }
 
   function bindingKey(channel, employeeId) {
@@ -1547,7 +1546,6 @@ export function createOneclawIntegration({
     await stopRuntimeQrLogin(channel);
     if (action === "unbind_channel") {
       await unbindRuntimeChannel(payload, channel, employeeId);
-      await restartRuntimeAfterChannelChange();
     }
     await reportChannelState({
       employee_id: employeeId,
@@ -1578,10 +1576,7 @@ export function createOneclawIntegration({
       cancelChannelBindingSession(previous);
     }
 
-    const runtimeRestartRequired = ensureQrChannelRuntimeConfig(channel, payload);
-    if (runtimeRestartRequired) {
-      await restartRuntimeAfterChannelChange();
-    }
+    ensureQrChannelRuntimeConfig(channel, payload);
 
     // 本次扫码绑定是用户发起的一次性会话；expires_at 是总截止时间，
     // 到期后必须停止刷新二维码，避免用户离开页面后实例继续刷日志。
@@ -1606,7 +1601,7 @@ export function createOneclawIntegration({
   function ensureQrChannelRuntimeConfig(channel, payload) {
     const runtimeChannel = channel === "wechat" ? "openclaw-weixin" : channel;
     const manifestEntry = CHANNEL_MANIFEST.find((entry) => entry.id === runtimeChannel);
-    if (!manifestEntry?.reconcileShape) return false;
+    if (!manifestEntry?.reconcileShape) return;
     const configState = payload?.state?.config || payload?.config || {};
     const access = configState?.access;
     const runtimePolicy = access ? buildRuntimeChannelAccessPolicy(access) : {};
@@ -1616,23 +1611,9 @@ export function createOneclawIntegration({
     };
     // 正常部署由 Go 后端通过 WECHAT_ENABLED/WHATSAPP_ENABLED 启用；这里作为老容器或异常配置的兜底。
     // 若绑定时 channel/plugin 缺失，OpenClaw CLI 会停在交互式“Install plugin?”提示，导致拿不到二维码。
-    const configPath = stateDir ? path.join(stateDir, "openclaw.json") : "";
-    let runtimeRestartRequired = false;
-    if (configPath && fs.existsSync(configPath)) {
-      try {
-        const current = JSON.parse(fs.readFileSync(configPath, "utf8"));
-        const channelEnabled = current?.channels?.[runtimeChannel]?.enabled === true;
-        const pluginEnabled = !manifestEntry.pluginId || current?.plugins?.entries?.[manifestEntry.pluginId]?.enabled === true;
-        runtimeRestartRequired = !channelEnabled || !pluginEnabled;
-      } catch (err) {
-        console.warn(`[channel-bind] failed to inspect ${runtimeChannel} config: ${err.message}`);
-        runtimeRestartRequired = true;
-      }
-    }
     setChannelConfig(runtimeChannel, shape, {
       stateDir: stateDir || path.dirname(workspaceDir),
     });
-    return runtimeRestartRequired;
   }
 
   async function runChannelBindingTick(session) {
@@ -1668,10 +1649,6 @@ export function createOneclawIntegration({
         activeChannelBindings.delete(session.key);
         session.runtimeAccountId = String(data.connectedAccountId || data.accountId || "").trim();
         await bindRuntimeChannel(session);
-        // WeChat plugin login persists the account and bumps channelConfigUpdatedAt,
-        // which makes OpenClaw reload itself. Forcing a second wrapper restart here
-        // races that in-process reload and can interrupt the freshly connected gateway.
-        if (session.channel !== "wechat") await restartRuntimeAfterChannelChange();
         await reportBindingState(session, {
           status: "ready",
           config: data.connectedAccountId ? { account_id: data.connectedAccountId } : undefined,
@@ -1775,19 +1752,6 @@ export function createOneclawIntegration({
     } catch (err) {
       console.warn(`[channel-bind] failed to unbind runtime channel ${runtimeChannel}: ${err.message}`);
       throw err;
-    }
-  }
-
-  async function restartRuntimeAfterChannelChange() {
-    try {
-      if (typeof restartGateway === "function") {
-        const result = await restartGateway({ waitReady: false });
-        if (!result?.coalesced) gatewayRpc?.restart?.();
-        return;
-      }
-      await repairFetch("restart", "POST");
-    } catch (err) {
-      console.warn(`[channel-bind] failed to restart gateway after channel change: ${err.message}`);
     }
   }
 

@@ -14,13 +14,27 @@
 // once — fewer hot-reload events for the gateway.
 
 import fs from "node:fs";
+import path from "node:path";
+
+function writeConfigIfChanged(configPath, previous, next) {
+  if (previous === next) return false;
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const temporary = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    const mode = fs.existsSync(configPath) ? fs.statSync(configPath).mode : 0o600;
+    fs.writeFileSync(temporary, next, { encoding: "utf8", mode });
+    fs.renameSync(temporary, configPath);
+  } finally {
+    try { fs.rmSync(temporary, { force: true }); } catch {}
+  }
+  return true;
+}
 
 export function patchConfig(configPath, patcher) {
-  const config = fs.existsSync(configPath)
-    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
-    : {};
+  const previous = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf8") : null;
+  const config = previous ? JSON.parse(previous) : {};
   patcher(config);
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  writeConfigIfChanged(configPath, previous, JSON.stringify(config, null, 2));
   return config;
 }
 

@@ -54,6 +54,15 @@ function normalizeEmployeeLanguage(language) {
   return String(language || "").trim().toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 }
 
+// nano-pdf is a narrow visual slide editor that requires a paid Gemini image
+// key. The cloud documents profile ships the broader local PDF workflow. Keep
+// existing platform assignments working without carrying the redundant paid
+// runtime or leaving employees in a degraded state.
+function canonicalRuntimeSkillSlug(value) {
+  const slug = String(value || "").trim();
+  return slug === "nano-pdf" ? "pdf" : slug;
+}
+
 function employeeLanguagePolicy(language) {
   if (normalizeEmployeeLanguage(language) === "zh-CN") {
     return "## 回复语言\n默认使用简体中文回复用户，除非用户明确要求使用其他语言。工具参数、代码、文件名和专有名词保持原样。";
@@ -766,7 +775,7 @@ export function createOneclawIntegration({
 
   function normalizedSkillSlugs(values) {
     return [...new Set((Array.isArray(values) ? values : [])
-      .map((value) => String(value || "").trim())
+      .map(canonicalRuntimeSkillSlug)
       .filter(Boolean))].sort();
   }
 
@@ -967,7 +976,8 @@ export function createOneclawIntegration({
     const requestedSkills = normalizeTemplateSkillRequirements(payload);
     const skillCredentials = payload.skill_credentials || payload.skillCredentials || {};
     for (const requirement of requestedSkills) {
-      const slug = String(requirement?.slug || requirement?.skill_slug || requirement || "").trim();
+      const requestedSlug = String(requirement?.slug || requirement?.skill_slug || requirement || "").trim();
+      const slug = canonicalRuntimeSkillSlug(requestedSlug);
       if (!slug) continue;
       if (requirement?.install_policy === "manual") {
         result.components.skills.push({ slug, status: "manual" });
@@ -975,7 +985,7 @@ export function createOneclawIntegration({
       }
       try {
         const spec = await resolveRuntimeSkillSpec(requirement);
-        await installSkillForAgent(spec, agentId, skillCredentials[slug]);
+        await installSkillForAgent(spec, agentId, skillCredentials[slug] || skillCredentials[requestedSlug]);
         result.components.skills.push({
           slug,
           status: "active",
@@ -1117,13 +1127,14 @@ export function createOneclawIntegration({
   }
 
   async function installEmployeeSkill(payload) {
-    const slug = String(payload.skill_slug || payload.skillSlug || payload.slug || "").trim();
+    const requestedSlug = String(payload.skill_slug || payload.skillSlug || payload.slug || "").trim();
+    const slug = canonicalRuntimeSkillSlug(requestedSlug);
     if (!slug) return;
     const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     try {
       const agentId = requiredEmployeeAgentId(payload);
       const spec = await resolveRuntimeSkillSpec({
-        slug,
+        slug: requestedSlug,
         source: payload.source,
         version: payload.version,
         force: payload.force,
@@ -1160,8 +1171,13 @@ export function createOneclawIntegration({
 
   async function resolveRuntimeSkillSpec(value) {
     const inline = typeof value === "string" ? { slug: value } : (value || {});
-    const slug = String(inline.slug || inline.skill_slug || "").trim();
+    const requestedSlug = String(inline.slug || inline.skill_slug || "").trim();
+    const slug = canonicalRuntimeSkillSlug(requestedSlug);
     if (!slug) throw new Error("skill slug is required");
+    if (requestedSlug === "nano-pdf") {
+      console.log("[command] mapped legacy skill nano-pdf -> pdf");
+      return { ...inline, slug, source: "builtin", runtime_alias_from: requestedSlug };
+    }
     const res = await apiFetch(`/runtime/skills/${encodeURIComponent(slug)}`, { method: "GET" });
     const spec = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(spec.error || `skill ${slug} resolution failed: ${res.status}`);
@@ -1316,7 +1332,7 @@ export function createOneclawIntegration({
   }
 
   async function removeEmployeeSkill(payload) {
-    const slug = String(payload.skill_slug || payload.skillSlug || payload.slug || "").trim();
+    const slug = canonicalRuntimeSkillSlug(payload.skill_slug || payload.skillSlug || payload.slug);
     if (!slug) return;
     const employeeId = String(payload.employee_id || payload.employeeId || "").trim();
     const agentId = requiredEmployeeAgentId(payload);

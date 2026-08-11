@@ -685,6 +685,80 @@ test("employee template resolves builtin skills without sending them to ClawHub"
   assert.equal(configured.model, "clawrouters/auto");
 });
 
+test("legacy nano-pdf assignments use the broad bundled pdf skill", async () => {
+  const workspaceDir = makeWorkspace();
+  fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({
+    agents: { list: [{ id: "main", name: "Main", skills: [] }] },
+  }));
+  let acknowledgement;
+  let skillEvent;
+  let configuredSkills;
+  const gatewayRpc = {
+    waitUntilConnected: async () => {},
+    rpcGateway: async (method) => {
+      if (method === "agents.list") return { ok: true, payload: { agents: [{ id: "main" }] } };
+      if (method === "skills.status") return { ok: true, payload: { skills: [{ name: "pdf" }] } };
+      return { ok: true, payload: { ok: true } };
+    },
+  };
+  const restoreFetch = withFetch((url, opts = {}) => {
+    if (url.includes("/runtime/commands?")) {
+      return jsonResponse({ commands: [{
+        id: "cmd-nano-pdf-alias",
+        status: "leased",
+        type: "apply_template",
+        payload: {
+          employee_id: "employee-main",
+          openclaw_agent_id: "main",
+          assigned_skill_slugs: ["nano-pdf"],
+          skill_requirements: [{ slug: "nano-pdf", source: "builtin", required: false }],
+        },
+      }] });
+    }
+    if (url.includes("/runtime/skills/")) throw new Error(`legacy alias should not resolve remotely: ${url}`);
+    if (url.includes("/runtime/commands/cmd-nano-pdf-alias/ack")) {
+      acknowledgement = JSON.parse(opts.body);
+      return jsonResponse({ acknowledged: true });
+    }
+    if (url.includes("/runtime/events")) {
+      const event = JSON.parse(opts.body);
+      if (event.event === "skill_status") skillEvent = event.data;
+      return jsonResponse({ accepted: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir: workspaceDir,
+      workspaceDir,
+      gatewayRpc,
+      runCmd: async () => ({ code: 0, output: "" }),
+      clawArgs: (args) => args,
+      OPENCLAW_NODE: "node",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.pollCommands();
+    configuredSkills = JSON.parse(fs.readFileSync(path.join(workspaceDir, "openclaw.json"), "utf8"))
+      .agents.list[0].skills;
+  } finally {
+    restoreFetch();
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+
+  assert.equal(acknowledgement.status, "succeeded");
+  assert.deepEqual(skillEvent, {
+    employee_id: "employee-main",
+    slug: "pdf",
+    status: "active",
+  });
+  assert.deepEqual(configuredSkills, ["pdf"]);
+});
+
 test("builtin skill install fails when runtime status does not confirm the skill", async () => {
   const workspaceDir = makeWorkspace();
   fs.writeFileSync(path.join(workspaceDir, "openclaw.json"), JSON.stringify({ agents: { list: [{ id: "oneclaw-emp-missing", skills: [] }] } }));

@@ -107,11 +107,13 @@ test("Dockerfile includes complete Linux template skill dependencies", () => {
   assert.ok(dockerfile.includes("FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword-source"));
   assert.ok(dockerfile.includes("COPY --from=builtin-skill-onepassword /out/ /usr/local/bin/"));
   assert.ok(dockerfile.includes("nano-pdf==0.2.1"));
-  const documentPythonBlock = dockerfile.match(
-    /if \[ "\$\{ONECLAW_DOCUMENT_SKILLS\}" = "1" \] \|\| \[ "\$\{ONECLAW_RUNTIME_PROFILE\}" = "full" \]; then \\\n+    python3 -m venv[\s\S]*?\n  fi;/,
-  )?.[0];
-  assert.ok(documentPythonBlock, "document Python runtime block should exist");
-  assert.ok(documentPythonBlock.includes("nano-pdf==0.2.1"), "documents image should install nano-pdf");
+  const documentPythonStart = dockerfile.indexOf("    python3 -m venv /opt/oneclaw-python;");
+  const documentPythonEnd = dockerfile.indexOf("  fi;", documentPythonStart);
+  const documentPythonBlock = dockerfile.slice(documentPythonStart, documentPythonEnd);
+  assert.doesNotMatch(documentPythonBlock, /nano-pdf/, "documents should use the broad pdf skill only");
+  const fullPythonStart = dockerfile.indexOf('  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then', documentPythonEnd);
+  const fullPythonEnd = dockerfile.indexOf("  fi", fullPythonStart);
+  assert.match(dockerfile.slice(fullPythonStart, fullPythonEnd), /nano-pdf==0\.2\.1/);
   assert.ok(dockerfile.includes("ARG UV_VERSION=0.8.14"));
   assert.ok(dockerfile.includes("uv==${UV_VERSION}"));
   for (const pythonPackage of [

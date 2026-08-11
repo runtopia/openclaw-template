@@ -21,10 +21,13 @@ test("startup preloads personality before Gateway and defers pollers until recon
   assert.ok(reconcileProfile < startPollers);
   assert.doesNotMatch(source, /openclaw setup|running openclaw setup/);
   assert.ok(source.includes('OPENCLAW_GATEWAY_STARTUP_TRACE: process.env.OPENCLAW_GATEWAY_STARTUP_TRACE || "1"'));
+  assert.ok(source.includes("ONECLAW_FAST_GATEWAY_ENTRY"));
 });
 
 test("container liveness reports promptly while Gateway warms up", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   assert.ok(dockerfile.includes("HEALTHCHECK --interval=5s --timeout=2s --start-period=2s"));
   assert.ok(dockerfile.includes("curl -fsS http://localhost:${PORT}/health >/dev/null"));
+  assert.ok(dockerfile.includes("RUN node /app/scripts/openclaw-gateway-fast.mjs --check"));
+  assert.ok(dockerfile.includes("ENV ONECLAW_FAST_GATEWAY_ENTRY=/app/scripts/openclaw-gateway-fast.mjs"));
 });

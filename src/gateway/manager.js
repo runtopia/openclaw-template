@@ -5,7 +5,7 @@ import fs from "node:fs";
 
 export const DEFAULT_GATEWAY_START_TIMEOUT_MS = 180_000;
 
-export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured, gatewayEnv = {}, gatewayStartTimeoutMs = DEFAULT_GATEWAY_START_TIMEOUT_MS, gracefulRestartAdoptionMs = 5_000 }) {
+export function createGatewayManager({ OPENCLAW_NODE, clawArgs, gatewayArgs = clawArgs, stateDir, workspaceDir, internalGatewayPort, internalGatewayHost, gatewayToken, isConfigured, gatewayEnv = {}, gatewayStartTimeoutMs = DEFAULT_GATEWAY_START_TIMEOUT_MS, gracefulRestartAdoptionMs = 5_000 }) {
   const GATEWAY_TARGET = `http://${internalGatewayHost}:${internalGatewayPort}`;
 
   const LOG_BUFFER_MAX = 500;
@@ -93,7 +93,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
       "--port", String(internalGatewayPort),
       "--auth", "token", "--token", gatewayToken,
     ];
-    const proc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
+    const proc = childProcess.spawn(OPENCLAW_NODE, gatewayArgs(args), {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
@@ -113,7 +113,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, stateDir, worksp
     proc.stdout.on("data", handleOutput);
     proc.stderr.on("data", handleOutput);
     const safeArgs = args.map((arg, i) => args[i - 1] === "--token" ? "[REDACTED]" : arg);
-    console.log(`[gateway] starting: ${OPENCLAW_NODE} ${clawArgs(safeArgs).join(" ")}`);
+    console.log(`[gateway] starting: ${OPENCLAW_NODE} ${gatewayArgs(safeArgs).join(" ")}`);
 
     proc.on("error", (err) => { console.error(`[gateway] spawn error: ${String(err)}`); if (gatewayProc === proc) gatewayProc = null; });
     proc.on("exit", (code, signal) => {

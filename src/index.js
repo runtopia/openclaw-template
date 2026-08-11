@@ -62,6 +62,7 @@ function bootElapsedMs() {
 
 const OPENCLAW_ENTRY = process.env.OPENCLAW_ENTRY?.trim() || "/usr/local/lib/node_modules/openclaw/dist/entry.js";
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
+const ONECLAW_FAST_GATEWAY_ENTRY = process.env.ONECLAW_FAST_GATEWAY_ENTRY?.trim();
 
 // OneClaw 平台集成参数
 const ONECLAW_API_URL      = process.env.ONECLAW_API_URL?.trim()      || "https://www.oneclaw.net/api/v1";
@@ -134,6 +135,12 @@ const wsRelay = createGatewayWsRelay({ GATEWAY_HOST, GATEWAY_PORT, GATEWAY_TOKEN
 
 function clawArgs(args) {
   return [OPENCLAW_ENTRY, ...args];
+}
+
+function gatewayArgs(args) {
+  return ONECLAW_FAST_GATEWAY_ENTRY
+    ? [ONECLAW_FAST_GATEWAY_ENTRY, ...args]
+    : clawArgs(args);
 }
 
 function isConfigured() {
@@ -249,6 +256,7 @@ migrateAgentWorkspaces({ workspaceRoot: WORKSPACE_DIR, configPath: CONFIG_PATH }
 const gateway = createGatewayManager({
   OPENCLAW_NODE,
   clawArgs,
+  gatewayArgs,
   stateDir: STATE_DIR,
   workspaceDir: MAIN_WORKSPACE_DIR,
   internalGatewayPort: GATEWAY_PORT,

@@ -116,6 +116,7 @@ this avoids a multi-GB Codex harness download during the first cloud boot.
 | `OPENCLAW_GATEWAY_TOKEN` | auto-generated | Gateway bearer token (persisted to `STATE_DIR/gateway.token` if not set) |
 | `INTERNAL_GATEWAY_PORT` | `18789` | Gateway internal port |
 | `OPENCLAW_ENTRY` | `/usr/local/lib/node_modules/openclaw/dist/entry.js` | Path to openclaw `entry.js` |
+| `ONECLAW_FAST_GATEWAY_ENTRY` | image default | Version-validated fast Gateway launcher; set empty to use the standard OpenClaw CLI |
 | `PROXY_TIMEOUT_MS` | `600000` | Reverse proxy timeout |
 | `GATEWAY_CHAT_COMPLETIONS_ENABLED` | off | Enable `POST /v1/chat/completions` (also enables `/v1/models` and `/v1/embeddings`) |
 | `GATEWAY_RESPONSES_ENABLED` | off | Enable `POST /v1/responses` |
@@ -174,7 +175,10 @@ deployment; changing Agents, model keys, or channels through the runtime does no
 Phase-level OpenClaw startup tracing is enabled by default. The wrapper's
 `[boot]` lines plus OpenClaw's `startup trace:` lines separate HTTP wrapper,
 profile preload, internal Gateway phases, Gateway readiness, and platform
-reconciliation timings.
+reconciliation timings. The pinned image validates a dedicated Gateway entry
+at build time and skips OpenClaw's duplicate generic CLI/Doctor bootstrap at
+runtime. If the OpenClaw version or internal export contract changes, the
+launcher automatically falls back to the public CLI.
 
 Checklist:
 - Volume mounted at `/data`

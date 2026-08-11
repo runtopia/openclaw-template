@@ -30,6 +30,38 @@ test("gateway startup allows first-boot plugin preparation to finish", () => {
   assert.equal(DEFAULT_GATEWAY_START_TIMEOUT_MS, 180_000);
 });
 
+test("gateway manager uses the dedicated launch arguments without changing other CLI calls", async (t) => {
+  const originalSpawn = childProcess.spawn;
+  const originalFetch = globalThis.fetch;
+  let spawnedArgs;
+  childProcess.spawn = (_command, args) => {
+    spawnedArgs = args;
+    return new FakeProc(1);
+  };
+  globalThis.fetch = async () => new Response("ok", { status: 200 });
+  t.after(() => {
+    childProcess.spawn = originalSpawn;
+    globalThis.fetch = originalFetch;
+  });
+
+  const gateway = createGatewayManager({
+    OPENCLAW_NODE: "node",
+    clawArgs: (args) => ["entry.js", ...args],
+    gatewayArgs: (args) => ["fast.mjs", ...args],
+    stateDir: "/tmp/openclaw-template-gateway-fast-test",
+    workspaceDir: "/tmp/openclaw-template-gateway-fast-test/workspace",
+    internalGatewayPort: 18789,
+    internalGatewayHost: "127.0.0.1",
+    gatewayToken: "test-token",
+    isConfigured: () => true,
+  });
+  t.after(() => gateway.stopGateway());
+
+  await gateway.ensureGatewayRunning();
+  assert.deepEqual(spawnedArgs.slice(0, 3), ["fast.mjs", "gateway", "run"]);
+  assert.equal(spawnedArgs.includes("entry.js"), false);
+});
+
 test("gateway restart requests are coalesced while a restart is already in flight", async (t) => {
   const originalSpawn = childProcess.spawn;
   const originalFetch = globalThis.fetch;

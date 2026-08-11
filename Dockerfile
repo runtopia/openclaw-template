@@ -299,6 +299,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && chmod -R a+rX ${OPENCLAW_PLUGINS_DIR}
 
 COPY scripts ./scripts
+RUN node /app/scripts/openclaw-gateway-fast.mjs --check
 
 WORKDIR /app
 
@@ -355,6 +356,7 @@ LABEL org.opencontainers.image.version=${IMAGE_VERSION}
 
 ENV PORT=8080
 ENV OPENCLAW_ENTRY=/usr/local/lib/node_modules/openclaw/dist/entry.js
+ENV ONECLAW_FAST_GATEWAY_ENTRY=/app/scripts/openclaw-gateway-fast.mjs
 EXPOSE 8080
 
 # /health is the wrapper liveness endpoint; it remains available while the

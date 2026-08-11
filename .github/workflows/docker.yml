@@ -9,6 +9,15 @@ on:
       - 'LICENSE'
   workflow_dispatch:
     inputs:
+      image_type:
+        description: 'Runtime image type'
+        required: true
+        default: documents
+        type: choice
+        options:
+          - documents
+          - cloud
+          - full
       image_version:
         description: 'Image version override (e.g. 1.2.3). Defaults to git ref.'
         required: false
@@ -27,6 +36,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve runtime image type
+        id: profile
+        env:
+          REQUESTED_IMAGE_TYPE: ${{ inputs.image_type || 'documents' }}
+        run: |
+          case "$REQUESTED_IMAGE_TYPE" in
+            documents)
+              echo "runtime_profile=cloud" >> "$GITHUB_OUTPUT"
+              echo "document_skills=1" >> "$GITHUB_OUTPUT"
+              ;;
+            cloud)
+              echo "runtime_profile=cloud" >> "$GITHUB_OUTPUT"
+              echo "document_skills=0" >> "$GITHUB_OUTPUT"
+              ;;
+            full)
+              echo "runtime_profile=full" >> "$GITHUB_OUTPUT"
+              echo "document_skills=1" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported image type: $REQUESTED_IMAGE_TYPE" >&2
+              exit 1
+              ;;
+          esac
+          echo "image_type=$REQUESTED_IMAGE_TYPE" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -40,10 +74,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # git tag v1.2.3  →  image tags: 1.2.3  (pin-friendly)
-            type=semver,pattern={{version}}
-            # main branch     →  image tag: latest
-            type=raw,value=latest,enable={{is_default_branch}}
+            # documents is the Railway default: main → latest, tags → semver.
+            type=semver,pattern={{version}},enable=${{ steps.profile.outputs.image_type == 'documents' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && steps.profile.outputs.image_type == 'documents' }}
+            type=raw,value=documents,enable=${{ steps.profile.outputs.image_type == 'documents' }}
+            # Optional manual variants never replace the Railway latest tag.
+            type=raw,value=cloud,enable=${{ steps.profile.outputs.image_type == 'cloud' }}
+            type=raw,value=full,enable=${{ steps.profile.outputs.image_type == 'full' }}
 
       - name: Resolve IMAGE_VERSION
         id: ver
@@ -67,5 +104,7 @@ jobs:
           build-args: |
             IMAGE_VERSION=${{ steps.ver.outputs.value }}
             CACHEBUST_PLUGINS=${{ github.sha }}
+            ONECLAW_RUNTIME_PROFILE=${{ steps.profile.outputs.runtime_profile }}
+            ONECLAW_DOCUMENT_SKILLS=${{ steps.profile.outputs.document_skills }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

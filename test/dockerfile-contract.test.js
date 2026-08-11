@@ -56,6 +56,15 @@ test("cloud is the lean default while full retains extended skill tools", () => 
   assert.ok(dockerfile.includes("Skipping xurl"));
 });
 
+test("GitHub CI defaults Railway builds to the documents image type", () => {
+  const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "docker.yml"), "utf8");
+  assert.match(workflow, /default: documents/);
+  assert.ok(workflow.includes("ONECLAW_RUNTIME_PROFILE=${{ steps.profile.outputs.runtime_profile }}"));
+  assert.ok(workflow.includes("ONECLAW_DOCUMENT_SKILLS=${{ steps.profile.outputs.document_skills }}"));
+  assert.ok(workflow.includes("type=raw,value=latest"));
+  assert.ok(workflow.includes("type=raw,value=documents"));
+});
+
 test("Dockerfile bundles the pinned Desktop common skills outside the data volume", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   const skillsRoot = path.join(repoRoot, "resources", "preinstalled-skills");

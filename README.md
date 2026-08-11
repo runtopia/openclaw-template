@@ -127,6 +127,11 @@ this avoids a multi-GB Codex harness download during the first cloud boot.
 
 `ONECLAW_RUNTIME_PROFILE` and `ONECLAW_DOCUMENT_SKILLS` are image build arguments, not Railway runtime variables.
 
+GitHub Actions defaults to the `documents` image type. A push to `main` publishes
+both `latest` and `documents`; a `v*` tag also publishes the semver tag. Manual
+workflow runs can select `documents`, `cloud`, or `full`. The optional variants
+publish only their matching tag and do not replace Railway's `latest` image.
+
 ## Local Docker Run
 
 ```bash

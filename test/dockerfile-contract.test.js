@@ -255,11 +255,12 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   assert.ok(dockerfile.includes("@oneclaw-plugins/runtime-events"));
   assert.ok(dockerfile.includes("@oneclaw-plugins/channel/package.json"));
+  assert.match(dockerfile, /^ENV ONECLAW_INTERNAL_CHANNEL_V2=1$/m);
   assert.ok(dockerfile.includes(
     "patch-oneclaw-channel-delivery.mjs",
   ));
   assert.ok(dockerfile.includes("root !== channel"));
-  assert.ok(dockerfile.includes("['channel', '0.1.20']"));
+  assert.ok(dockerfile.includes("['channel', '0.1.21']"));
   assert.ok(dockerfile.includes("runtimeEventSdkVersion() !== '0.1.2'"));
   assert.ok(dockerfile.includes("['clawrouters', '0.4.1']"));
   assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));

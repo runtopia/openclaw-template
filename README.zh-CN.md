@@ -34,7 +34,7 @@ Wrapper（Express 监听 PORT）
 
 ### 生命周期
 
-1. **启动**：Wrapper 读取环境变量 → 写入 `openclaw.json`（幂等）→ 启动 `openclaw gateway` → 等待网关就绪 → 开始处理流量。
+1. **启动**：Wrapper 读取环境变量并监听端口 → 在 750ms 上限内预取 OneClaw 人格 → 将已有 Agent 的身份、SOUL 和 memory 幂等预写入配置/工作区 → 启动 `openclaw gateway`。Gateway 启动时已带最终人格，不再在 Ready 后执行交互式 setup 或重复文件 RPC。
 2. **运行时**：Agent、模型、Key、渠道和绑定配置由 OpenClaw 热加载，不重启 Gateway；仅显式“重启”操作会重启。网关异常退出时自动恢复（指数退避，最多 5 次）。
 3. **修复**：`/repair/*` 端点供 oneclaw_web 面板（或直接 API 调用）使用，支持 AI 诊断、网关重启，以及 WhatsApp/微信 QR 绑定流程。
 
@@ -166,6 +166,11 @@ docker run --rm -p 8080:8080 \
 `npm install`、`pip install`、Go 编译或大目录复制。平台下发的普通配置变更直接热加载。
 注意：修改 Railway Variables 本身仍会由 Railway 创建新 Deployment；通过 OneClaw/OpenClaw
 运行时接口修改 Agent、模型 Key 或渠道配置则无需重启。
+
+启动日志默认开启 OpenClaw phase-level startup trace。`[boot] wrapper listening`、
+`[boot] preloaded ... employee profile(s)`、`startup trace:`、`[sidecar] gateway ready`
+和 `[boot] runtime profile ready` 可以分别定位 Wrapper、人格预载、OpenClaw 内部阶段、
+Gateway 与平台同步耗时。
 
 部署前检查清单：
 - `/data` 已挂载 Volume

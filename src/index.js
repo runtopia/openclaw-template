@@ -241,22 +241,6 @@ function ensureConfig() {
   console.log(`[boot] initial config generated in ${Date.now() - startedAt}ms (total ${bootElapsedMs()}ms)`);
 }
 
-// ── 初始化 workspace 文件（SOUL.md、AGENTS.md、IDENTITY.md 等）─────────────
-// generateConfigDirect 跳过了 `openclaw onboard`，因此 workspace 引导文件
-// 也不会自动创建。openclaw setup 可以在不运行完整 onboard 的情况下填充缺失的
-// 引导文件（幂等：已有文件不会被覆盖）。
-async function ensureWorkspaceFiles() {
-  if (!isConfigured()) return;
-  const soul = path.join(MAIN_WORKSPACE_DIR, "SOUL.md");
-  const agents = path.join(MAIN_WORKSPACE_DIR, "AGENTS.md");
-  // 只要 SOUL.md 存在就认为 workspace 已初始化，跳过 setup CLI 调用
-  if (fs.existsSync(soul) && fs.existsSync(agents)) return;
-  console.log("[sidecar] running openclaw setup to populate workspace files...");
-  const result = await runCmd(OPENCLAW_NODE, clawArgs(["setup", "--workspace", MAIN_WORKSPACE_DIR]));
-  console.log(`[sidecar] setup exit=${result.code}`);
-  if (result.output) console.log(result.output);
-}
-
 // ── Gateway manager ───────────────────────────────────────────────────────────
 
 ensureConfig();
@@ -271,6 +255,12 @@ const gateway = createGatewayManager({
   internalGatewayHost: GATEWAY_HOST,
   gatewayToken: GATEWAY_TOKEN,
   isConfigured,
+  gatewayEnv: {
+    // OpenClaw 2026.7.1 exposes phase-level startup timings behind this flag.
+    // Keep it enabled by default so image/runtime regressions are diagnosable
+    // from ordinary Railway logs without a special debug deployment.
+    OPENCLAW_GATEWAY_STARTUP_TRACE: process.env.OPENCLAW_GATEWAY_STARTUP_TRACE || "1",
+  },
 });
 
 const gatewayRpc = createGatewayRpc({
@@ -417,24 +407,38 @@ const server = app.listen(PORT, () => {
   console.log(`[sidecar] repair API: http://localhost:${PORT}/repair`);
   console.log(`[sidecar] oneclaw heartbeat: ${ONECLAW_INSTANCE_ID ? "enabled" : "disabled"}`);
 
-  // 先启动心跳（心跳内部会等 gateway ready 才上报 healthy）
-  if (ONECLAW_INSTANCE_ID) {
-    oneclaw.start();
-  }
-
   if (isConfigured()) {
-    gateway.ensureGatewayRunning()
-      .then(async () => {
+    // Fetch the tiny runtime profile before Gateway spawn (bounded so an
+    // unavailable control plane can never block OpenClaw). Existing agents'
+    // config and workspace files are then preloaded locally, allowing the
+    // Gateway to become ready with the final personality already in place.
+    (async () => {
+      let runtimeProfile = await oneclaw.fetchPersonality({ timeoutMs: 750 });
+      await oneclaw.prepareEmployeesForStartup(runtimeProfile.employees);
+      await gateway.ensureGatewayRunning();
+      try {
         gatewayRpc.start();
         console.log(`[sidecar] gateway ready after ${bootElapsedMs()}ms`);
-        await oneclaw.sendHeartbeat();
-        await ensureWorkspaceFiles();
-        const runtimeProfile = await oneclaw.fetchPersonality();
+        if (!runtimeProfile.employees?.length && ONECLAW_INSTANCE_ID) {
+          runtimeProfile = await oneclaw.fetchPersonality({ timeoutMs: 3_000 });
+        }
         await oneclaw.reconcileAllEmployees(runtimeProfile.employees);
-      })
-      .catch((err) => console.error(`[sidecar] gateway failed to start: ${err.message}`));
+        oneclaw.start();
+        await oneclaw.sendHeartbeat();
+        console.log(`[boot] runtime profile ready after ${bootElapsedMs()}ms`);
+      } catch (err) {
+        // Keep platform heartbeat/repair command handling available even when
+        // post-ready profile reconciliation is temporarily degraded.
+        oneclaw.start();
+        throw err;
+      }
+    })().catch((err) => {
+      oneclaw.start();
+      console.error(`[sidecar] gateway startup pipeline failed: ${err.message}`);
+    });
   } else {
     console.log("[sidecar] no config — gateway will not start until configured");
+    if (ONECLAW_INSTANCE_ID) oneclaw.start();
   }
 });
 

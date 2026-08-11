@@ -35,7 +35,7 @@ Wrapper (Express on PORT)
 
 ### Lifecycle
 
-1. **Startup**: wrapper reads env vars → writes `openclaw.json` (idempotent) → spawns `openclaw gateway` → waits for gateway readiness → begins serving traffic.
+1. **Startup**: the wrapper listens immediately, fetches the OneClaw profile with a 750ms upper bound, idempotently preloads existing Agent identity/SOUL/memory into config and workspace, then starts `openclaw gateway`. The Gateway therefore boots with the final personality instead of running an interactive setup or duplicate file RPCs after readiness.
 2. **Runtime**: OpenClaw hot-reloads Agent, model, key, channel, and binding changes without restarting the Gateway. Only explicit restart operations restart it. Unexpected crashes still auto-heal with exponential backoff.
 3. **Repair**: `/repair/*` endpoints let oneclaw_web's panel (or direct API calls) run AI diagnostics, restart the gateway, or trigger QR binding flows for WhatsApp/WeChat.
 
@@ -170,6 +170,11 @@ selected skills. Startup performs no npm/pip installs, Go builds, or large
 directory copies. Normal configuration delivered through OneClaw/OpenClaw is
 hot-reloaded. Changing Railway Variables itself still creates a new Railway
 deployment; changing Agents, model keys, or channels through the runtime does not.
+
+Phase-level OpenClaw startup tracing is enabled by default. The wrapper's
+`[boot]` lines plus OpenClaw's `startup trace:` lines separate HTTP wrapper,
+profile preload, internal Gateway phases, Gateway readiness, and platform
+reconciliation timings.
 
 Checklist:
 - Volume mounted at `/data`

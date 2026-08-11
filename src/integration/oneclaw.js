@@ -194,6 +194,7 @@ export function createOneclawIntegration({
       getCachedEmployees() { return []; },
       fetchPersonality() { return Promise.resolve({ personality: null, template: null }); },
       applyPersonality() { return Promise.resolve(); },
+      prepareEmployeesForStartup() { return Promise.resolve({ prepared: 0 }); },
       reconcileAllEmployees() { return Promise.resolve([]); },
       applyTemplateFromEnv() { return Promise.resolve(false); },
     };
@@ -201,6 +202,7 @@ export function createOneclawIntegration({
 
   let heartbeatInterval = null;
   let commandPollInterval = null;
+  let started = false;
   let cachedPersonality = null;
   let cachedEmployees = [];
   let reportedOpenClawVersion = String(openclawVersion || "unknown");
@@ -314,9 +316,14 @@ export function createOneclawIntegration({
     usageStats.tokens = 0;
   }
 
-  async function fetchPersonality() {
+  async function fetchPersonality({ timeoutMs } = {}) {
     try {
-      const res = await apiFetch("/runtime/personality", { method: "GET" });
+      const res = await apiFetch("/runtime/personality", {
+        method: "GET",
+        ...(Number.isFinite(timeoutMs) && timeoutMs > 0
+          ? { signal: AbortSignal.timeout(timeoutMs) }
+          : {}),
+      });
       if (res.ok) {
         const data = await res.json();
         const defaultModel = String(data?.workspace?.default_model || "");
@@ -545,6 +552,8 @@ export function createOneclawIntegration({
 
   function start(detectedOpenClawVersion) {
     if (detectedOpenClawVersion) reportedOpenClawVersion = String(detectedOpenClawVersion);
+    if (started) return;
+    started = true;
     setTimeout(async () => {
       sendHeartbeat();
       sendEvent("instance_started", {
@@ -562,6 +571,7 @@ export function createOneclawIntegration({
   }
 
   function stop() {
+    started = false;
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
     if (commandPollInterval) { clearInterval(commandPollInterval); commandPollInterval = null; }
     for (const session of activeChannelBindings.values()) cancelChannelBindingSession(session);
@@ -594,6 +604,11 @@ export function createOneclawIntegration({
 
   function atomicWriteFile(filePath, content) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    try {
+      if (fs.readFileSync(filePath, "utf8") === content) return false;
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
     const temporary = `${filePath}.tmp-${process.pid}-${Date.now()}`;
     try {
       fs.writeFileSync(temporary, content, "utf8");
@@ -601,31 +616,124 @@ export function createOneclawIntegration({
     } finally {
       if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
     }
+    return true;
   }
 
   function saveManagedEmployeeState(agentId, state) {
     atomicWriteFile(managedEmployeeStatePath(agentId), `${JSON.stringify(state, null, 2)}\n`);
   }
 
-  async function syncEmployeeIdentity(payload, agentId) {
+  function desiredEmployeeIdentity(payload, agentId) {
     const name = String(payload.bot_name || agentId).trim() || agentId;
     const model = String(payload.model || "").trim();
     const avatar = String(payload.avatar || "").trim();
-    await callGatewayWithReconnectRetry("agents.update", {
-      agentId,
-      name,
-      ...(model ? { model } : {}),
-      ...(avatar ? { avatar } : {}),
-    });
     const safeLine = (value) => String(value || "").replace(/[\r\n]+/g, " ").trim();
-    const identity = [
+    const content = [
       "# IDENTITY.md - Agent Identity",
       "",
       `- Name: ${safeLine(name)}`,
       ...(avatar ? [`- Avatar: ${safeLine(avatar)}`] : []),
       "",
     ].join("\n");
-    await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "IDENTITY.md", content: identity });
+    return { name, model, avatar, content };
+  }
+
+  function configPathForRuntime() {
+    return path.join(stateDir || path.dirname(workspaceDir), "openclaw.json");
+  }
+
+  function configuredAgent(config, agentId) {
+    return config?.agents?.list?.find((agent) =>
+      String(agent?.id || agent?.agentId || "").trim() === agentId);
+  }
+
+  function configuredModelId(value) {
+    if (typeof value === "string") return value.trim();
+    if (value && typeof value === "object") return String(value.primary || value.id || "").trim();
+    return "";
+  }
+
+  function employeeIdentityMatchesConfig(payload, agentId) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPathForRuntime(), "utf8"));
+      const agent = configuredAgent(config, agentId);
+      if (!agent) return false;
+      const desired = desiredEmployeeIdentity(payload, agentId);
+      return String(agent.name || "").trim() === desired.name
+        && String(agent.identity?.name || "").trim() === desired.name
+        && String(agent.identity?.avatar || "").trim() === desired.avatar
+        && (!desired.model || configuredModelId(agent.model) === desired.model);
+    } catch {
+      return false;
+    }
+  }
+
+  function applyEmployeeConfigShape(agent, payload, agentId) {
+    const desired = desiredEmployeeIdentity(payload, agentId);
+    agent.id = agentId;
+    agent.name = desired.name;
+    agent.workspace = agentWorkspace(workspaceDir, agentId);
+    if (desired.model) agent.model = desired.model;
+    if (!agent.identity || typeof agent.identity !== "object" || Array.isArray(agent.identity)) {
+      agent.identity = {};
+    }
+    agent.identity.name = desired.name;
+    if (desired.avatar) agent.identity.avatar = desired.avatar;
+    else delete agent.identity.avatar;
+    // Stage the authoritative allowlist before Gateway startup. Built-in
+    // skill verification can then run immediately instead of waiting for a
+    // post-start config reload to clear blockedByAgentFilter.
+    if (Array.isArray(payload.assigned_skill_slugs)) {
+      agent.skills = normalizedSkillSlugs(payload.assigned_skill_slugs);
+    }
+    return desired;
+  }
+
+  async function prepareEmployeesForStartup(employees = []) {
+    const configPath = configPathForRuntime();
+    if (!fs.existsSync(configPath) || !Array.isArray(employees) || employees.length === 0) {
+      return { prepared: 0 };
+    }
+    const startedAt = Date.now();
+    let prepared = 0;
+    for (const employee of employees) {
+      if (!employee?.id || employee.status === "deleted") continue;
+      const payload = runtimeEmployeeTemplatePayload(employee);
+      const agentId = String(payload.openclaw_agent_id || payload.agent_id || "").trim()
+        || `oneclaw-${employee.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+      let found = false;
+      let desired;
+      patchConfig(configPath, (config) => {
+        const agent = configuredAgent(config, agentId);
+        if (!agent) return;
+        found = true;
+        desired = applyEmployeeConfigShape(agent, payload, agentId);
+      });
+      if (!found) continue;
+      const workspace = agentWorkspace(workspaceDir, agentId);
+      atomicWriteFile(path.join(workspace, "IDENTITY.md"), desired.content);
+      atomicWriteFile(path.join(workspace, "SOUL.md"), employeeSoulContent(payload));
+      await reconcileEmployeeMemory(agentId, payload.memory_files || payload.memoryFiles || []);
+      prepared += 1;
+    }
+    console.log(`[boot] preloaded ${prepared} employee profile(s) in ${Date.now() - startedAt}ms`);
+    return { prepared };
+  }
+
+  async function syncEmployeeIdentity(payload, agentId) {
+    const desired = desiredEmployeeIdentity(payload, agentId);
+    if (!employeeIdentityMatchesConfig(payload, agentId)) {
+      await callGatewayWithReconnectRetry("agents.update", {
+        agentId,
+        name: desired.name,
+        ...(desired.model ? { model: desired.model } : {}),
+        ...(desired.avatar ? { avatar: desired.avatar } : {}),
+      });
+    }
+    // agents.update already persists IDENTITY.md. Keep a direct idempotent
+    // write as the no-RPC fallback and never issue the duplicate files.set
+    // request that used to stall behind startup config reload.
+    atomicWriteFile(path.join(agentWorkspace(workspaceDir, agentId), "IDENTITY.md"), desired.content);
   }
 
   async function reconcileEmployeeMemory(agentId, memoryFiles) {
@@ -840,7 +948,10 @@ export function createOneclawIntegration({
     try {
       // 系统提示词、记忆和计划任务保持模板原文；语言规则单独追加，避免维护多份长文本。
       const content = employeeSoulContent(payload);
-      await callGatewayWithReconnectRetry("agents.files.set", { agentId, name: "SOUL.md", content });
+      // agents.files.set is only a safe filesystem write in OpenClaw. Writing
+      // the known canonical workspace directly avoids startup RPC contention
+      // and is visible to the agent immediately.
+      atomicWriteFile(path.join(agentWorkspace(workspaceDir, agentId), "SOUL.md"), content);
       result.components.soul = { status: "active" };
     } catch (err) {
       const error = boundedComponentError(err);
@@ -1406,7 +1517,7 @@ export function createOneclawIntegration({
 
   return {
     start, stop, sendHeartbeat, pollCommands, sendEvent, trackMessage,
-    fetchPersonality, applyPersonality, reconcileAllEmployees, applyTemplateFromEnv,
+    fetchPersonality, applyPersonality, prepareEmployeesForStartup, reconcileAllEmployees, applyTemplateFromEnv,
     getCachedPersonality: () => cachedPersonality,
     getCachedEmployees: () => cachedEmployees,
   };

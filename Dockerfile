@@ -357,9 +357,10 @@ ENV PORT=8080
 ENV OPENCLAW_ENTRY=/usr/local/lib/node_modules/openclaw/dist/entry.js
 EXPOSE 8080
 
-# /health 是 openclaw gateway 自带的无认证端点
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-  CMD curl -f http://localhost:${PORT}/health || exit 1
+# /health is the wrapper liveness endpoint; it remains available while the
+# internal Gateway is warming up and reports gatewayReady in its JSON body.
+HEALTHCHECK --interval=5s --timeout=2s --start-period=2s \
+  CMD curl -fsS http://localhost:${PORT}/health >/dev/null || exit 1
 
 # CMD runs as root so start.sh can fix /data ownership on Railway volume mounts,
 # then drops to the non-root openclaw user via gosu.

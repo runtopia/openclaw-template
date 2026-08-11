@@ -163,9 +163,14 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
   assert.equal(fs.existsSync(path.join(workspaceDir, "SOUL.md")), false);
   assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.name, "oneclaw-emp-1");
   assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.model, "clawrouters/code");
-  assert.deepEqual(
-    rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
-    ["IDENTITY.md", "SOUL.md"],
+  assert.equal(rpcCalls.some((call) => call.method === "agents.files.set"), false);
+  assert.match(
+    fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-1/IDENTITY.md"), "utf8"),
+    /程序员助理/,
+  );
+  assert.match(
+    fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-1/SOUL.md"), "utf8"),
+    /You are a developer assistant\./,
   );
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-1/memory/dev.md"), "utf8"), "dev notes");
   assert.deepEqual(
@@ -175,7 +180,7 @@ test("employee template command syncs an OpenClaw agent workspace", async () => 
   assert.deepEqual(runCalls[0].args, ["skills", "install", "@openclaw/github", "--agent", "oneclaw-emp-1"]);
 });
 
-test("employee template retries the first file write after agent creation restarts the gateway", async () => {
+test("employee template writes workspace files without a Gateway files RPC", async () => {
   const workspaceDir = makeWorkspace();
   let fileWriteAttempts = 0;
   let connectionWaits = 0;
@@ -186,9 +191,9 @@ test("employee template retries the first file write after agent creation restar
       if (method === "agents.create") return { ok: true, payload: { agentId: "oneclaw-emp-restart" } };
       if (method === "agents.files.set") {
         fileWriteAttempts += 1;
-        if (fileWriteAttempts === 1) throw new Error("gateway WS closed");
         return { ok: true, payload: { ok: true } };
       }
+      if (method === "agents.update") return { ok: true, payload: { ok: true } };
       throw new Error(`unexpected rpc ${method}`);
     },
   };
@@ -223,8 +228,12 @@ test("employee template retries the first file write after agent creation restar
     restoreFetch();
   }
 
-  assert.equal(fileWriteAttempts, 2);
-  assert.equal(connectionWaits, 2);
+  assert.equal(fileWriteAttempts, 0);
+  assert.equal(connectionWaits, 1);
+  assert.match(
+    fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-restart/SOUL.md"), "utf8"),
+    /survive gateway restarts/,
+  );
 });
 
 test("ids-only template command hydrates employee, memory, and cron from the new runtime contract", async () => {
@@ -320,9 +329,12 @@ test("ids-only template command hydrates employee, memory, and cron from the new
     restoreFetch();
   }
 
-  const soulWrite = rpcCalls.find((call) => call.method === "agents.files.set" && call.params.name === "SOUL.md");
-  assert.match(soulWrite.params.content, /审查代码/);
-  assert.match(soulWrite.params.content, /编写测试/);
+  const soul = fs.readFileSync(
+    path.join(workspaceDir, "agents/oneclaw-employee-1/SOUL.md"),
+    "utf8",
+  );
+  assert.match(soul, /审查代码/);
+  assert.match(soul, /编写测试/);
   assert.equal(
     fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-employee-1/memory/developer.md"), "utf8"),
     "开发规范",
@@ -387,16 +399,79 @@ test("runtime contract v2 reconciles every employee and preserves greeting metad
 
   assert.equal(rpcCalls.filter((call) => call.method === "agents.update").length, 2);
   assert.equal(rpcCalls.find((call) => call.method === "agents.update" && call.params.agentId === "employee-2").params.model, "clawrouters/auto");
-  const englishSoul = rpcCalls.find((call) => call.method === "agents.files.set" && call.params.agentId === "employee-2" && call.params.name === "SOUL.md").params.content;
+  const englishSoul = fs.readFileSync(path.join(workspaceDir, "agents/employee-2/SOUL.md"), "utf8");
   assert.match(englishSoul, /## Role\nResearch verified sources\./);
   assert.match(englishSoul, /## 回复语言\n默认使用英语回复用户/);
-  const chineseSoul = rpcCalls.find((call) => call.method === "agents.files.set" && call.params.agentId === "main" && call.params.name === "SOUL.md").params.content;
+  const chineseSoul = fs.readFileSync(path.join(workspaceDir, "agents/main/SOUL.md"), "utf8");
   assert.match(chineseSoul, /## 回复语言\n默认使用简体中文回复用户/);
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/main.md"), "utf8"), "主记忆");
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/employee-2/MEMORY.md"), "utf8"), "research memory");
   const syncEvents = events.filter((event) => event.event === "template_sync");
   assert.deepEqual(syncEvents.map((event) => event.data.revision), [4, 8]);
   assert.deepEqual(syncEvents.map((event) => event.data.status), ["active", "active"]);
+});
+
+test("startup preload makes an existing employee ready without post-start config or file RPCs", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({
+    agents: { list: [{ id: "main", default: true, workspace: path.join(workspaceDir, "agents/main") }] },
+  }));
+  const rpcCalls = [];
+  const restoreFetch = withFetch((url) => {
+    if (url.endsWith("/runtime/events")) return jsonResponse({ accepted: true });
+    if (url.endsWith("/runtime/skills/summarize")) {
+      return jsonResponse({ slug: "summarize", source: "builtin" });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  const employee = {
+    id: "employee-main",
+    openclaw_agent_id: "main",
+    kind: "main",
+    name: "预加载助理",
+    avatar_url: "🚀",
+    model: "clawrouters/auto",
+    system_prompt: "Gateway 启动前准备人格。",
+    personality: { language: "zh-CN" },
+    memory_files: [{ path: "memory/profile.md", content: "preloaded" }],
+    skills: [{ slug: "summarize", source: "builtin" }],
+    cron_tasks: [],
+  };
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      gatewayRpc: {
+        waitUntilConnected: async () => {},
+        rpcGateway: async (method, params) => {
+          rpcCalls.push({ method, params });
+          if (method === "skills.status") {
+            return { ok: true, payload: { skills: [{ name: "summarize", eligible: true, modelVisible: true }] } };
+          }
+          return { ok: true, payload: { ok: true } };
+        },
+      },
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    assert.deepEqual(await integration.prepareEmployeesForStartup([employee]), { prepared: 1 });
+    await integration.reconcileAllEmployees([employee]);
+  } finally {
+    restoreFetch();
+  }
+
+  const config = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
+  assert.deepEqual(config.agents.list[0].identity, { name: "预加载助理", avatar: "🚀" });
+  assert.equal(config.agents.list[0].model, "clawrouters/auto");
+  assert.deepEqual(config.agents.list[0].skills, ["summarize"]);
+  assert.match(fs.readFileSync(path.join(workspaceDir, "agents/main/SOUL.md"), "utf8"), /启动前准备人格/);
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/profile.md"), "utf8"), "preloaded");
+  assert.equal(rpcCalls.some((call) => call.method === "agents.update" || call.method === "agents.files.set"), false);
 });
 
 test("employee reconciliation clears stale managed content but keeps the language policy", async () => {
@@ -434,7 +509,7 @@ test("employee reconciliation clears stale managed content but keeps the languag
     restoreFetch();
   }
   assert.equal(fs.existsSync(path.join(employeeWorkspace, "memory/old.md")), false);
-  const soul = rpcCalls.find((call) => call.method === "agents.files.set" && call.params.name === "SOUL.md").params.content;
+  const soul = fs.readFileSync(path.join(employeeWorkspace, "SOUL.md"), "utf8");
   assert.match(soul, /默认使用英语回复用户/);
   assert.doesNotMatch(soul, /old/);
 });
@@ -539,7 +614,11 @@ test("employee sync preserves content when an optional skill fails", async () =>
   assert.equal(syncResult.revision, 2);
   assert.equal(skillResult.status, "failed");
   assert.equal(skillResult.slug, "missing-skill");
-  assert.match(fileWrites.find((write) => write.name === "SOUL.md").content, /## Role\nReview pull requests/);
+  assert.equal(fileWrites.length, 0);
+  assert.match(
+    fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-degraded/SOUL.md"), "utf8"),
+    /## Role\nReview pull requests/,
+  );
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-degraded/memory/review.md"), "utf8"), "Checklist");
 });
 
@@ -1027,9 +1106,10 @@ test("command polling applies employee template commands without waiting for hea
   }
 
   assert.equal(rpcCalls.find((call) => call.method === "agents.create").params.name, "oneclaw-emp-poll");
-  assert.deepEqual(
-    rpcCalls.filter((call) => call.method === "agents.files.set").map((call) => call.params.name),
-    ["IDENTITY.md", "SOUL.md"],
+  assert.equal(rpcCalls.some((call) => call.method === "agents.files.set"), false);
+  assert.match(
+    fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-poll/SOUL.md"), "utf8"),
+    /Polled employee prompt\./,
   );
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-poll/memory/polled.md"), "utf8"), "poll notes");
 });

@@ -122,8 +122,16 @@ test("Dockerfile includes complete Linux template skill dependencies", () => {
     path.join(repoRoot, "resources", "preinstalled-skill-runtime", "package.json"),
     "utf8",
   ));
+  const skillRuntimeLock = JSON.parse(fs.readFileSync(
+    path.join(repoRoot, "resources", "preinstalled-skill-runtime", "package-lock.json"),
+    "utf8",
+  ));
   assert.equal(skillRuntime.dependencies.docx, "9.7.1");
   assert.equal(skillRuntime.dependencies.pptxgenjs, "4.0.1");
+  assert.equal(skillRuntimeLock.lockfileVersion, 3);
+  assert.equal(skillRuntimeLock.packages["node_modules/docx"].version, "9.7.1");
+  assert.equal(skillRuntimeLock.packages["node_modules/pptxgenjs"].version, "4.0.1");
+  assert.ok(dockerfile.includes("npm ci --omit=dev --no-audit --no-fund"));
   assert.ok(dockerfile.includes("NODE_PATH=/opt/oneclaw-preinstalled-skill-runtime/node_modules"));
   assert.ok(dockerfile.includes("/opt/oneclaw-python/bin"));
 });

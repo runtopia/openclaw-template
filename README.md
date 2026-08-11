@@ -18,7 +18,7 @@ The default Docker build uses the lean `cloud` runtime profile. It keeps the
 Gateway, MCP, summarize, lightweight skills, and all channel plugins. It omits
 the standalone ClawHub CLI, browser libraries, document/OCR runtimes,
 heavyweight local agent CLIs, and niche Go binaries. Build with
-`--build-arg ONECLAW_DOCUMENT_SKILLS=1` for PDF/XLSX/DOCX/PPTX support, or
+`--build-arg ONECLAW_DOCUMENT_SKILLS=1` for PDF (including `nano-pdf`), XLSX, DOCX, and PPTX support, or
 `--build-arg ONECLAW_RUNTIME_PROFILE=full` for the complete toolchain.
 
 ## Architecture

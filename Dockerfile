@@ -171,11 +171,11 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
       python-pptx==1.0.2 \
       pypdf==6.15.0 \
       reportlab==5.0.0 \
-      pdfplumber==0.11.10; \
+      pdfplumber==0.11.10 \
+      nano-pdf==0.2.1; \
   fi; \
   if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
     /opt/oneclaw-python/bin/pip install --index-url "${PIP_INDEX_URL}" \
-      nano-pdf==0.2.1 \
       uv==${UV_VERSION}; \
   fi
 ENV PATH="/opt/oneclaw-python/bin:${PATH}"

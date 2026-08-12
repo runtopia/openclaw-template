@@ -215,6 +215,7 @@ COPY scripts/patch-openclaw-chat-images.js \
      scripts/patch-openclaw-memory-migration.mjs \
      scripts/patch-openclaw-oneclaw-completion-delivery.mjs \
      scripts/patch-oneclaw-channel-delivery.mjs \
+     scripts/verify-openclaw-plugin-bundle.mjs \
      scripts/patch-weixin-http-routes.js \
      scripts/patch-weixin-access-policy.js \
      ./scripts/
@@ -298,7 +299,8 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/openclaw-search/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw/package.json" \
   && node --input-type=module -e "import { createRequire } from 'node:module'; const rootRequire = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelRequire = createRequire('/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-channel/package.json'); for (const dependency of ['@oneclaw-plugins/runtime-events', 'ajv', 'ws']) { const root = rootRequire.resolve(dependency); const channel = channelRequire.resolve(dependency); if (root !== channel) throw new Error('Bundled OneClaw Channel did not resolve shared ' + dependency); } const openclaw = channelRequire.resolve('openclaw'); if (!openclaw.startsWith('/usr/local/lib/node_modules/openclaw/')) throw new Error('Bundled OneClaw Channel did not resolve the global OpenClaw host');" \
-  && node --input-type=module -e "import fs from 'node:fs'; import { createRequire } from 'node:module'; const root = '${OPENCLAW_PLUGINS_DIR}'; const require = createRequire(root + '/package.json'); const expected = JSON.parse(fs.readFileSync(root + '/package.json', 'utf8')).dependencies; for (const [packageName, version] of Object.entries(expected).filter(([name]) => name.startsWith('@oneclaw-plugins/'))) { const pkg = JSON.parse(fs.readFileSync(root + '/node_modules/' + packageName + '/package.json', 'utf8')); if (pkg.version !== version) throw new Error('Unexpected ' + packageName + ' version: ' + pkg.version); } if (require('@oneclaw-plugins/runtime-events').runtimeEventSdkVersion() !== expected['@oneclaw-plugins/runtime-events']) throw new Error('Unexpected Runtime Event SDK version'); const channelPackage = JSON.parse(fs.readFileSync(root + '/node_modules/@oneclaw-plugins/channel/package.json', 'utf8')); if (channelPackage.peerDependencies.openclaw !== '2026.7.1') throw new Error('Unexpected OpenClaw peer version');" \
+  && node /app/scripts/verify-openclaw-plugin-bundle.mjs \
+       "${OPENCLAW_PLUGINS_DIR}" "2026.7.1" \
   # Do not leave ordinary copies behind: a persisted OpenClaw install index can
   # rediscover them with global origin and shadow the bundled trusted copies.
   && rm -rf \

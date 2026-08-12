@@ -254,18 +254,21 @@ test("Dockerfile patches Memory Core without bundling retired collaboration plug
 
 test("Dockerfile installs official OneClaw packages beside one shared Runtime Event SDK", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  const verifier = fs.readFileSync(
+    path.join(repoRoot, "scripts", "verify-openclaw-plugin-bundle.mjs"),
+    "utf8",
+  );
   assert.ok(dockerfile.includes("@oneclaw-plugins/runtime-events"));
-  assert.ok(dockerfile.includes("@oneclaw-plugins/channel/package.json"));
+  assert.ok(verifier.includes('readInstalledPackage("@oneclaw-plugins/channel")'));
+  assert.ok(verifier.includes("installedVersion !== lockedVersion"));
   assert.match(dockerfile, /^ENV ONECLAW_INTERNAL_CHANNEL_V2=1$/m);
   assert.ok(dockerfile.includes(
     "patch-oneclaw-channel-delivery.mjs",
   ));
-  assert.ok(dockerfile.includes("root !== channel"));
-  assert.ok(dockerfile.includes("name.startsWith('@oneclaw-plugins/')"));
   assert.ok(dockerfile.includes(
-    "runtimeEventSdkVersion() !== expected['@oneclaw-plugins/runtime-events']",
+    "verify-openclaw-plugin-bundle.mjs",
   ));
-  assert.ok(dockerfile.includes("pkg.version !== version"));
+  assert.ok(dockerfile.includes("root !== channel"));
   assert.ok(!dockerfile.includes("@oneclaw/channel"));
 });
 

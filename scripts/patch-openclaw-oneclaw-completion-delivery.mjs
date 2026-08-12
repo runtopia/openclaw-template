@@ -35,6 +35,10 @@ const PATCHED = `const completionRouteRequiresMessageToolDelivery = params.expec
 			})
 		);`;
 
+const INTERNAL_SOURCE_REPLY_ORIGINAL = `const channel = normalizeMessageChannel(route.channel);`;
+
+const INTERNAL_SOURCE_REPLY_PATCHED = `const channel = normalizeMessageChannel(route.channel) ?? normalizeOptionalLowercaseString(route.channel);`;
+
 export function patchOneClawCompletionDeliverySource(source) {
   if (source.includes(PATCHED)) return source;
   if (!source.includes(ORIGINAL)) {
@@ -43,6 +47,16 @@ export function patchOneClawCompletionDeliverySource(source) {
     );
   }
   return source.replace(ORIGINAL, PATCHED);
+}
+
+export function patchOneClawInternalSourceReplySource(source) {
+  if (source.includes(INTERNAL_SOURCE_REPLY_PATCHED)) return source;
+  if (!source.includes(INTERNAL_SOURCE_REPLY_ORIGINAL)) {
+    throw new Error(
+      "[patch-openclaw-oneclaw-completion-delivery] internal source-reply anchor was not found; review the OpenClaw pin",
+    );
+  }
+  return source.replace(INTERNAL_SOURCE_REPLY_ORIGINAL, INTERNAL_SOURCE_REPLY_PATCHED);
 }
 
 function javascriptFiles(directory) {
@@ -62,22 +76,46 @@ function javascriptFiles(directory) {
 
 export function patchOneClawCompletionDelivery(openClawRoot) {
   const dist = join(openClawRoot, "dist");
-  const candidates = javascriptFiles(dist).filter((path) => {
+  const files = javascriptFiles(dist);
+  const completionCandidates = files.filter((path) => {
     const source = readFileSync(path, "utf8");
     return source.includes(ORIGINAL) || source.includes(PATCHED);
   });
-  if (candidates.length !== 1) {
+  if (completionCandidates.length !== 1) {
     throw new Error(
-      `[patch-openclaw-oneclaw-completion-delivery] expected one compiled completion module, found ${candidates.length}`,
+      `[patch-openclaw-oneclaw-completion-delivery] expected one compiled completion module, found ${completionCandidates.length}`,
     );
   }
-  const filePath = candidates[0];
-  const source = readFileSync(filePath, "utf8");
-  const patched = patchOneClawCompletionDeliverySource(source);
-  if (patched === source) return false;
-  writeFileSync(filePath, patched, "utf8");
-  console.log(`[patch-openclaw-oneclaw-completion-delivery] Patched: ${filePath}`);
-  return true;
+  const internalSourceReplyCandidates = files.filter((path) => {
+    const source = readFileSync(path, "utf8");
+    return source.includes(INTERNAL_SOURCE_REPLY_ORIGINAL) || source.includes(INTERNAL_SOURCE_REPLY_PATCHED);
+  });
+  if (internalSourceReplyCandidates.length !== 1) {
+    throw new Error(
+      `[patch-openclaw-oneclaw-completion-delivery] expected one compiled internal source-reply module, found ${internalSourceReplyCandidates.length}`,
+    );
+  }
+
+  const patches = [
+    {
+      filePath: completionCandidates[0],
+      patch: patchOneClawCompletionDeliverySource,
+    },
+    {
+      filePath: internalSourceReplyCandidates[0],
+      patch: patchOneClawInternalSourceReplySource,
+    },
+  ];
+  let changed = false;
+  for (const entry of patches) {
+    const source = readFileSync(entry.filePath, "utf8");
+    const patched = entry.patch(source);
+    if (patched === source) continue;
+    writeFileSync(entry.filePath, patched, "utf8");
+    console.log(`[patch-openclaw-oneclaw-completion-delivery] Patched: ${entry.filePath}`);
+    changed = true;
+  }
+  return changed;
 }
 
 const isCli = process.argv[1]

@@ -211,6 +211,7 @@ ENV ONECLAW_INTERNAL_CHANNEL_V2=1
 WORKDIR /app
 COPY scripts/patch-openclaw-chat-images.js \
      scripts/patch-openclaw-memory-migration.mjs \
+     scripts/patch-openclaw-oneclaw-completion-delivery.mjs \
      scripts/patch-oneclaw-channel-delivery.mjs \
      scripts/patch-weixin-http-routes.js \
      scripts/patch-weixin-access-policy.js \
@@ -222,6 +223,9 @@ RUN node /app/scripts/patch-openclaw-chat-images.js /usr/local/lib/node_modules/
 # OpenClaw 2026.7.1 can leave duplicate legacy Memory Core state in place,
 # causing its strict startup migration checkpoint to fail on every restart.
 RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_modules/openclaw/dist
+# Detached generated-media completions must enter OneClaw through the durable
+# Message Tool path so Channel can allocate an autonomous public Run.
+RUN node /app/scripts/patch-openclaw-oneclaw-completion-delivery.mjs /usr/local/lib/node_modules/openclaw
 # The template is a package consumer. Plugin source, manifests, and internal
 # dependency declarations stay in their own packages; this lockfile pins the
 # exact set consumed by the cloud Runtime image.

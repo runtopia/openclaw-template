@@ -1188,6 +1188,30 @@ test("command polling applies employee template commands without waiting for hea
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/oneclaw-emp-poll/memory/polled.md"), "utf8"), "poll notes");
 });
 
+test("command polling opts into the Redis-woken long poll endpoint", async () => {
+  const workspaceDir = makeWorkspace();
+  const restoreFetch = withFetch((url, opts = {}) => {
+    assert.equal(opts.method, "GET");
+    assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/commands?limit=10&wait_ms=25000");
+    return jsonResponse({ commands: [] });
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    const commandCount = await integration.pollCommands({ waitMs: 25_000 });
+    assert.equal(commandCount, 0);
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("leased command is acknowledged only after successful execution", async () => {
   const workspaceDir = makeWorkspace();
   let acknowledgements = 0;

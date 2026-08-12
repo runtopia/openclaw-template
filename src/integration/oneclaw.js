@@ -10,6 +10,7 @@ import { patchConfig } from "../config/edit.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
+const COMMAND_LONG_POLL_MS = Math.max(0, Math.min(30_000, Number(process.env.ONECLAW_COMMAND_LONG_POLL_MS ?? 25_000) || 25_000));
 
 function enabledFlag(value) {
   return ["1", "on", "true", "yes"].includes(String(value || "").trim().toLowerCase());
@@ -210,7 +211,8 @@ export function createOneclawIntegration({
   }
 
   let heartbeatInterval = null;
-  let commandPollInterval = null;
+  let commandPollTimer = null;
+  let commandPollAbortController = null;
   let started = false;
   let cachedPersonality = null;
   let cachedEmployees = [];
@@ -505,17 +507,45 @@ export function createOneclawIntegration({
     }
   }
 
-  async function pollCommands() {
+  async function pollCommands({ waitMs = 0, signal } = {}) {
     try {
-      const res = await apiFetch("/runtime/commands?limit=10", { method: "GET" });
+      const query = waitMs > 0
+        ? `/runtime/commands?limit=10&wait_ms=${encodeURIComponent(String(waitMs))}`
+        : "/runtime/commands?limit=10";
+      const res = await apiFetch(query, { method: "GET", ...(signal ? { signal } : {}) });
       if (!res.ok) {
         if (res.status !== 404) console.warn(`[commands] poll failed: ${res.status}`);
-        return;
+        return false;
       }
       const result = await res.json().catch(() => ({}));
-      await applyAgentCommands(result.commands);
+      const commands = Array.isArray(result.commands) ? result.commands : [];
+      await applyAgentCommands(commands);
+      return commands.length;
     } catch (err) {
+      if (err?.name === "AbortError") return false;
       console.error(`[commands] poll error: ${err.message}`);
+      return false;
+    }
+  }
+
+  async function runCommandPollLoop() {
+    if (!started) return;
+    commandPollAbortController = new AbortController();
+    const startedAt = Date.now();
+    let commandCount = false;
+    try {
+      commandCount = await pollCommands({ waitMs: COMMAND_LONG_POLL_MS, signal: commandPollAbortController.signal });
+    } finally {
+      commandPollAbortController = null;
+      if (started) {
+        // During a rolling deploy, an older API ignores wait_ms and returns an
+        // empty response immediately. Back off instead of spinning until the
+        // Redis-woken API version is live. Real long polls and non-empty pages
+        // reconnect immediately.
+        const immediateEmpty = commandCount === 0 && Date.now() - startedAt < Math.max(1_000, COMMAND_LONG_POLL_MS / 2);
+        const delay = commandCount === false || immediateEmpty ? COMMAND_POLL_INTERVAL_MS : 0;
+        commandPollTimer = setTimeout(runCommandPollLoop, delay);
+      }
     }
   }
 
@@ -572,17 +602,18 @@ export function createOneclawIntegration({
       });
     }, 30_000);
     heartbeatInterval = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
-    // 员工雇佣、通道绑定、技能安装需要秒级生效；heartbeat 保持低频，命令用轻量轮询承接。
-    commandPollInterval = setInterval(pollCommands, COMMAND_POLL_INTERVAL_MS);
-    setTimeout(pollCommands, Math.min(COMMAND_POLL_INTERVAL_MS, 5_000));
+    // 员工雇佣、通道绑定、技能安装通过可唤醒长轮询立即生效；短延时只用于
+    // 网络错误后的退避，正常空闲连接由 API 在 wait_ms 到期后返回。
+    commandPollTimer = setTimeout(runCommandPollLoop, 0);
     console.log(`[heartbeat] started (interval: ${HEARTBEAT_INTERVAL_MS / 1000}s)`);
-    console.log(`[commands] poll started (interval: ${COMMAND_POLL_INTERVAL_MS / 1000}s)`);
+    console.log(`[commands] long poll started (wait: ${COMMAND_LONG_POLL_MS / 1000}s, retry: ${COMMAND_POLL_INTERVAL_MS / 1000}s)`);
   }
 
   function stop() {
     started = false;
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
-    if (commandPollInterval) { clearInterval(commandPollInterval); commandPollInterval = null; }
+    if (commandPollTimer) { clearTimeout(commandPollTimer); commandPollTimer = null; }
+    if (commandPollAbortController) { commandPollAbortController.abort(); commandPollAbortController = null; }
     for (const session of activeChannelBindings.values()) cancelChannelBindingSession(session);
     activeChannelBindings.clear();
   }

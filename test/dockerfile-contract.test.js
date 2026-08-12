@@ -8,7 +8,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 test("Dockerfile installs unzip for custom skill archives", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-  assert.ok(dockerfile.includes("python3 ripgrep tmux unzip"));
+  assert.match(dockerfile, /runtime_packages="[^"]*\bunzip\b/);
 });
 
 test("Dockerfile preinstalls portable builtin skill dependencies", () => {
@@ -46,19 +46,18 @@ test("Dockerfile preinstalls portable builtin skill dependencies", () => {
   assert.ok(!dockerfile.includes("github.com/steipete/wacli/"));
 });
 
-test("cloud is the lean default while full retains extended skill tools", () => {
+test("standard is the document-capable base and full is strictly additive", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-  assert.match(dockerfile, /^ARG ONECLAW_RUNTIME_PROFILE=cloud$/m);
-  assert.match(dockerfile, /^ARG ONECLAW_DOCUMENT_SKILLS=0$/m);
-  assert.ok(dockerfile.includes('if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]'));
-  assert.ok(dockerfile.includes("Skipping extended Go skill tools"));
-  assert.ok(dockerfile.includes("Skipping extended agent CLIs"));
-  assert.ok(dockerfile.includes("Skipping xurl"));
+  assert.match(dockerfile, /^ARG ONECLAW_RUNTIME_PROFILE=standard$/m);
+  assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm AS runtime-standard$/m);
+  assert.match(dockerfile, /^FROM runtime-standard AS runtime-full$/m);
+  assert.match(dockerfile, /^FROM runtime-\$\{ONECLAW_RUNTIME_PROFILE\} AS runtime-final$/m);
+  assert.ok(dockerfile.indexOf("FROM runtime-standard AS runtime-full") < dockerfile.indexOf("clawhub@${CLAWHUB_VERSION}"));
 });
 
-test("GitHub CI defaults Railway builds to the documents image type", () => {
+test("GitHub CI defaults deployments to the standard image type", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "docker.yml"), "utf8");
-  assert.match(workflow, /default: documents/);
+  assert.match(workflow, /default: standard/);
   assert.ok(workflow.includes("ONECLAW_RUNTIME_PROFILE=${{ steps.profile.outputs.runtime_profile }}"));
   assert.ok(workflow.includes("ONECLAW_DOCUMENT_SKILLS=${{ steps.profile.outputs.document_skills }}"));
   assert.ok(workflow.includes("type=raw,value=latest"));
@@ -101,11 +100,11 @@ test("startup ownership repair is recursive only for a one-time migration", () =
 
 test("Dockerfile includes complete Linux template skill dependencies", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-  assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm$/m);
+  assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm AS runtime-standard$/m);
   for (const aptPackage of ["poppler-utils", "qpdf", "tesseract-ocr", "python3-venv"]) {
     assert.ok(dockerfile.includes(aptPackage), `${aptPackage} should be available in document/full builds`);
   }
-  assert.ok(dockerfile.includes('[ "${ONECLAW_DOCUMENT_SKILLS}" = "1" ]'));
+  assert.ok(dockerfile.includes("ENV ONECLAW_DOCUMENT_SKILLS=1"));
   assert.ok(dockerfile.includes("@steipete/summarize@${SUMMARIZE_VERSION}"));
   assert.ok(dockerfile.includes("ARG SUMMARIZE_VERSION=0.11.1"));
   assert.ok(dockerfile.includes("github.com/steipete/gogcli/cmd/gog@v0.9.0"));
@@ -116,12 +115,12 @@ test("Dockerfile includes complete Linux template skill dependencies", () => {
   assert.ok(dockerfile.includes("FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword-source"));
   assert.ok(dockerfile.includes("COPY --from=builtin-skill-onepassword /out/ /usr/local/bin/"));
   assert.ok(dockerfile.includes("nano-pdf==0.2.1"));
-  const documentPythonStart = dockerfile.indexOf("    python3 -m venv /opt/oneclaw-python;");
-  const documentPythonEnd = dockerfile.indexOf("  fi;", documentPythonStart);
+  const documentPythonStart = dockerfile.indexOf("  python3 -m venv /opt/oneclaw-python;");
+  const documentPythonEnd = dockerfile.indexOf('ENV PATH="/opt/oneclaw-python/bin:${PATH}"', documentPythonStart);
   const documentPythonBlock = dockerfile.slice(documentPythonStart, documentPythonEnd);
   assert.doesNotMatch(documentPythonBlock, /nano-pdf/, "documents should use the broad pdf skill only");
-  const fullPythonStart = dockerfile.indexOf('  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then', documentPythonEnd);
-  const fullPythonEnd = dockerfile.indexOf("  fi", fullPythonStart);
+  const fullPythonStart = dockerfile.indexOf("FROM runtime-standard AS runtime-full", documentPythonEnd);
+  const fullPythonEnd = dockerfile.indexOf("FROM runtime-${ONECLAW_RUNTIME_PROFILE}", fullPythonStart);
   assert.match(dockerfile.slice(fullPythonStart, fullPythonEnd), /nano-pdf==0\.2\.1/);
   assert.ok(dockerfile.includes("ARG UV_VERSION=0.8.14"));
   assert.ok(dockerfile.includes("uv==${UV_VERSION}"));

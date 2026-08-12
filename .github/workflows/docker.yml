@@ -12,9 +12,10 @@ on:
       image_type:
         description: 'Runtime image type'
         required: true
-        default: documents
+        default: standard
         type: choice
         options:
+          - standard
           - documents
           - cloud
           - full
@@ -39,16 +40,12 @@ jobs:
       - name: Resolve runtime image type
         id: profile
         env:
-          REQUESTED_IMAGE_TYPE: ${{ inputs.image_type || 'documents' }}
+          REQUESTED_IMAGE_TYPE: ${{ inputs.image_type || 'standard' }}
         run: |
           case "$REQUESTED_IMAGE_TYPE" in
-            documents)
-              echo "runtime_profile=cloud" >> "$GITHUB_OUTPUT"
+            standard|documents|cloud)
+              echo "runtime_profile=standard" >> "$GITHUB_OUTPUT"
               echo "document_skills=1" >> "$GITHUB_OUTPUT"
-              ;;
-            cloud)
-              echo "runtime_profile=cloud" >> "$GITHUB_OUTPUT"
-              echo "document_skills=0" >> "$GITHUB_OUTPUT"
               ;;
             full)
               echo "runtime_profile=full" >> "$GITHUB_OUTPUT"
@@ -74,11 +71,12 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # documents is the Railway default: main → latest, tags → semver.
-            type=semver,pattern={{version}},enable=${{ steps.profile.outputs.image_type == 'documents' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && steps.profile.outputs.image_type == 'documents' }}
+            # standard is the deployment default: main → latest, tags → semver.
+            type=semver,pattern={{version}},enable=${{ steps.profile.outputs.image_type == 'standard' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && steps.profile.outputs.image_type == 'standard' }}
+            type=raw,value=standard,enable=${{ steps.profile.outputs.image_type == 'standard' }}
+            # Compatibility aliases and optional full never replace latest.
             type=raw,value=documents,enable=${{ steps.profile.outputs.image_type == 'documents' }}
-            # Optional manual variants never replace the Railway latest tag.
             type=raw,value=cloud,enable=${{ steps.profile.outputs.image_type == 'cloud' }}
             type=raw,value=full,enable=${{ steps.profile.outputs.image_type == 'full' }}
 

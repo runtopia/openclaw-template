@@ -1,11 +1,11 @@
 ARG OP_VERSION=2.35.0
-ARG ONECLAW_RUNTIME_PROFILE=cloud
-ARG ONECLAW_DOCUMENT_SKILLS=0
+ARG ONECLAW_RUNTIME_PROFILE=standard
+ARG OPENCLAW_VERSION=2026.7.1-2
+ARG IMAGE_VERSION=2026.7.1-2
 
 FROM golang:1.26.5-bookworm AS builtin-skill-go-tools
 
 ARG GO_PROXY=https://goproxy.cn,direct
-ARG ONECLAW_RUNTIME_PROFILE
 
 # Go-based dependencies declared by OpenClaw's bundled skills. Keep these in a
 # builder stage so the runtime image only receives the resulting executables.
@@ -27,18 +27,14 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
       attempt=$((attempt + 1)); \
     done; \
   }; \
-  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-    install_go_tool github.com/Hyaxia/blogwatcher/cmd/blogwatcher@v0.0.3; \
-    install_go_tool github.com/steipete/blucli/cmd/blu@v0.1.5; \
-    install_go_tool github.com/steipete/eightctl/cmd/eightctl@v0.0.0-20260713021800-e05b8da853b9; \
-    install_go_tool github.com/steipete/gifgrep/cmd/gifgrep@v0.3.0; \
-    install_go_tool github.com/steipete/ordercli/cmd/ordercli@v0.1.0; \
-    install_go_tool github.com/steipete/sonoscli/cmd/sonos@v0.3.3; \
-    install_go_tool github.com/steipete/gogcli/cmd/gog@v0.9.0; \
-    install_go_tool github.com/openclaw/wacli/cmd/wacli@v0.12.0; \
-  else \
-    echo "Skipping extended Go skill tools for ${ONECLAW_RUNTIME_PROFILE} profile"; \
-  fi
+  install_go_tool github.com/Hyaxia/blogwatcher/cmd/blogwatcher@v0.0.3; \
+  install_go_tool github.com/steipete/blucli/cmd/blu@v0.1.5; \
+  install_go_tool github.com/steipete/eightctl/cmd/eightctl@v0.0.0-20260713021800-e05b8da853b9; \
+  install_go_tool github.com/steipete/gifgrep/cmd/gifgrep@v0.3.0; \
+  install_go_tool github.com/steipete/ordercli/cmd/ordercli@v0.1.0; \
+  install_go_tool github.com/steipete/sonoscli/cmd/sonos@v0.3.3; \
+  install_go_tool github.com/steipete/gogcli/cmd/gog@v0.9.0; \
+  install_go_tool github.com/openclaw/wacli/cmd/wacli@v0.12.0
 
 # Reuse the runtime base, which already includes curl, tar, and CA certificates.
 # This avoids a second apt update/install during every cold build.
@@ -46,42 +42,29 @@ FROM node:24.15.0-bookworm AS builtin-skill-himalaya
 
 ARG TARGETARCH
 ARG HIMALAYA_VERSION=1.2.0
-ARG ONECLAW_RUNTIME_PROFILE
 RUN set -eu; \
   mkdir -p /out; \
-  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-    case "${TARGETARCH}" in \
-      amd64) archive_arch=x86_64; archive_sha=e04e6382e3e664ef34b01afa1a2216113194a2975d2859727647b22d9b36d4e4 ;; \
-      arm64) archive_arch=aarch64; archive_sha=643020b220991fac67726f3be11310fcf806e757feadbbab3efbddd713597872 ;; \
-      *) echo "unsupported Himalaya target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL -o /tmp/himalaya.tgz \
-      "https://github.com/pimalaya/himalaya/releases/download/v${HIMALAYA_VERSION}/himalaya.${archive_arch}-linux.tgz"; \
-    echo "${archive_sha}  /tmp/himalaya.tgz" | sha256sum -c -; \
-    tar -xzf /tmp/himalaya.tgz -C /out himalaya; \
-  else \
-    echo "Skipping Himalaya for ${ONECLAW_RUNTIME_PROFILE} profile"; \
-  fi
+  case "${TARGETARCH}" in \
+    amd64) archive_arch=x86_64; archive_sha=e04e6382e3e664ef34b01afa1a2216113194a2975d2859727647b22d9b36d4e4 ;; \
+    arm64) archive_arch=aarch64; archive_sha=643020b220991fac67726f3be11310fcf806e757feadbbab3efbddd713597872 ;; \
+    *) echo "unsupported Himalaya target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL -o /tmp/himalaya.tgz \
+    "https://github.com/pimalaya/himalaya/releases/download/v${HIMALAYA_VERSION}/himalaya.${archive_arch}-linux.tgz"; \
+  echo "${archive_sha}  /tmp/himalaya.tgz" | sha256sum -c -; \
+  tar -xzf /tmp/himalaya.tgz -C /out himalaya
 
 FROM 1password/op:${OP_VERSION} AS builtin-skill-onepassword-source
 FROM node:24.15.0-bookworm AS builtin-skill-onepassword
-ARG ONECLAW_RUNTIME_PROFILE
 COPY --from=builtin-skill-onepassword-source /usr/local/bin/op /tmp/op
-RUN mkdir -p /out \
-  && if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-       cp /tmp/op /out/op; \
-     else \
-       echo "Skipping 1Password CLI for ${ONECLAW_RUNTIME_PROFILE} profile"; \
-     fi
+RUN mkdir -p /out && cp /tmp/op /out/op
 
 # OpenClaw 2026.7.1 requires a Node build with a WAL-reset-safe embedded
 # SQLite. Keep the Runtime image on the same version used by Channel CI.
-FROM node:24.15.0-bookworm
+FROM node:24.15.0-bookworm AS runtime-standard
 
-ARG ONECLAW_RUNTIME_PROFILE
-ENV ONECLAW_RUNTIME_PROFILE=${ONECLAW_RUNTIME_PROFILE}
-ARG ONECLAW_DOCUMENT_SKILLS
-ENV ONECLAW_DOCUMENT_SKILLS=${ONECLAW_DOCUMENT_SKILLS}
+ENV ONECLAW_RUNTIME_PROFILE=standard
+ENV ONECLAW_DOCUMENT_SKILLS=1
 ARG DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
 ARG DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
 ARG NPM_REGISTRY=https://registry.npmmirror.com
@@ -96,88 +79,32 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     /etc/apt/sources.list.d/debian.sources \
   && rm -f /etc/apt/apt.conf.d/docker-clean \
   && apt-get update \
-  && runtime_packages="ca-certificates curl ffmpeg gh git gosu jq procps python3 ripgrep tmux unzip" \
-  && if [ "${ONECLAW_DOCUMENT_SKILLS}" = "1" ] || [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-       runtime_packages="${runtime_packages} poppler-utils qpdf python3-venv tesseract-ocr"; \
-     fi \
-  && if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-       runtime_packages="${runtime_packages} build-essential libnss3 libnspr4 libatk1.0-0 libdrm2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libxss1 libasound2 libgtk-3-0 libxshmfence1 libgconf-2-4 libxtst6 libatspi2.0-0 libxkbcommon0 fonts-liberation"; \
-     fi \
+  && runtime_packages="ca-certificates curl ffmpeg gh git gosu jq procps python3 python3-venv ripgrep tmux unzip poppler-utils qpdf tesseract-ocr" \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${runtime_packages}
 
 # Pin OpenClaw core to the same runtime shipped by OneClaw Desktop. The
 # sidecar's runtime patches and first-party plugins are validated against this
 # exact host version.
-ARG OPENCLAW_VERSION=2026.7.1-2
+ARG OPENCLAW_VERSION
 ENV OPENCLAW_VERSION=${OPENCLAW_VERSION}
-ARG CLAWHUB_VERSION=0.23.1
-ARG CODEX_VERSION=0.144.4
-ARG GEMINI_CLI_VERSION=0.50.0
 ARG MCPORTER_VERSION=0.12.3
-ARG ORACLE_VERSION=0.16.0
-ARG XURL_VERSION=1.2.2
 ARG SUMMARIZE_VERSION=0.11.1
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install -g --prefer-offline --no-audit --no-fund \
       openclaw@${OPENCLAW_VERSION} \
       mcporter@${MCPORTER_VERSION} \
-      @steipete/summarize@${SUMMARIZE_VERSION} \
-  && if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-       npm install -g --prefer-offline --no-audit --no-fund \
-         clawhub@${CLAWHUB_VERSION} \
-         @openai/codex@${CODEX_VERSION} \
-         @google/gemini-cli@${GEMINI_CLI_VERSION} \
-         @steipete/oracle@${ORACLE_VERSION}; \
-     else \
-       echo "Skipping extended agent CLIs for ${ONECLAW_RUNTIME_PROFILE} profile"; \
-     fi
-
-# xurl's npm postinstall downloads its platform binary from GitHub with a
-# single https.get() call and no retry. Keep it in a separate layer so a
-# transient builder DNS failure retries only this small package rather than
-# the complete global toolchain.
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-  set -eu; \
-  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-    for attempt in 1 2 3; do \
-      if npm install -g --prefer-offline --no-audit --no-fund \
-           @xdevplatform/xurl@${XURL_VERSION}; then \
-        break; \
-      fi; \
-      if [ "${attempt}" -eq 3 ]; then \
-        echo "xurl install failed after ${attempt} attempts" >&2; \
-        exit 1; \
-      fi; \
-      delay=$((attempt * 5)); \
-      echo "xurl install attempt ${attempt} failed; retrying in ${delay}s" >&2; \
-      sleep "${delay}"; \
-    done; \
-  else \
-    echo "Skipping xurl for ${ONECLAW_RUNTIME_PROFILE} profile"; \
-  fi
-
-COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
-COPY --from=builtin-skill-himalaya /out/ /usr/local/bin/
-COPY --from=builtin-skill-onepassword /out/ /usr/local/bin/
+      @steipete/summarize@${SUMMARIZE_VERSION}
 
 ARG UV_VERSION=0.8.14
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-  set -eu; \
-  if [ "${ONECLAW_DOCUMENT_SKILLS}" = "1" ] || [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-    python3 -m venv /opt/oneclaw-python; \
-    /opt/oneclaw-python/bin/pip install --index-url "${PIP_INDEX_URL}" \
-      openpyxl==3.1.5 \
-      python-pptx==1.0.2 \
-      pypdf==6.15.0 \
-      reportlab==5.0.0 \
-      pdfplumber==0.11.10; \
-  fi; \
-  if [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-    /opt/oneclaw-python/bin/pip install --index-url "${PIP_INDEX_URL}" \
-      nano-pdf==0.2.1 \
-      uv==${UV_VERSION}; \
-  fi
+  python3 -m venv /opt/oneclaw-python; \
+  /opt/oneclaw-python/bin/pip install --index-url "${PIP_INDEX_URL}" \
+    openpyxl==3.1.5 \
+    python-pptx==1.0.2 \
+    pypdf==6.15.0 \
+    reportlab==5.0.0 \
+    pdfplumber==0.11.10
 ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 
 # Pre-install plugins OUTSIDE the /data volume, into a fixed image path.
@@ -327,18 +254,15 @@ RUN --mount=type=cache,target=/root/.cache/node/corepack,sharing=locked \
 COPY resources/preinstalled-skill-runtime /tmp/oneclaw-preinstalled-skill-runtime
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   set -eu; \
-  if [ "${ONECLAW_DOCUMENT_SKILLS}" = "1" ] || [ "${ONECLAW_RUNTIME_PROFILE}" = "full" ]; then \
-    cd /tmp/oneclaw-preinstalled-skill-runtime; \
-    npm ci --omit=dev --no-audit --no-fund; \
-  fi; \
+  cd /tmp/oneclaw-preinstalled-skill-runtime; \
+  npm ci --omit=dev --no-audit --no-fund; \
   mv /tmp/oneclaw-preinstalled-skill-runtime /opt/oneclaw-preinstalled-skill-runtime; \
   chmod -R a+rX /opt/oneclaw-preinstalled-skill-runtime
 ENV NODE_PATH=/opt/oneclaw-preinstalled-skill-runtime/node_modules
 
 # Small, commit-pinned common skills shared with OneClaw Desktop. Definitions
 # stay in immutable /opt and never copy into the Railway volume. The default
-# cloud image enables only lightweight skills; document skills and their
-# heavier runtimes require ONECLAW_DOCUMENT_SKILLS=1 (or the full profile).
+# standard image enables the common and document skills used by most employees.
 ENV ONECLAW_PREINSTALLED_SKILLS_DIR=/opt/oneclaw-skills
 COPY resources/preinstalled-skills ${ONECLAW_PREINSTALLED_SKILLS_DIR}
 RUN test -f ${ONECLAW_PREINSTALLED_SKILLS_DIR}/.preinstalled-manifest.json \
@@ -360,10 +284,12 @@ RUN useradd -m -s /bin/bash openclaw \
   && chmod +x /app/start.sh /app/scripts/verify-linux-template-skills.sh
 
 # Image version — pass at build time: docker build --build-arg IMAGE_VERSION=1.2.3
-ARG IMAGE_VERSION=dev
+ARG IMAGE_VERSION
 ENV IMAGE_VERSION=${IMAGE_VERSION}
 ENV ONECLAW_RUNTIME_CONTRACT=1
-LABEL org.opencontainers.image.version=${IMAGE_VERSION}
+RUN node /app/scripts/write-runtime-capabilities.mjs standard /opt/oneclaw/runtime-capabilities.json
+LABEL org.opencontainers.image.version=${IMAGE_VERSION} \
+      io.oneclaw.runtime.profile=standard
 
 ENV PORT=8080
 ENV OPENCLAW_ENTRY=/usr/local/lib/node_modules/openclaw/dist/entry.js
@@ -378,3 +304,69 @@ HEALTHCHECK --interval=5s --timeout=2s --start-period=2s \
 # CMD runs as root so start.sh can fix /data ownership on Railway volume mounts,
 # then drops to the non-root openclaw user via gosu.
 CMD ["/bin/bash", "/app/start.sh"]
+
+# Backward-compatible names. Both now resolve to the production standard
+# runtime so an old build command cannot accidentally omit document support.
+FROM runtime-standard AS runtime-cloud
+FROM runtime-standard AS runtime-documents
+
+# Full is an additive image. Every standard layer remains byte-for-byte
+# reusable, while browser automation and specialist CLIs live in new layers.
+FROM runtime-standard AS runtime-full
+
+ENV ONECLAW_RUNTIME_PROFILE=full
+ENV ONECLAW_DOCUMENT_SKILLS=1
+
+ARG DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
+ARG DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+  sed -i \
+    -e "s|http://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
+    -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+    /etc/apt/sources.list.d/debian.sources \
+  && apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       build-essential libnss3 libnspr4 libatk1.0-0 libdrm2 libxcomposite1 \
+       libxdamage1 libxrandr2 libgbm1 libxss1 libasound2 libgtk-3-0 \
+       libxshmfence1 libgconf-2-4 libxtst6 libatspi2.0-0 libxkbcommon0 \
+       fonts-liberation
+
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG CLAWHUB_VERSION=0.23.1
+ARG CODEX_VERSION=0.144.4
+ARG GEMINI_CLI_VERSION=0.50.0
+ARG ORACLE_VERSION=0.16.0
+ARG XURL_VERSION=1.2.2
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+  npm install -g --prefer-offline --no-audit --no-fund \
+    clawhub@${CLAWHUB_VERSION} \
+    @openai/codex@${CODEX_VERSION} \
+    @google/gemini-cli@${GEMINI_CLI_VERSION} \
+    @steipete/oracle@${ORACLE_VERSION} \
+  && for attempt in 1 2 3; do \
+       if npm install -g --prefer-offline --no-audit --no-fund @xdevplatform/xurl@${XURL_VERSION}; then \
+         break; \
+       fi; \
+       if [ "${attempt}" -eq 3 ]; then \
+         echo "xurl install failed after ${attempt} attempts" >&2; \
+         exit 1; \
+       fi; \
+       sleep $((attempt * 5)); \
+     done
+
+COPY --from=builtin-skill-go-tools /out/ /usr/local/bin/
+COPY --from=builtin-skill-himalaya /out/ /usr/local/bin/
+COPY --from=builtin-skill-onepassword /out/ /usr/local/bin/
+
+ARG UV_VERSION=0.8.14
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+  /opt/oneclaw-python/bin/pip install --index-url "${PIP_INDEX_URL}" \
+    nano-pdf==0.2.1 \
+    uv==${UV_VERSION}
+
+RUN node /app/scripts/write-runtime-capabilities.mjs full /opt/oneclaw/runtime-capabilities.json
+LABEL io.oneclaw.runtime.profile=full
+
+FROM runtime-${ONECLAW_RUNTIME_PROFILE} AS runtime-final

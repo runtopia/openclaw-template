@@ -44,6 +44,14 @@ test("normalizes OneClaw Go API base URL to /api/v1", () => {
 
 test("heartbeat sends Go API snake_case payload and applies queued template command", async () => {
   const workspaceDir = makeWorkspace();
+  const runtimeCapabilitiesPath = path.join(workspaceDir, "runtime-capabilities.json");
+  fs.writeFileSync(runtimeCapabilitiesPath, JSON.stringify({
+    schema_version: 1,
+    profile: "full",
+    capability_digest: "sha256:test",
+    capabilities: ["documents", "external-agent-clis"],
+    supported_skills: ["pdf", "coding-agent"],
+  }));
   const restoreFetch = withFetch((url, opts) => {
     assert.equal(url, "https://oneclaw.example.com/api/v1/runtime/heartbeat");
     assert.equal(opts.headers.Authorization, "Bearer secret-1");
@@ -58,6 +66,10 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
     assert.equal(body.agent.runtime_image_version, "3.2.0");
     assert.equal(body.agent.openclaw_version, "2026.6.10");
     assert.equal(body.agent.runtime_contract_version, "1");
+    assert.equal(body.agent.runtime_profile, "full");
+    assert.equal(body.agent.runtime_capability_digest, "sha256:test");
+    assert.deepEqual(body.agent.runtime_capabilities, ["documents", "external-agent-clis"]);
+    assert.deepEqual(body.agent.runtime_supported_skills, ["pdf", "coding-agent"]);
     assert.equal(body.agent.platforms.telegram, true);
     return jsonResponse({
       instance_id: "runtime-1",
@@ -84,6 +96,7 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
       imageVersion: "3.2.0",
       openclawVersion: "2026.6.10",
       runtimeContract: "1",
+      runtimeCapabilitiesPath,
       workspaceDir,
       isGatewayReady: () => true,
       isGatewayStarting: () => false,

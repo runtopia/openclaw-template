@@ -16,6 +16,29 @@ function enabledFlag(value) {
   return ["1", "on", "true", "yes"].includes(String(value || "").trim().toLowerCase());
 }
 
+export function loadRuntimeCapabilities(
+  manifestPath = process.env.ONECLAW_RUNTIME_CAPABILITIES_PATH || "/opt/oneclaw/runtime-capabilities.json",
+) {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    if (!manifest?.profile || !Array.isArray(manifest.capabilities) || !Array.isArray(manifest.supported_skills)) {
+      throw new Error("invalid capability manifest shape");
+    }
+    return manifest;
+  } catch (error) {
+    const configuredProfile = String(process.env.ONECLAW_RUNTIME_PROFILE || "standard").trim().toLowerCase();
+    const profile = configuredProfile === "full" ? "full" : "standard";
+    console.warn(`[capabilities] manifest unavailable (${error.message}); reporting ${profile} fallback`);
+    return {
+      schema_version: 1,
+      profile,
+      capability_digest: "",
+      capabilities: [],
+      supported_skills: [],
+    };
+  }
+}
+
 export function buildOneclawChannelStatus({
   apiUrl,
   channelEnabled,
@@ -186,6 +209,7 @@ export function createOneclawIntegration({
   imageVersion = process.env.IMAGE_VERSION || "dev",
   openclawVersion = process.env.OPENCLAW_VERSION || "unknown",
   runtimeContract = process.env.ONECLAW_RUNTIME_CONTRACT || "2",
+  runtimeCapabilitiesPath = process.env.ONECLAW_RUNTIME_CAPABILITIES_PATH || "/opt/oneclaw/runtime-capabilities.json",
   channelBindingPollMs = 1500,
   skillStatusRetryMs = 250,
   skillStatusAttempts = 12,
@@ -217,6 +241,7 @@ export function createOneclawIntegration({
   let cachedPersonality = null;
   let cachedEmployees = [];
   let reportedOpenClawVersion = String(openclawVersion || "unknown");
+  const runtimeCapabilities = loadRuntimeCapabilities(runtimeCapabilitiesPath);
   const usageStats = {
     messages: 0,
     tokens: 0,
@@ -487,6 +512,10 @@ export function createOneclawIntegration({
             runtime_image_version: String(imageVersion),
             openclaw_version: reportedOpenClawVersion,
             runtime_contract_version: String(runtimeContract),
+            runtime_profile: runtimeCapabilities.profile,
+            runtime_capability_digest: runtimeCapabilities.capability_digest,
+            runtime_capabilities: runtimeCapabilities.capabilities,
+            runtime_supported_skills: runtimeCapabilities.supported_skills,
             platforms,
             oneclaw_channel: oneclawChannel,
           },

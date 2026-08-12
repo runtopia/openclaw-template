@@ -5,14 +5,11 @@ required_bins=(
   ffmpeg gh jq rg tmux unzip summarize
 )
 
-documents_enabled=0
-if [[ "${ONECLAW_DOCUMENT_SKILLS:-0}" == "1" || "${ONECLAW_RUNTIME_PROFILE:-cloud}" == "full" ]]; then
-  documents_enabled=1
-  required_bins+=(pdftotext qpdf)
-fi
+documents_enabled=1
+required_bins+=(pdftotext qpdf)
 
-if [[ "${ONECLAW_RUNTIME_PROFILE:-cloud}" == "full" ]]; then
-  required_bins+=(gog blogwatcher gifgrep wacli codex gemini oracle xurl himalaya nano-pdf op uv)
+if [[ "${ONECLAW_RUNTIME_PROFILE:-standard}" == "full" ]]; then
+  required_bins+=(gog blogwatcher blu eightctl gifgrep ordercli sonos wacli codex gemini oracle xurl himalaya nano-pdf op uv)
 fi
 
 for binary in "${required_bins[@]}"; do
@@ -47,11 +44,9 @@ const supported = new Set([
   "notion", "slack", "discord", "feishu",
   "find-skills", "self-improving-agent",
 ]);
-if (process.env.ONECLAW_DOCUMENT_SKILLS === "1" || process.env.ONECLAW_RUNTIME_PROFILE === "full") {
-  for (const slug of ["pdf", "xlsx", "docx", "pptx"]) supported.add(slug);
-}
+for (const slug of ["pdf", "xlsx", "docx", "pptx"]) supported.add(slug);
 if (process.env.ONECLAW_RUNTIME_PROFILE === "full") {
-  for (const slug of ["1password", "himalaya", "nano-pdf", "coding-agent", "gog", "blogwatcher", "gifgrep", "wacli"]) {
+  for (const slug of ["1password", "himalaya", "nano-pdf", "coding-agent", "gog", "blogwatcher", "blucli", "eightctl", "gifgrep", "ordercli", "sonoscli", "wacli", "gemini", "oracle", "xurl"]) {
     supported.add(slug);
   }
 }

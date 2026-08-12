@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Login shells may replace the image ENV PATH. Keep the immutable Python
+# runtime discoverable when this verifier is invoked manually over SSH/CI.
+export PATH="/opt/oneclaw-python/bin:${PATH}"
+
 required_bins=(
   ffmpeg gh jq rg tmux unzip summarize
 )

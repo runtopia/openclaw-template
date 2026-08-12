@@ -9,7 +9,7 @@
  * allocate the autonomous public Run and persist generated media exactly once.
  */
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,7 +49,9 @@ function javascriptFiles(directory) {
   const files = [];
   for (const name of readdirSync(directory)) {
     const path = join(directory, name);
-    if (statSync(path).isDirectory()) {
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink()) continue;
+    if (stats.isDirectory()) {
       files.push(...javascriptFiles(path));
     } else if (name.endsWith(".js") || name.endsWith(".mjs")) {
       files.push(path);

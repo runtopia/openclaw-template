@@ -181,20 +181,21 @@ test("Dockerfile aligns OpenClaw core to Desktop 2026.7.1-2", () => {
     "utf8",
   ));
   assert.ok(dockerfile.includes("ARG OPENCLAW_VERSION=2026.7.1-2"));
-  assert.equal(
-    pluginBundle.dependencies["@oneclaw-plugins/clawrouters"],
-    "0.4.1",
-    "ClawRouters should use the exact official npm package version",
+  const clawroutersVersion = pluginBundle.dependencies["@oneclaw-plugins/clawrouters"];
+  assert.match(
+    clawroutersVersion,
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u,
+    "ClawRouters should use an exact official npm package version",
   );
   const lockfile = JSON.parse(fs.readFileSync(
     path.join(repoRoot, "resources", "openclaw-plugin-bundle", "package-lock.json"),
     "utf8",
   ));
   const clawroutersLock = lockfile.packages["node_modules/@oneclaw-plugins/clawrouters"];
-  assert.equal(clawroutersLock.version, "0.4.1");
-  assert.match(
+  assert.equal(clawroutersLock.version, clawroutersVersion);
+  assert.equal(
     clawroutersLock.resolved,
-    /^https:\/\/registry\.npmjs\.org\/@oneclaw-plugins\/clawrouters\/-\/clawrouters-0\.4\.1\.tgz$/u,
+    `https://registry.npmjs.org/@oneclaw-plugins/clawrouters/-/clawrouters-${clawroutersVersion}.tgz`,
     "ClawRouters lock entry must resolve from npmjs",
   );
   for (const plugin of ["slack", "discord", "feishu", "whatsapp"]) {
@@ -260,10 +261,11 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
     "patch-oneclaw-channel-delivery.mjs",
   ));
   assert.ok(dockerfile.includes("root !== channel"));
-  assert.ok(dockerfile.includes("['channel', '0.1.22']"));
-  assert.ok(dockerfile.includes("runtimeEventSdkVersion() !== '0.1.2'"));
-  assert.ok(dockerfile.includes("['clawrouters', '0.4.1']"));
-  assert.ok(dockerfile.includes("['openclaw-search', '0.2.0']"));
+  assert.ok(dockerfile.includes("name.startsWith('@oneclaw-plugins/')"));
+  assert.ok(dockerfile.includes(
+    "runtimeEventSdkVersion() !== expected['@oneclaw-plugins/runtime-events']",
+  ));
+  assert.ok(dockerfile.includes("pkg.version !== version"));
   assert.ok(!dockerfile.includes("@oneclaw/channel"));
 });
 

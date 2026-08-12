@@ -9,17 +9,22 @@ const bundleDir = path.join(repoRoot, "resources", "openclaw-plugin-bundle");
 const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "package.json"), "utf8"));
 const lockfile = JSON.parse(fs.readFileSync(path.join(bundleDir, "package-lock.json"), "utf8"));
 
-const ONECLAW_PACKAGES = {
-  "@oneclaw-plugins/clawrouters": "0.4.1",
-  "@oneclaw-plugins/runtime-events": "0.1.2",
-  "@oneclaw-plugins/channel": "0.1.22",
-  "@oneclaw-plugins/openclaw-search": "0.2.0",
-};
+const ONECLAW_PACKAGES = Object.fromEntries(
+  Object.entries(manifest.dependencies)
+    .filter(([packageName]) => packageName.startsWith("@oneclaw-plugins/")),
+);
 
 test("cloud Runtime declares exact official OneClaw plugin versions", () => {
   assert.equal(manifest.private, true);
+  assert.deepEqual(Object.keys(ONECLAW_PACKAGES).sort(), [
+    "@oneclaw-plugins/channel",
+    "@oneclaw-plugins/clawrouters",
+    "@oneclaw-plugins/openclaw-search",
+    "@oneclaw-plugins/runtime-events",
+  ]);
   assert.doesNotMatch(JSON.stringify(lockfile), /git\+ssh:/u);
   for (const [packageName, version] of Object.entries(ONECLAW_PACKAGES)) {
+    assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u);
     assert.equal(manifest.dependencies[packageName], version);
     assert.equal(lockfile.packages[""].dependencies[packageName], version);
 

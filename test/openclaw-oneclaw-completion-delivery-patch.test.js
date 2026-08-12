@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -27,6 +27,16 @@ function hasExternalSessionDeliveryRoute(sessionKey) {
 	if (!route) return false;
 	const channel = normalizeMessageChannel(route.channel);
 	return Boolean(channel && channel !== "webchat");
+}
+`;
+
+const messageToolDeliveryFixture = `
+function inferDeliveryFromSessionKey(sessionKey) {
+	const route = parseSessionDeliveryRoute(sessionKey);
+	if (!route) return null;
+	const channel = normalizeMessageChannel(route.channel);
+	if (!channel) return null;
+	return { channel };
 }
 `;
 
@@ -87,10 +97,16 @@ test("OneClaw completion delivery patch skips bundled plugin symlink loops", () 
   mkdirSync(pluginModules, { recursive: true });
   writeFileSync(path.join(dist, "completion.mjs"), fixture);
   writeFileSync(path.join(dist, "internal-source-reply.mjs"), internalSourceReplyFixture);
+  writeFileSync(path.join(dist, "openclaw-tools.mjs"), messageToolDeliveryFixture);
   symlinkSync(root, path.join(pluginModules, "openclaw"));
 
   try {
     assert.equal(patchOneClawCompletionDelivery(root), true);
+    assert.equal(
+      readFileSync(path.join(dist, "openclaw-tools.mjs"), "utf8"),
+      messageToolDeliveryFixture,
+      "the similarly shaped Message Tool bundle must not be patched",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -35,9 +35,19 @@ const PATCHED = `const completionRouteRequiresMessageToolDelivery = params.expec
 			})
 		);`;
 
-const INTERNAL_SOURCE_REPLY_ORIGINAL = `const channel = normalizeMessageChannel(route.channel);`;
+const INTERNAL_SOURCE_REPLY_ORIGINAL = `function hasExternalSessionDeliveryRoute(sessionKey) {
+	const route = parseSessionDeliveryRoute(sessionKey);
+	if (!route) return false;
+	const channel = normalizeMessageChannel(route.channel);
+	return Boolean(channel && channel !== "webchat");
+}`;
 
-const INTERNAL_SOURCE_REPLY_PATCHED = `const channel = normalizeMessageChannel(route.channel) ?? normalizeOptionalLowercaseString(route.channel);`;
+const INTERNAL_SOURCE_REPLY_PATCHED = `function hasExternalSessionDeliveryRoute(sessionKey) {
+	const route = parseSessionDeliveryRoute(sessionKey);
+	if (!route) return false;
+	const channel = normalizeMessageChannel(route.channel) ?? normalizeOptionalLowercaseString(route.channel);
+	return Boolean(channel && channel !== "webchat");
+}`;
 
 export function patchOneClawCompletionDeliverySource(source) {
   if (source.includes(PATCHED)) return source;

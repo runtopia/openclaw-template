@@ -16,7 +16,17 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?
 
 export function getOneclawDependencies(manifest) {
   return Object.entries(manifest.dependencies || {})
-    .filter(([packageName]) => packageName.startsWith("@oneclaw-plugins/"))
+    .filter(([packageName, spec]) => (
+      packageName.startsWith("@oneclaw-plugins/") && VERSION_PATTERN.test(spec)
+    ))
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+export function getLocalOneclawDependencies(manifest) {
+  return Object.entries(manifest.dependencies || {})
+    .filter(([packageName, spec]) => (
+      packageName.startsWith("@oneclaw-plugins/") && spec.startsWith("file:")
+    ))
     .sort(([left], [right]) => left.localeCompare(right));
 }
 
@@ -99,9 +109,13 @@ export function main(argv = process.argv.slice(2)) {
   const checkOnly = argv.includes("--check");
   const manifest = readJson(manifestPath);
   const dependencies = getOneclawDependencies(manifest);
+  const localDependencies = getLocalOneclawDependencies(manifest);
   if (dependencies.length === 0) throw new Error("No @oneclaw-plugins/* dependencies found");
 
   console.log(`Checking ${dependencies.length} OneClaw plugins via ${registry}...`);
+  for (const [packageName, spec] of localDependencies) {
+    console.log(`Skipping local plugin ${packageName} (${spec}); switch it to an exact version only after npm release.`);
+  }
   const latestVersions = Object.fromEntries(
     dependencies.map(([packageName]) => [packageName, queryLatestVersion(packageName)]),
   );

@@ -197,8 +197,10 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 #     - slack / discord / feishu / whatsapp are official standalone packages.
 #     - wechat has no official package; @tencent-weixin/openclaw-weixin is the
 #       third-party plugin (channel id "openclaw-weixin", versioned separately).
-#   ClawRouters, Search, and Channel are exact npm packages published from
-#   runtopia/oneclaw-plugins. Employee orchestration uses OpenClaw's native
+#   ClawRouters and Search are exact npm packages published from
+#   runtopia/oneclaw-plugins. An unreleased Channel build may instead be a
+#   content-addressed local tgz tracked by the same locked bundle. Employee
+#   orchestration uses OpenClaw's native
 #   Agent Sessions, Background Tasks, Workboard, and update_plan capabilities.
 #   Exact top-level versions and their complete dependency graph are locked in
 #   resources/openclaw-plugin-bundle/package-lock.json.
@@ -228,7 +230,8 @@ RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_mo
 RUN node /app/scripts/patch-openclaw-oneclaw-completion-delivery.mjs /usr/local/lib/node_modules/openclaw
 # The template is a package consumer. Plugin source, manifests, and internal
 # dependency declarations stay in their own packages; this lockfile pins the
-# exact set consumed by the cloud Runtime image.
+# exact npm or content-addressed local artifacts consumed by the cloud Runtime
+# image.
 ARG ONECLAW_NPM_REGISTRY=https://registry.npmjs.org
 COPY resources/openclaw-plugin-bundle /tmp/openclaw-plugin-bundle
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildInstallArgs,
   detectUpdates,
+  getLocalOneclawDependencies,
   getOneclawDependencies,
   verifyUpdatedBundle,
 } from "../scripts/update-oneclaw-plugins.mjs";
@@ -14,6 +15,7 @@ test("updater selects only declared OneClaw packages and detects changed latest 
       "@openclaw/slack": "1.0.0",
       "@oneclaw-plugins/search": "1.0.0",
       "@oneclaw-plugins/channel": "2.0.0",
+      "@oneclaw-plugins/local": "file:tarballs/local.tgz",
     },
   });
   assert.deepEqual(dependencies, [
@@ -28,6 +30,12 @@ test("updater selects only declared OneClaw packages and detects changed latest 
     currentVersion: "1.0.0",
     latestVersion: "1.1.0",
   }]);
+  assert.deepEqual(getLocalOneclawDependencies({
+    dependencies: {
+      "@oneclaw-plugins/local": "file:tarballs/local.tgz",
+      "@oneclaw-plugins/search": "1.0.0",
+    },
+  }), [["@oneclaw-plugins/local", "file:tarballs/local.tgz"]]);
 });
 
 test("updater uses an exact lockfile-only npm install", () => {

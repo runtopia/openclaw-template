@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,6 +15,15 @@ const ONECLAW_PACKAGES = Object.fromEntries(
   Object.entries(manifest.dependencies)
     .filter(([packageName]) => packageName.startsWith("@oneclaw-plugins/")),
 );
+
+function bundledChannelMonitorSource() {
+  const channelSpec = ONECLAW_PACKAGES["@oneclaw-plugins/channel"];
+  const tarballPath = path.join(bundleDir, channelSpec.slice("file:".length));
+  const entries = execFileSync("tar", ["-tzf", tarballPath], { encoding: "utf8" }).trim().split("\n");
+  const monitorEntry = entries.find((entry) => /^package\/dist\/monitor-.*\.mjs$/u.test(entry));
+  assert.ok(monitorEntry, "Channel archive should contain its compiled monitor entry");
+  return execFileSync("tar", ["-xOzf", tarballPath, monitorEntry], { encoding: "utf8" });
+}
 
 test("cloud Runtime declares locked OneClaw plugin artifacts", () => {
   assert.equal(manifest.private, true);
@@ -64,6 +74,16 @@ test("cloud Runtime does not ship retired collaboration plugins", () => {
     assert.equal(lockfile.packages[""].dependencies[packageName], undefined);
     assert.equal(lockfile.packages[`node_modules/${packageName}`], undefined);
   }
+});
+
+test("bundled Channel preserves detached replies and terminal Execution notices", () => {
+  const source = bundledChannelMonitorSource();
+  assert.match(source, /preparedMessageId/u);
+  assert.match(source, /deliveryIntentId/u);
+  assert.match(source, /Delivered a background Session reply\./u);
+  assert.match(source, /runningExecutionBlockIdsByToolName/u);
+  assert.match(source, /acceptAgentToolResult\(payload\)/u);
+  assert.match(source, /params\.stream\.acceptAgentToolResult\(event\)/u);
 });
 
 test("plugin source stays outside the template while local deployment tarballs are content-addressed", () => {

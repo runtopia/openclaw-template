@@ -49,6 +49,29 @@ const INTERNAL_SOURCE_REPLY_PATCHED = `function hasExternalSessionDeliveryRoute(
 	return Boolean(channel && channel !== "webchat");
 }`;
 
+const DELIVERY_CONTEXT_ORIGINAL = `deliveryQueueId: params.deliveryQueueId,
+		onPlatformSendDispatch: params.onPlatformSendDispatch`;
+
+const DELIVERY_CONTEXT_PATCHED = `deliveryQueueId: params.deliveryQueueId,
+		deliveryIntentId: params.deliveryIntentId,
+		onPlatformSendDispatch: params.onPlatformSendDispatch`;
+
+const DELIVERY_CORE_ORIGINAL = `deliveryQueueId: params.deliveryQueueId,
+		requiredUnknownSendReconciliation: params.requiredUnknownSendReconciliation`;
+
+const DELIVERY_CORE_PATCHED = `deliveryQueueId: params.deliveryQueueId,
+		deliveryIntentId: params.deliveryIntentId,
+		requiredUnknownSendReconciliation: params.requiredUnknownSendReconciliation`;
+
+const DELIVERY_QUEUE_ORIGINAL = `const wrappedParams = {
+		...params,
+		...exactReconciliationRequired`;
+
+const DELIVERY_QUEUE_PATCHED = `const wrappedParams = {
+		...params,
+		...platformQueueId ? { deliveryIntentId: platformQueueId } : {},
+		...exactReconciliationRequired`;
+
 export function patchOneClawCompletionDeliverySource(source) {
   if (source.includes(PATCHED)) return source;
   if (!source.includes(ORIGINAL)) {
@@ -67,6 +90,24 @@ export function patchOneClawInternalSourceReplySource(source) {
     );
   }
   return source.replace(INTERNAL_SOURCE_REPLY_ORIGINAL, INTERNAL_SOURCE_REPLY_PATCHED);
+}
+
+export function patchOneClawDeliveryIntentSource(source) {
+  let patched = source;
+  for (const [original, replacement, label] of [
+    [DELIVERY_CONTEXT_ORIGINAL, DELIVERY_CONTEXT_PATCHED, "adapter context"],
+    [DELIVERY_CORE_ORIGINAL, DELIVERY_CORE_PATCHED, "delivery core"],
+    [DELIVERY_QUEUE_ORIGINAL, DELIVERY_QUEUE_PATCHED, "durable queue"],
+  ]) {
+    if (patched.includes(replacement)) continue;
+    if (!patched.includes(original)) {
+      throw new Error(
+        `[patch-openclaw-oneclaw-completion-delivery] ${label} anchor was not found; review the OpenClaw pin`,
+      );
+    }
+    patched = patched.replace(original, replacement);
+  }
+  return patched;
 }
 
 function javascriptFiles(directory) {
@@ -105,6 +146,15 @@ export function patchOneClawCompletionDelivery(openClawRoot) {
       `[patch-openclaw-oneclaw-completion-delivery] expected one compiled internal source-reply module, found ${internalSourceReplyCandidates.length}`,
     );
   }
+  const deliveryIntentCandidates = files.filter((path) => {
+    const source = readFileSync(path, "utf8");
+    return source.includes(DELIVERY_QUEUE_ORIGINAL) || source.includes(DELIVERY_QUEUE_PATCHED);
+  });
+  if (deliveryIntentCandidates.length !== 1) {
+    throw new Error(
+      `[patch-openclaw-oneclaw-completion-delivery] expected one compiled outbound delivery module, found ${deliveryIntentCandidates.length}`,
+    );
+  }
 
   const patches = [
     {
@@ -114,6 +164,10 @@ export function patchOneClawCompletionDelivery(openClawRoot) {
     {
       filePath: internalSourceReplyCandidates[0],
       patch: patchOneClawInternalSourceReplySource,
+    },
+    {
+      filePath: deliveryIntentCandidates[0],
+      patch: patchOneClawDeliveryIntentSource,
     },
   ];
   let changed = false;

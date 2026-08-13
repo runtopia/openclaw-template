@@ -7,7 +7,6 @@ import test from "node:test";
 import {
   patchOneClawCompletionDelivery,
   patchOneClawCompletionDeliverySource,
-  patchOneClawDeliveryIntentSource,
   patchOneClawInternalSourceReplySource,
 } from "../scripts/patch-openclaw-oneclaw-completion-delivery.mjs";
 
@@ -39,25 +38,6 @@ function inferDeliveryFromSessionKey(sessionKey) {
 	if (!channel) return null;
 	return { channel };
 }
-`;
-
-const outboundDeliveryFixture = `
-function createContext(params) {
-	return {
-		deliveryQueueId: params.deliveryQueueId,
-		onPlatformSendDispatch: params.onPlatformSendDispatch
-	};
-}
-function createHandler(params) {
-	return {
-		deliveryQueueId: params.deliveryQueueId,
-		requiredUnknownSendReconciliation: params.requiredUnknownSendReconciliation
-	};
-}
-const wrappedParams = {
-		...params,
-		...exactReconciliationRequired && params.payloads.length === 1 ? { deliveryQueueId: platformQueueId } : { deliveryQueueId: void 0 }
-};
 `;
 
 test("OneClaw detached completions require durable Message Tool delivery", () => {
@@ -110,13 +90,6 @@ test("OneClaw internal source-reply patch is idempotent", () => {
   assert.equal(patchOneClawInternalSourceReplySource(once), once);
 });
 
-test("OneClaw durable queue identity reaches the Channel adapter without becoming a reconciliation marker", () => {
-  const patched = patchOneClawDeliveryIntentSource(outboundDeliveryFixture);
-  assert.match(patched, /deliveryIntentId: params\.deliveryIntentId/);
-  assert.match(patched, /platformQueueId \? \{ deliveryIntentId: platformQueueId \}/);
-  assert.equal(patchOneClawDeliveryIntentSource(patched), patched);
-});
-
 test("OneClaw completion delivery patch skips bundled plugin symlink loops", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oneclaw-completion-patch-"));
   const dist = path.join(root, "dist");
@@ -125,7 +98,6 @@ test("OneClaw completion delivery patch skips bundled plugin symlink loops", () 
   writeFileSync(path.join(dist, "completion.mjs"), fixture);
   writeFileSync(path.join(dist, "internal-source-reply.mjs"), internalSourceReplyFixture);
   writeFileSync(path.join(dist, "openclaw-tools.mjs"), messageToolDeliveryFixture);
-  writeFileSync(path.join(dist, "deliver.mjs"), outboundDeliveryFixture);
   symlinkSync(root, path.join(pluginModules, "openclaw"));
 
   try {

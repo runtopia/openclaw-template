@@ -12,15 +12,12 @@ Deploy **OpenClaw** (an AI coding assistant platform) on Railway as a single con
 - **Repair console** at `/repair/*` — AI diagnostic chat, gateway restart, QR binding for WhatsApp/WeChat
 - **Health endpoint** at `/health`
 - **Login page** at `/login` (protected by `SETUP_PASSWORD`)
-- **Pinned common skills** from OneClaw Desktop: lightweight discovery and self-improvement by default, with document skills available at build time
+- **Pinned common skills** from OneClaw Desktop, including the document runtime in the standard image
 
-The default Docker build uses the lean `cloud` runtime profile. It keeps the
-Gateway, MCP, summarize, lightweight skills, and all channel plugins. It omits
-the standalone ClawHub CLI, browser libraries, document/OCR runtimes,
-heavyweight local agent CLIs, and niche Go binaries. Build with
-`--build-arg ONECLAW_DOCUMENT_SKILLS=1` for PDF/XLSX/DOCX/PPTX support, or
-`--build-arg ONECLAW_RUNTIME_PROFILE=full` for the complete toolchain.
-The documents profile uses the broad local `pdf` workflow; legacy employee
+The default Docker build uses the `standard` runtime profile. It contains the
+Gateway, channels, common media tools, and PDF/XLSX/DOCX/PPTX runtimes. Build
+with `--build-arg ONECLAW_RUNTIME_PROFILE=full` for the additive browser and
+specialist CLI toolchain. The standard profile uses the broad local `pdf` workflow; legacy employee
 assignments of the paid-Gemini-dependent `nano-pdf` skill are mapped to `pdf`.
 The specialized `nano-pdf` executable remains available only in `full`.
 
@@ -125,21 +122,19 @@ this avoids a multi-GB Codex harness download during the first cloud boot.
 | `GATEWAY_RESPONSES_ENABLED` | off | Enable `POST /v1/responses` |
 | `ONECLAW_PREINSTALLED_SKILLS_ENABLED` | on | Set to `false` to disable image-bundled common skills |
 
-`ONECLAW_RUNTIME_PROFILE` and `ONECLAW_DOCUMENT_SKILLS` are image build arguments, not Railway runtime variables.
+`ONECLAW_RUNTIME_PROFILE` is an image build argument, not a Railway runtime variable.
 
-GitHub Actions defaults to the `documents` image type. A push to `main` publishes
-both `latest` and `documents`; a `v*` tag also publishes the semver tag. Manual
-workflow runs can select `documents`, `cloud`, or `full`. The optional variants
-publish only their matching tag and do not replace Railway's `latest` image.
+GitHub Actions builds `standard` first and then `full`, importing the standard
+cache into the additive full build. A push to `main` publishes `latest`,
+`standard`, and `full`. A `v*` tag additionally publishes the immutable semver,
+`<version>-standard`, and `<version>-full` tags. Manual runs default to both but
+can build only one profile while diagnosing a profile-specific failure.
 
 ## Local Docker Run
 
 ```bash
-# Build
-docker build -t openclaw-railway-template .
-
-# Optional PDF/XLSX/DOCX/PPTX runtime
-docker build --build-arg ONECLAW_DOCUMENT_SKILLS=1 -t openclaw-railway-template:documents .
+# Standard common/document runtime
+docker build -t openclaw-railway-template:standard .
 
 # Optional complete local-tool image
 docker build --build-arg ONECLAW_RUNTIME_PROFILE=full -t openclaw-railway-template:full .
@@ -169,8 +164,8 @@ Add channel tokens as additional `-e` flags:
 
 ## Railway Deployment
 
-1. Build the default `cloud` image in CI and push it to a registry, pinned by version tag or digest.
-2. Set the Railway service Source to **Docker Image** and enter that image reference, so Railway does not rebuild the repository.
+1. Let CI publish both profiles to a registry using immutable `<version>-standard` and `<version>-full` tags.
+2. Configure OneClaw API's `openclaw_standard_image` and `openclaw_full_image`; Railway receives the selected image during provision/redeploy.
 3. Mount a **Volume** at `/data` and set the runtime variables.
 4. Enable **public networking** and deploy.
 
@@ -209,7 +204,7 @@ src/
 ├── skills/                # AI tool definitions for repair assistant
 └── public/                # Static pages: login.html, loading.html
 start.sh                   # Docker entrypoint: fix /data permissions → gosu → node src/index.js
-Dockerfile                 # Cloud/full profiles; immutable plugins and common skills under /opt
+Dockerfile                 # Standard/full layered profiles; immutable plugins and skills under /opt
 railway.toml               # Railway deployment config
 docker-compose.yml         # Local development compose
 ```

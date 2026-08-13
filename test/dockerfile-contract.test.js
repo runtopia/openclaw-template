@@ -55,13 +55,17 @@ test("standard is the document-capable base and full is strictly additive", () =
   assert.ok(dockerfile.indexOf("FROM runtime-standard AS runtime-full") < dockerfile.indexOf("clawhub@${CLAWHUB_VERSION}"));
 });
 
-test("GitHub CI defaults deployments to the standard image type", () => {
+test("GitHub CI builds and publishes both runtime image types", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "docker.yml"), "utf8");
-  assert.match(workflow, /default: standard/);
-  assert.ok(workflow.includes("ONECLAW_RUNTIME_PROFILE=${{ steps.profile.outputs.runtime_profile }}"));
-  assert.ok(workflow.includes("ONECLAW_DOCUMENT_SKILLS=${{ steps.profile.outputs.document_skills }}"));
+  assert.match(workflow, /default: both/);
+  assert.ok(workflow.includes("Build and push standard"));
+  assert.ok(workflow.includes("Build and push full"));
+  assert.ok(workflow.includes("ONECLAW_RUNTIME_PROFILE=standard"));
+  assert.ok(workflow.includes("ONECLAW_RUNTIME_PROFILE=full"));
+  assert.ok(workflow.includes("scope=runtime-standard"));
   assert.ok(workflow.includes("type=raw,value=latest"));
-  assert.ok(workflow.includes("type=raw,value=documents"));
+  assert.ok(workflow.includes("type=raw,value=standard"));
+  assert.ok(workflow.includes("type=raw,value=full"));
 });
 
 test("Dockerfile bundles the pinned Desktop common skills outside the data volume", () => {

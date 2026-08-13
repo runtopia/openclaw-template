@@ -19,6 +19,14 @@ const completionRouteRequiresMessageToolDelivery = params.expectsCompletionMessa
 			directOrigin: effectiveDirectOrigin,
 			requesterSessionOrigin
 		});
+		const requesterActivity = resolveRequesterSessionActivity(canonicalRequesterSessionKey);
+		if (params.expectsCompletionMessage && subagentAnnounceDeliveryDeps.isRequesterSessionAbandoned(canonicalRequesterSessionKey, requesterActivity.sessionId)) return {
+			delivered: false,
+			path: "none",
+			reason: "requester_abandoned",
+			error: "requester session abandoned after timeout"
+		};
+		let activeRequesterWakeFailed = false;
 `;
 
 const internalSourceReplyFixture = `
@@ -45,17 +53,20 @@ test("OneClaw detached completions require durable Message Tool delivery", () =>
 
   assert.match(patched, /deliveryTarget\.channel === "oneclaw"/);
   assert.match(patched, /deliveryTarget\.channel === "oneclaw-channel"/);
-  assert.doesNotThrow(() => new Function(
-    "params",
-    "completionRequiresMessageToolDelivery",
-    "deliveryTarget",
-    "cfg",
-    "canonicalRequesterSessionKey",
-    "requesterEntry",
-    "effectiveDirectOrigin",
-    "requesterSessionOrigin",
-    `${patched}; return completionRouteRequiresMessageToolDelivery;`,
-  ));
+  assert.doesNotThrow(() => new Function(`return async function () {${patched}}`));
+});
+
+test("OneClaw generated media bypasses overlapping requester wake delivery", () => {
+  const patched = patchOneClawCompletionDeliverySource(fixture);
+
+  assert.match(patched, /const oneClawGeneratedMediaCompletion = agentMediatedCompletion/);
+  assert.match(patched, /mediaUrls: expectedMediaUrls/);
+  assert.match(patched, /if \(generatedMediaDelivery\) return generatedMediaDelivery/);
+  assert.ok(
+    patched.indexOf("if (oneClawGeneratedMediaCompletion)")
+      < patched.indexOf("let activeRequesterWakeFailed = false"),
+    "generated media must be delivered before the active requester wake path",
+  );
 });
 
 test("OneClaw completion delivery patch is idempotent", () => {

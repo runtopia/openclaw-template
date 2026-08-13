@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Keep detached completion replies on OneClaw's durable Message Tool path.
+ * Keep detached completion replies on OneClaw's durable outbound path.
  *
  * OpenClaw 2026.7.1-2 lets an inactive requester session deliver an automatic
  * final directly to its channel. OneClaw deliberately rejects that orphan
  * send because no public Run owns it. The same completion already carries a
- * stable idempotency key; forcing Message Tool delivery lets oneclaw-channel
- * allocate the autonomous public Run and persist generated media exactly once.
+ * stable idempotency key. Text completions use Message Tool delivery, while
+ * generated media is delivered directly by the host so overlapping background
+ * completions cannot be lost when a model omits the Message Tool call.
  */
 
 import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -35,6 +36,39 @@ const PATCHED = `const completionRouteRequiresMessageToolDelivery = params.expec
 			})
 		);`;
 
+const GENERATED_MEDIA_DIRECT_ORIGINAL = `		const requesterActivity = resolveRequesterSessionActivity(canonicalRequesterSessionKey);
+		if (params.expectsCompletionMessage && subagentAnnounceDeliveryDeps.isRequesterSessionAbandoned(canonicalRequesterSessionKey, requesterActivity.sessionId)) return {
+			delivered: false,
+			path: "none",
+			reason: "requester_abandoned",
+			error: "requester session abandoned after timeout"
+		};
+		let activeRequesterWakeFailed = false;`;
+
+const GENERATED_MEDIA_DIRECT_PATCHED = `		const requesterActivity = resolveRequesterSessionActivity(canonicalRequesterSessionKey);
+		if (params.expectsCompletionMessage && subagentAnnounceDeliveryDeps.isRequesterSessionAbandoned(canonicalRequesterSessionKey, requesterActivity.sessionId)) return {
+			delivered: false,
+			path: "none",
+			reason: "requester_abandoned",
+			error: "requester session abandoned after timeout"
+		};
+		const oneClawGeneratedMediaCompletion = agentMediatedCompletion && expectedMediaUrls.length > 0 && (
+			deliveryTarget.channel === "oneclaw" || deliveryTarget.channel === "oneclaw-channel"
+		);
+		if (oneClawGeneratedMediaCompletion) {
+			const generatedMediaDelivery = await deliverGeneratedMediaCompletionDirect({
+				cfg,
+				requesterSessionKey: canonicalRequesterSessionKey,
+				directIdempotencyKey: params.directIdempotencyKey,
+				deliveryTarget,
+				mediaUrls: expectedMediaUrls,
+				internalEvents: params.internalEvents,
+				sourceTool: params.sourceTool
+			});
+			if (generatedMediaDelivery) return generatedMediaDelivery;
+		}
+		let activeRequesterWakeFailed = false;`;
+
 const INTERNAL_SOURCE_REPLY_ORIGINAL = `function hasExternalSessionDeliveryRoute(sessionKey) {
 	const route = parseSessionDeliveryRoute(sessionKey);
 	if (!route) return false;
@@ -50,13 +84,24 @@ const INTERNAL_SOURCE_REPLY_PATCHED = `function hasExternalSessionDeliveryRoute(
 }`;
 
 export function patchOneClawCompletionDeliverySource(source) {
-  if (source.includes(PATCHED)) return source;
-  if (!source.includes(ORIGINAL)) {
-    throw new Error(
-      "[patch-openclaw-oneclaw-completion-delivery] completion policy anchor was not found; review the OpenClaw pin",
-    );
+  let patched = source;
+  if (!patched.includes(PATCHED)) {
+    if (!patched.includes(ORIGINAL)) {
+      throw new Error(
+        "[patch-openclaw-oneclaw-completion-delivery] completion policy anchor was not found; review the OpenClaw pin",
+      );
+    }
+    patched = patched.replace(ORIGINAL, PATCHED);
   }
-  return source.replace(ORIGINAL, PATCHED);
+  if (!patched.includes(GENERATED_MEDIA_DIRECT_PATCHED)) {
+    if (!patched.includes(GENERATED_MEDIA_DIRECT_ORIGINAL)) {
+      throw new Error(
+        "[patch-openclaw-oneclaw-completion-delivery] generated-media delivery anchor was not found; review the OpenClaw pin",
+      );
+    }
+    patched = patched.replace(GENERATED_MEDIA_DIRECT_ORIGINAL, GENERATED_MEDIA_DIRECT_PATCHED);
+  }
+  return patched;
 }
 
 export function patchOneClawInternalSourceReplySource(source) {

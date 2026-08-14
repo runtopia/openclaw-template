@@ -55,6 +55,16 @@ test("cloud Runtime declares locked OneClaw plugin artifacts", () => {
   }
 });
 
+test("production recovery keeps the schema-v6 Channel artifact pinned", () => {
+  const channelSpec = ONECLAW_PACKAGES["@oneclaw-plugins/channel"];
+  const channelEntry = lockfile.packages["node_modules/@oneclaw-plugins/channel"];
+  assert.equal(channelEntry.version, "0.1.23");
+  assert.match(
+    channelSpec,
+    /^file:tarballs\/oneclaw-plugins-channel-0\.1\.23-[a-f0-9]{64}\.tgz$/u,
+  );
+});
+
 test("cloud Runtime does not ship retired collaboration plugins", () => {
   for (const packageName of [
     "@oneclaw-plugins/durable-work",

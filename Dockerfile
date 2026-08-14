@@ -136,7 +136,10 @@ ENV PATH="/opt/oneclaw-python/bin:${PATH}"
 # pinning a new version or when the layer is stale from a prior @latest build).
 ARG CACHEBUST_PLUGINS=v14
 ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
-ENV ONECLAW_INTERNAL_CHANNEL_V2=1
+# Keep the schema-v6 Channel package, but use the production-routed v1
+# WebSocket transport until /internal/channel/v2 is exposed by the public API
+# ingress. Downgrading the package would make existing schema-v6 volumes fail.
+ENV ONECLAW_INTERNAL_CHANNEL_V2=0
 WORKDIR /app
 COPY scripts/patch-openclaw-chat-images.js \
      scripts/patch-openclaw-memory-migration.mjs \

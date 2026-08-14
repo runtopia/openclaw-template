@@ -4,7 +4,7 @@
   "private": true,
   "description": "Exact plugin versions preinstalled by the OneClaw cloud Runtime image.",
   "dependencies": {
-    "@oneclaw-plugins/channel": "file:tarballs/oneclaw-plugins-channel-0.1.23-190fab581ba1929da643280004d3800d978986d07ebab5704679448efcd96841.tgz",
+    "@oneclaw-plugins/channel": "0.1.24",
     "@oneclaw-plugins/clawrouters": "0.4.1",
     "@oneclaw-plugins/openclaw-search": "0.2.0",
     "@oneclaw-plugins/runtime-events": "0.1.2",

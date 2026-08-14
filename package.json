@@ -13,7 +13,8 @@
     "lint": "node -c src/index.js",
     "test": "node --test",
     "check:oneclaw-plugins": "node scripts/update-oneclaw-plugins.mjs --check",
-    "update:oneclaw-plugins": "node scripts/update-oneclaw-plugins.mjs"
+    "update:oneclaw-plugins": "node scripts/update-oneclaw-plugins.mjs",
+    "update:local-channel": "node scripts/update-local-oneclaw-channel.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",

@@ -57,7 +57,11 @@ test("standard is the document-capable base and full is strictly additive", () =
 
 test("GitHub CI builds and publishes both runtime image types", () => {
   const workflow = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "docker.yml"), "utf8");
-  assert.match(workflow, /default: both/);
+  assert.match(workflow, /tags: \['v\*'\]/);
+  assert.ok(!workflow.includes("branches: [main]"));
+  assert.ok(!workflow.includes("workflow_dispatch:"));
+  assert.ok(workflow.includes("Require release tag from main"));
+  assert.ok(workflow.includes("git merge-base --is-ancestor"));
   assert.ok(workflow.includes("Build and push standard"));
   assert.ok(workflow.includes("Build and push full"));
   assert.ok(workflow.includes("ONECLAW_RUNTIME_PROFILE=standard"));

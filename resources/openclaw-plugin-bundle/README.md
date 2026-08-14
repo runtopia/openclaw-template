@@ -46,3 +46,24 @@ branch exactly equal to `origin/develop`. It validates and tests Channel, runs t
 updates this bundle's manifest and lockfile, removes the superseded Channel
 archive, and runs the bundle contract tests. It deliberately does not commit,
 push, build an image, or restart a Runtime.
+
+## Formal npm and image release
+
+Formal releases use committed `main` branches in both repositories. The
+command below reads the plugin's committed `oneclaw.release.json`, pushes its
+official release tag, waits for GitHub Actions trusted publishing to make the
+exact npm artifacts visible, replaces any local `file:` bundle with those npm
+versions, regenerates the lockfile, runs the Template tests, commits `main`,
+and pushes a Template release tag:
+
+```bash
+npm run release:oneclaw-plugin -- oneclaw-channel --tag v4.1.4
+```
+
+Omit `--tag` to increment the latest stable Template tag's patch version. The
+plugin repository defaults to `../oneclaw-plugins` and can be overridden with
+`--plugin-repo`. Both repositories must be clean and exactly synchronized with
+`origin/main`; uncommitted, ahead, behind, or non-main releases are rejected.
+
+Only a pushed Template `v*` tag builds and publishes Runtime images. A normal
+push to `main` and manual workflow dispatch do not build images.

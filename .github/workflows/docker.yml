@@ -2,25 +2,7 @@ name: docker
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-  workflow_dispatch:
-    inputs:
-      image_type:
-        description: 'Runtime image type (normal CI always builds both)'
-        required: true
-        default: both
-        type: choice
-        options:
-          - both
-          - standard
-          - full
-      image_version:
-        description: 'Image version override (e.g. 1.2.3). Defaults to git ref.'
-        required: false
 
 env:
   REGISTRY: ghcr.io
@@ -35,31 +17,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Resolve requested images
-        id: images
-        env:
-          REQUESTED_IMAGE_TYPE: ${{ inputs.image_type || 'both' }}
+      - name: Require release tag from main
         run: |
-          case "$REQUESTED_IMAGE_TYPE" in
-            both)
-              echo "build_standard=true" >> "$GITHUB_OUTPUT"
-              echo "build_full=true" >> "$GITHUB_OUTPUT"
-              ;;
-            standard|full)
-              if [ "$REQUESTED_IMAGE_TYPE" = "standard" ]; then
-                echo "build_standard=true" >> "$GITHUB_OUTPUT"
-                echo "build_full=false" >> "$GITHUB_OUTPUT"
-              else
-                echo "build_standard=false" >> "$GITHUB_OUTPUT"
-                echo "build_full=true" >> "$GITHUB_OUTPUT"
-              fi
-              ;;
-            *)
-              echo "Unsupported image type: $REQUESTED_IMAGE_TYPE" >&2
-              exit 1
-              ;;
-          esac
+          set -euo pipefail
+          git fetch --no-tags origin main
+          release_commit="$(git rev-parse "${GITHUB_REF}^{commit}")"
+          git merge-base --is-ancestor "$release_commit" origin/main
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -69,33 +35,22 @@ jobs:
 
       - name: Resolve IMAGE_VERSION
         id: ver
-        env:
-          VERSION_OVERRIDE: ${{ inputs.image_version }}
         run: |
-          if [ -n "$VERSION_OVERRIDE" ]; then
-            value="$VERSION_OVERRIDE"
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            value="${GITHUB_REF_NAME#v}"
-          else
-            value="${GITHUB_SHA::12}"
-          fi
+          value="${GITHUB_REF_NAME#v}"
           echo "value=$value" >> "$GITHUB_OUTPUT"
 
       - name: Extract standard metadata
-        if: steps.images.outputs.build_standard == 'true'
         id: meta_standard
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=standard
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest
             type=semver,pattern={{version}}
             type=semver,pattern={{version}}-standard
-            type=raw,value=${{ steps.ver.outputs.value }}-standard,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Extract full metadata
-        if: steps.images.outputs.build_full == 'true'
         id: meta_full
         uses: docker/metadata-action@v5
         with:
@@ -103,7 +58,6 @@ jobs:
           tags: |
             type=raw,value=full
             type=semver,pattern={{version}}-full
-            type=raw,value=${{ steps.ver.outputs.value }}-full,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -111,7 +65,6 @@ jobs:
       # Build standard first. The full target inherits it byte-for-byte and
       # imports this cache, so a normal release does not rebuild the base.
       - name: Build and push standard
-        if: steps.images.outputs.build_standard == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -127,7 +80,6 @@ jobs:
           cache-to: type=gha,mode=max,scope=runtime-standard
 
       - name: Build and push full
-        if: steps.images.outputs.build_full == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .

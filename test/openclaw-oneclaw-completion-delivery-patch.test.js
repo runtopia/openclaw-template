@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   patchOneClawCompletionDelivery,
   patchOneClawCompletionDeliverySource,
+  patchOneClawDeliveryIntentSource,
   patchOneClawInternalSourceReplySource,
 } from "../scripts/patch-openclaw-oneclaw-completion-delivery.mjs";
 
@@ -19,6 +20,14 @@ const completionRouteRequiresMessageToolDelivery = params.expectsCompletionMessa
 			directOrigin: effectiveDirectOrigin,
 			requesterSessionOrigin
 		});
+		const requesterActivity = resolveRequesterSessionActivity(canonicalRequesterSessionKey);
+		if (params.expectsCompletionMessage && subagentAnnounceDeliveryDeps.isRequesterSessionAbandoned(canonicalRequesterSessionKey, requesterActivity.sessionId)) return {
+			delivered: false,
+			path: "none",
+			reason: "requester_abandoned",
+			error: "requester session abandoned after timeout"
+		};
+		let activeRequesterWakeFailed = false;
 `;
 
 const internalSourceReplyFixture = `
@@ -40,22 +49,44 @@ function inferDeliveryFromSessionKey(sessionKey) {
 }
 `;
 
+const outboundDeliveryFixture = `
+function createContext(params) {
+	return {
+		deliveryQueueId: params.deliveryQueueId,
+		onPlatformSendDispatch: params.onPlatformSendDispatch
+	};
+}
+function createHandler(params) {
+	return {
+		deliveryQueueId: params.deliveryQueueId,
+		requiredUnknownSendReconciliation: params.requiredUnknownSendReconciliation
+	};
+}
+const wrappedParams = {
+		...params,
+		...exactReconciliationRequired && params.payloads.length === 1 ? { deliveryQueueId: platformQueueId } : { deliveryQueueId: void 0 }
+};
+`;
+
 test("OneClaw detached completions require durable Message Tool delivery", () => {
   const patched = patchOneClawCompletionDeliverySource(fixture);
 
   assert.match(patched, /deliveryTarget\.channel === "oneclaw"/);
   assert.match(patched, /deliveryTarget\.channel === "oneclaw-channel"/);
-  assert.doesNotThrow(() => new Function(
-    "params",
-    "completionRequiresMessageToolDelivery",
-    "deliveryTarget",
-    "cfg",
-    "canonicalRequesterSessionKey",
-    "requesterEntry",
-    "effectiveDirectOrigin",
-    "requesterSessionOrigin",
-    `${patched}; return completionRouteRequiresMessageToolDelivery;`,
-  ));
+  assert.doesNotThrow(() => new Function(`return async function () {${patched}}`));
+});
+
+test("OneClaw generated media bypasses overlapping requester wake delivery", () => {
+  const patched = patchOneClawCompletionDeliverySource(fixture);
+
+  assert.match(patched, /const oneClawGeneratedMediaCompletion = agentMediatedCompletion/);
+  assert.match(patched, /mediaUrls: expectedMediaUrls/);
+  assert.match(patched, /if \(generatedMediaDelivery\) return generatedMediaDelivery/);
+  assert.ok(
+    patched.indexOf("if (oneClawGeneratedMediaCompletion)")
+      < patched.indexOf("let activeRequesterWakeFailed = false"),
+    "generated media must be delivered before the active requester wake path",
+  );
 });
 
 test("OneClaw completion delivery patch is idempotent", () => {
@@ -90,6 +121,14 @@ test("OneClaw internal source-reply patch is idempotent", () => {
   assert.equal(patchOneClawInternalSourceReplySource(once), once);
 });
 
+test("OpenClaw durable queue identity reaches the OneClaw Channel adapter", () => {
+  const patched = patchOneClawDeliveryIntentSource(outboundDeliveryFixture);
+
+  assert.match(patched, /deliveryIntentId: params\.deliveryIntentId/);
+  assert.match(patched, /platformQueueId \? \{ deliveryIntentId: platformQueueId \}/);
+  assert.equal(patchOneClawDeliveryIntentSource(patched), patched);
+});
+
 test("OneClaw completion delivery patch skips bundled plugin symlink loops", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oneclaw-completion-patch-"));
   const dist = path.join(root, "dist");
@@ -98,6 +137,7 @@ test("OneClaw completion delivery patch skips bundled plugin symlink loops", () 
   writeFileSync(path.join(dist, "completion.mjs"), fixture);
   writeFileSync(path.join(dist, "internal-source-reply.mjs"), internalSourceReplyFixture);
   writeFileSync(path.join(dist, "openclaw-tools.mjs"), messageToolDeliveryFixture);
+  writeFileSync(path.join(dist, "deliver.mjs"), outboundDeliveryFixture);
   symlinkSync(root, path.join(pluginModules, "openclaw"));
 
   try {

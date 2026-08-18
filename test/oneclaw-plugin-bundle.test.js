@@ -28,19 +28,24 @@ test("cloud Runtime declares locked OneClaw plugin artifacts", () => {
   const localMatch = channelSpec.match(
     /^file:(tarballs\/oneclaw-plugins-channel-[0-9A-Za-z.+-]+-([a-f0-9]{64})\.tgz)$/u,
   );
-  assert.ok(localMatch, "Channel should use a content-addressed local tgz before npm release");
-  const [, relativeTarball, expectedSha256] = localMatch;
-  const tarballPath = path.join(bundleDir, relativeTarball);
-  assert.equal(fs.existsSync(tarballPath), true);
-  assert.equal(
-    createHash("sha256").update(fs.readFileSync(tarballPath)).digest("hex"),
-    expectedSha256,
-  );
   assert.equal(lockfile.packages[""].dependencies["@oneclaw-plugins/channel"], channelSpec);
   const channelEntry = lockfile.packages["node_modules/@oneclaw-plugins/channel"];
-  assert.equal(channelEntry.resolved, channelSpec);
   assert.match(channelEntry.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u);
   assert.match(channelEntry.integrity, /^sha512-/u);
+  if (localMatch) {
+    const [, relativeTarball, expectedSha256] = localMatch;
+    const tarballPath = path.join(bundleDir, relativeTarball);
+    assert.equal(fs.existsSync(tarballPath), true);
+    assert.equal(
+      createHash("sha256").update(fs.readFileSync(tarballPath)).digest("hex"),
+      expectedSha256,
+    );
+    assert.equal(channelEntry.resolved, channelSpec);
+  } else {
+    assert.match(channelSpec, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u);
+    assert.equal(channelEntry.version, channelSpec);
+    assert.match(channelEntry.resolved, /^https:\/\/registry\.npmjs\.org\//u);
+  }
 
   for (const [packageName, version] of Object.entries(ONECLAW_PACKAGES)
     .filter(([packageName]) => packageName !== "@oneclaw-plugins/channel")) {
@@ -55,14 +60,19 @@ test("cloud Runtime declares locked OneClaw plugin artifacts", () => {
   }
 });
 
-test("production recovery keeps the schema-v6 Channel artifact pinned", () => {
+test("production recovery keeps a schema-v6-or-newer Channel artifact pinned", () => {
   const channelSpec = ONECLAW_PACKAGES["@oneclaw-plugins/channel"];
   const channelEntry = lockfile.packages["node_modules/@oneclaw-plugins/channel"];
-  assert.equal(channelEntry.version, "0.1.23");
-  assert.match(
-    channelSpec,
-    /^file:tarballs\/oneclaw-plugins-channel-0\.1\.23-[a-f0-9]{64}\.tgz$/u,
+  const [major, minor, patchVersion] = channelEntry.version.split(".").map(Number);
+  assert.ok(
+    major > 0 || minor > 1 || (minor === 1 && patchVersion >= 23),
+    `Channel ${channelEntry.version} predates schema v6`,
   );
+  if (channelSpec.startsWith("file:")) {
+    assert.match(channelSpec, /^file:tarballs\/oneclaw-plugins-channel-[0-9A-Za-z.+-]+-[a-f0-9]{64}\.tgz$/u);
+  } else {
+    assert.equal(channelSpec, channelEntry.version);
+  }
 });
 
 test("cloud Runtime does not ship retired collaboration plugins", () => {
@@ -79,6 +89,10 @@ test("cloud Runtime does not ship retired collaboration plugins", () => {
 test("plugin source stays outside the template while local deployment tarballs are content-addressed", () => {
   assert.equal(fs.existsSync(path.join(repoRoot, "resources", "openclaw-plugins")), false);
   assert.equal(fs.existsSync(path.join(repoRoot, "resources", "oneclaw-packages")), false);
-  const tarballs = fs.readdirSync(path.join(bundleDir, "tarballs"));
-  assert.deepEqual(tarballs, [path.basename(ONECLAW_PACKAGES["@oneclaw-plugins/channel"].slice("file:".length))]);
+  const channelSpec = ONECLAW_PACKAGES["@oneclaw-plugins/channel"];
+  const expectedTarballs = channelSpec.startsWith("file:")
+    ? [path.basename(channelSpec.slice("file:".length))]
+    : [];
+  const tarballs = fs.readdirSync(path.join(bundleDir, "tarballs")).filter((entry) => entry.endsWith(".tgz"));
+  assert.deepEqual(tarballs.sort(), expectedTarballs);
 });

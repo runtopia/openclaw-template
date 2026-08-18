@@ -19,11 +19,12 @@ const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.
 const templateTagPattern = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 
 function run(command, args, cwd, options = {}) {
-  return execFileSync(command, args, {
+  const output = execFileSync(command, args, {
     cwd,
     encoding: "utf8",
     stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
-  })?.trim() ?? "";
+  });
+  return options.trim === false ? output ?? "" : output?.trim() ?? "";
 }
 
 function git(args, cwd, options = {}) {
@@ -118,6 +119,13 @@ export function unreferencedTarballs(entries, manifest) {
   return entries.filter((entry) => entry.endsWith(".tgz") && !referenced.has(entry)).sort();
 }
 
+export function porcelainPaths(status) {
+  return status
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.slice(3));
+}
+
 function assertRepositoryReady(name, repository) {
   git(["fetch", "origin", "main", "--tags"], repository);
   const branch = git(["branch", "--show-current"], repository, { capture: true });
@@ -173,10 +181,7 @@ async function waitForNpmPackages(release) {
 }
 
 function ensureAllowedTemplateChanges() {
-  const changed = git(["status", "--porcelain"], repoRoot, { capture: true })
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => line.slice(3));
+  const changed = porcelainPaths(git(["status", "--porcelain"], repoRoot, { capture: true, trim: false }));
   const unexpected = changed.filter((filename) => !filename.startsWith("resources/openclaw-plugin-bundle/"));
   if (unexpected.length > 0) throw new Error(`Unexpected Template release changes: ${unexpected.join(", ")}`);
   return changed;

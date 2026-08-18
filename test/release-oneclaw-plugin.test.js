@@ -5,6 +5,7 @@ import {
   directReleaseDependencies,
   nextTemplateTag,
   parseArguments,
+  porcelainPaths,
   unreferencedTarballs,
   validateRepositoryState,
 } from "../scripts/release-oneclaw-plugin.mjs";
@@ -70,5 +71,15 @@ test("release removes only tarballs no longer referenced by the bundle", () => {
       { dependencies: { local: "file:tarballs/keep.tgz", remote: "1.0.0" } },
     ),
     ["remove.tgz"],
+  );
+});
+
+test("release preserves the first porcelain status path", () => {
+  assert.deepEqual(
+    porcelainPaths(" M resources/openclaw-plugin-bundle/package-lock.json\n D resources/openclaw-plugin-bundle/channel.tgz\n"),
+    [
+      "resources/openclaw-plugin-bundle/package-lock.json",
+      "resources/openclaw-plugin-bundle/channel.tgz",
+    ],
   );
 });

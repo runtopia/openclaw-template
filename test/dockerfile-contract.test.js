@@ -70,6 +70,11 @@ test("GitHub CI builds and publishes both runtime image types", () => {
   assert.ok(workflow.includes("type=raw,value=latest"));
   assert.ok(workflow.includes("type=raw,value=standard"));
   assert.ok(workflow.includes("type=raw,value=full"));
+  assert.match(
+    workflow,
+    /id: meta_full[\s\S]*?flavor: latest=false[\s\S]*?type=raw,value=full/,
+    "full metadata must not overwrite the standard latest tag",
+  );
 });
 
 test("Dockerfile bundles the pinned Desktop common skills outside the data volume", () => {

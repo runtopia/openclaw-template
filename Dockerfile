@@ -142,6 +142,7 @@ ENV OPENCLAW_PLUGINS_DIR=/opt/openclaw-plugins
 ENV ONECLAW_INTERNAL_CHANNEL_V2=0
 WORKDIR /app
 COPY scripts/patch-openclaw-chat-images.js \
+     scripts/patch-openclaw-assistant-media-agent-roots.js \
      scripts/patch-openclaw-memory-migration.mjs \
      scripts/patch-openclaw-oneclaw-completion-delivery.mjs \
      scripts/patch-oneclaw-channel-delivery.mjs \
@@ -153,6 +154,11 @@ COPY scripts/patch-openclaw-chat-images.js \
 # current agent; keep the existing fail-closed patch until upstream removes
 # the matching bundle anchors.
 RUN node /app/scripts/patch-openclaw-chat-images.js /usr/local/lib/node_modules/openclaw
+# The upstream Control UI scopes assistant-media to the default agent even
+# when a signed-in user is viewing another configured agent. Keep the route
+# authenticated, but let callers select another configured agent so its exact
+# workspace root can be added without opening arbitrary filesystem paths.
+RUN node /app/scripts/patch-openclaw-assistant-media-agent-roots.js /usr/local/lib/node_modules/openclaw
 # OpenClaw 2026.7.1 can leave duplicate legacy Memory Core state in place,
 # causing its strict startup migration checkpoint to fail on every restart.
 RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_modules/openclaw/dist

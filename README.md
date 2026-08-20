@@ -21,6 +21,12 @@ specialist CLI toolchain. The standard profile uses the broad local `pdf` workfl
 assignments of the paid-Gemini-dependent `nano-pdf` skill are mapped to `pdf`.
 The specialized `nano-pdf` executable remains available only in `full`.
 
+Generated media stays workspace-scoped for every configured employee. The
+image applies a fail-closed OpenClaw patch that lets an authenticated
+`assistant-media` request select a configured `agentId`; OpenClaw then adds
+only that agent's declared workspace root instead of exposing arbitrary local
+paths.
+
 ## Architecture
 
 ```

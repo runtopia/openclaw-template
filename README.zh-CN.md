@@ -20,6 +20,10 @@ Docker 默认使用轻量 `cloud` profile：保留 Gateway、MCP、summarize、�
 `--build-arg ONECLAW_DOCUMENT_SKILLS=1`；完整工具链使用
 `--build-arg ONECLAW_RUNTIME_PROFILE=full`。
 
+每位已配置员工生成的媒体仍按 workspace 隔离。镜像会对 OpenClaw 应用一个
+fail-closed 补丁：已鉴权的 `assistant-media` 请求可以指定已配置的 `agentId`，
+OpenClaw 只加入该员工声明的 workspace 根目录，不会开放任意本地路径。
+
 ## 架构
 
 ```

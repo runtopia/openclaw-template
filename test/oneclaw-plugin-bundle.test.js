@@ -93,6 +93,9 @@ test("plugin source stays outside the template while local deployment tarballs a
   const expectedTarballs = channelSpec.startsWith("file:")
     ? [path.basename(channelSpec.slice("file:".length))]
     : [];
-  const tarballs = fs.readdirSync(path.join(bundleDir, "tarballs")).filter((entry) => entry.endsWith(".tgz"));
+  const tarballsDir = path.join(bundleDir, "tarballs");
+  const tarballs = fs.existsSync(tarballsDir)
+    ? fs.readdirSync(tarballsDir).filter((entry) => entry.endsWith(".tgz"))
+    : [];
   assert.deepEqual(tarballs.sort(), expectedTarballs);
 });

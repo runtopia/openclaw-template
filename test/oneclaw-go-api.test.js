@@ -487,6 +487,86 @@ test("startup preload makes an existing employee ready without post-start config
   assert.equal(rpcCalls.some((call) => call.method === "agents.update" || call.method === "agents.files.set"), false);
 });
 
+test("startup coalesces current and legacy UUID agents without deleting persisted data", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  const employeeId = "498783d8-0096-4477-9c43-7c3d22495131";
+  const currentAgentId = "employee-498783d8009644779c437c3d22495131";
+  const legacyAgentId = `oneclaw-${employeeId}`;
+  const currentState = path.join(stateDir, "agents", currentAgentId);
+  const legacyState = path.join(stateDir, "agents", legacyAgentId);
+  fs.mkdirSync(currentState, { recursive: true });
+  fs.mkdirSync(legacyState, { recursive: true });
+  fs.writeFileSync(path.join(currentState, "current-session.json"), "current");
+  fs.writeFileSync(path.join(legacyState, "legacy-session.json"), "legacy");
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({
+    agents: {
+      list: [
+        { id: "main", default: true, workspace: path.join(workspaceDir, "agents/main") },
+        { id: currentAgentId, name: "程序员助理", workspace: path.join(workspaceDir, "agents", currentAgentId) },
+        { id: legacyAgentId, name: "程序员助理", workspace: path.join(workspaceDir, "agents", legacyAgentId) },
+      ],
+    },
+    bindings: [
+      { agentId: currentAgentId, match: { channel: "telegram", accountId: employeeId } },
+      { agentId: legacyAgentId, match: { channel: "telegram", accountId: employeeId } },
+    ],
+  }));
+
+  const rpcCalls = [];
+  const restoreFetch = withFetch((url) => {
+    if (url.endsWith("/runtime/events")) return jsonResponse({ accepted: true });
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  const employee = {
+    id: employeeId,
+    kind: "hired",
+    name: "程序员助理",
+    model: "clawrouters/auto",
+    system_prompt: "You are a developer assistant.",
+    personality: { language: "zh-CN" },
+    memory_files: [],
+    skills: [],
+    cron_tasks: [],
+    status: "active",
+  };
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      gatewayRpc: {
+        waitUntilConnected: async () => {},
+        rpcGateway: async (method, params) => {
+          rpcCalls.push({ method, params });
+          if (method === "agents.create") throw new Error("duplicate agent must not be created");
+          if (method === "agents.update") return { ok: true, payload: { ok: true } };
+          throw new Error(`unexpected rpc ${method}`);
+        },
+      },
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    assert.deepEqual(await integration.prepareEmployeesForStartup([employee]), { prepared: 1 });
+    await integration.reconcileAllEmployees([employee]);
+  } finally {
+    restoreFetch();
+  }
+
+  const config = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
+  assert.deepEqual(config.agents.list.map((agent) => agent.id), ["main", currentAgentId]);
+  assert.deepEqual(config.bindings, [
+    { agentId: currentAgentId, match: { channel: "telegram", accountId: employeeId } },
+  ]);
+  assert.equal(rpcCalls.some((call) => call.method === "agents.create"), false);
+  assert.equal(fs.readFileSync(path.join(currentState, "current-session.json"), "utf8"), "current");
+  assert.equal(fs.readFileSync(path.join(legacyState, "legacy-session.json"), "utf8"), "legacy");
+});
+
 test("employee reconciliation clears stale managed content but keeps the language policy", async () => {
   const stateDir = makeWorkspace();
   const workspaceDir = path.join(stateDir, "workspace");

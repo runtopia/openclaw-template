@@ -11,6 +11,7 @@ import { patchConfig } from "../config/edit.js";
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
 const COMMAND_LONG_POLL_MS = Math.max(0, Math.min(30_000, Number(process.env.ONECLAW_COMMAND_LONG_POLL_MS ?? 25_000) || 25_000));
+const EMPLOYEE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function enabledFlag(value) {
   return ["1", "on", "true", "yes"].includes(String(value || "").trim().toLowerCase());
@@ -76,6 +77,34 @@ export function buildOneclawChannelStatus({
 
 function normalizeEmployeeLanguage(language) {
   return String(language || "").trim().toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+}
+
+function employeeAgentIdentity(payload, employeeId) {
+  const explicit = String(payload?.openclaw_agent_id || payload?.agent_id || "").trim();
+  const publicId = String(employeeId || payload?.employee_id || payload?.employeeId || "").trim();
+  const current = EMPLOYEE_UUID_PATTERN.test(publicId) ? `employee-${publicId.replaceAll("-", "")}` : "";
+  const legacy = publicId ? `oneclaw-${publicId.replace(/[^a-zA-Z0-9_-]/g, "-")}` : "";
+  const candidates = [...new Set([explicit, current, legacy].filter(Boolean))];
+  return {
+    explicit,
+    current,
+    legacy,
+    candidates,
+    fallback: explicit || current || legacy,
+  };
+}
+
+function configuredAgentId(agent) {
+  return String(agent?.id || agent?.agentId || "").trim();
+}
+
+function resolveEmployeeAgent(agents, identity) {
+  const available = Array.isArray(agents) ? agents : [];
+  for (const candidate of identity.candidates) {
+    const match = available.find((agent) => configuredAgentId(agent) === candidate);
+    if (match) return { agent: match, agentId: configuredAgentId(match) };
+  }
+  return { agent: null, agentId: identity.fallback };
 }
 
 // nano-pdf is a narrow visual slide editor that requires a paid Gemini image
@@ -716,6 +745,55 @@ export function createOneclawIntegration({
       String(agent?.id || agent?.agentId || "").trim() === agentId);
   }
 
+  function coalesceConfiguredEmployeeAgent(payload, employeeId, { applyShape = false } = {}) {
+    const configPath = configPathForRuntime();
+    const identity = employeeAgentIdentity(payload, employeeId);
+    if (!identity.fallback || !fs.existsSync(configPath)) {
+      return { agentId: identity.fallback, found: false, desired: null, removed: [] };
+    }
+    let result = { agentId: identity.fallback, found: false, desired: null, removed: [] };
+    patchConfig(configPath, (config) => {
+      const agents = Array.isArray(config?.agents?.list) ? config.agents.list : [];
+      const resolved = resolveEmployeeAgent(agents, identity);
+      if (!resolved.agent) return;
+
+      const aliases = new Set(identity.candidates);
+      const removed = agents
+        .filter((agent) => agent !== resolved.agent && aliases.has(configuredAgentId(agent)))
+        .map(configuredAgentId);
+      if (removed.length > 0) {
+        const removedSet = new Set(removed);
+        config.agents.list = agents.filter((agent) => !removedSet.has(configuredAgentId(agent)));
+        if (Array.isArray(config.bindings)) {
+          const seen = new Set();
+          config.bindings = config.bindings
+            .map((binding) => removedSet.has(String(binding?.agentId || "").trim())
+              ? { ...binding, agentId: resolved.agentId }
+              : binding)
+            .filter((binding) => {
+              const key = JSON.stringify(binding);
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+        }
+      }
+      const desired = applyShape
+        ? applyEmployeeConfigShape(resolved.agent, payload, resolved.agentId)
+        : null;
+      result = {
+        agentId: resolved.agentId,
+        found: true,
+        desired,
+        removed,
+      };
+    });
+    if (result.removed.length > 0) {
+      console.warn(`[agents] coalesced duplicate employee agent(s) ${result.removed.join(", ")} into ${result.agentId}; on-disk data was preserved`);
+    }
+    return result;
+  }
+
   function configuredModelId(value) {
     if (typeof value === "string") return value.trim();
     if (value && typeof value === "object") return String(value.primary || value.id || "").trim();
@@ -768,17 +846,9 @@ export function createOneclawIntegration({
     for (const employee of employees) {
       if (!employee?.id || employee.status === "deleted") continue;
       const payload = runtimeEmployeeTemplatePayload(employee);
-      const agentId = String(payload.openclaw_agent_id || payload.agent_id || "").trim()
-        || `oneclaw-${employee.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-      let found = false;
-      let desired;
-      patchConfig(configPath, (config) => {
-        const agent = configuredAgent(config, agentId);
-        if (!agent) return;
-        found = true;
-        desired = applyEmployeeConfigShape(agent, payload, agentId);
-      });
-      if (!found) continue;
+      const resolved = coalesceConfiguredEmployeeAgent(payload, employee.id, { applyShape: true });
+      if (!resolved.found) continue;
+      const { agentId, desired } = resolved;
       const workspace = agentWorkspace(workspaceDir, agentId);
       atomicWriteFile(path.join(workspace, "IDENTITY.md"), desired.content);
       atomicWriteFile(path.join(workspace, "SOUL.md"), employeeSoulContent(payload));
@@ -1148,14 +1218,17 @@ export function createOneclawIntegration({
   }
 
   async function ensureEmployeeAgent(payload, employeeId) {
-    const preferredAgentId = String(payload.openclaw_agent_id || payload.agent_id || "").trim();
-    const stableName = preferredAgentId || `oneclaw-${employeeId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    const identity = employeeAgentIdentity(payload, employeeId);
+    const configured = coalesceConfiguredEmployeeAgent(payload, employeeId);
+    if (configured.found) return configured.agentId;
+    const stableName = identity.fallback;
+    if (!stableName) throw new Error("employee_id or openclaw_agent_id is required");
     if (stableName === "main") return "main";
     const workspace = agentWorkspace(workspaceDir, stableName);
     const listed = await callGateway("agents.list", {}, { tolerateError: true });
     const agents = listed?.agents || listed?.result?.agents || listed?.payload?.agents || [];
-    const existing = agents.find((agent) => agent?.id === stableName || agent?.agentId === stableName || agent?.name === stableName);
-    if (existing) return existing.id || existing.agentId || stableName;
+    const existing = resolveEmployeeAgent(agents, identity);
+    if (existing.agent) return existing.agentId;
     const model = String(payload.model || payload.suggested_model || "clawrouters/auto").trim() || "clawrouters/auto";
     const createFrame = await callGateway("agents.create", {
       name: stableName,

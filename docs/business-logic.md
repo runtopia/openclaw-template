@@ -241,7 +241,7 @@ Runtime 从 Go API 心跳响应或 `/runtime/commands` 拉取命令。模板当�
 
 `apply_template`：
 
-1. 如果 payload 带 `employee_id`，通过 gateway RPC 创建或定位稳定 agent：`oneclaw-<employee_id>`。
+1. 如果 payload 带 `employee_id`，优先使用平台下发的 `openclaw_agent_id`；UUID 员工缺失该字段时采用当前规范 `employee-<去横线 UUID>`，并兼容定位旧格式 `oneclaw-<UUID>`。若两种格式同时存在，启动同步只保留一条配置注册并保留磁盘数据；非 UUID 的旧命令继续使用 `oneclaw-<employee_id>`。
 2. 写入该 agent 的 `SOUL.md` 和 memory files。
 3. 如果没有 `employee_id`，写入 workspace 级 `SOUL.md` 和 memory files。
 

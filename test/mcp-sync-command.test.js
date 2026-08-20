@@ -19,7 +19,7 @@ test("leased sync_mcp command fetches the authoritative snapshot before acknowle
   fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({ agents: { list: [{ id: "main" }] } }));
   const servers = [{
     id: "oneclaw-composio-main", target_agent_ids: ["main"], enabled: true,
-    transport: "streamable-http", url: "https://backend.composio.dev/tool_router/trs_private/mcp",
+    transport: "streamable-http", url: "runtime/integrations/mcp",
     connection_timeout_ms: 5000, request_timeout_ms: 30000, supports_parallel_tool_calls: true,
     tool_filter: { include: ["GMAIL_FETCH_EMAILS"] },
   }];
@@ -45,8 +45,10 @@ test("leased sync_mcp command fetches the authoritative snapshot before acknowle
     apiUrl: "https://oneclaw.example.com/api/v1",
     instanceId: "runtime-1",
     instanceSecret: "secret-1",
+    mcpSidecarToken: "b".repeat(64),
     stateDir,
     workspaceDir,
+    repairTarget: "http://127.0.0.1:9090",
     isGatewayReady: () => true,
     isGatewayStarting: () => false,
   });
@@ -54,9 +56,11 @@ test("leased sync_mcp command fetches the authoritative snapshot before acknowle
 
   const config = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
   assert.equal(config.mcp.servers["oneclaw-composio-main"].transport, "streamable-http");
+  assert.equal(config.mcp.servers["oneclaw-composio-main"].url, "http://127.0.0.1:9090/internal/mcp/composio");
+  assert.equal(config.mcp.servers["oneclaw-composio-main"].headers["X-OneClaw-Sidecar-MCP-Token"], "b".repeat(64));
   const snapshotIndex = calls.findIndex((call) => call.target.endsWith("/runtime/integrations/mcp-snapshot"));
   const ackIndex = calls.findIndex((call) => call.target.endsWith("/runtime/commands/sync-1/ack"));
   assert.ok(snapshotIndex >= 0 && ackIndex > snapshotIndex);
   assert.deepEqual(JSON.parse(calls[ackIndex].options.body), { status: "succeeded", retryable: false });
-  assert.doesNotMatch(JSON.stringify(calls[0]), /trs_private/u);
+  assert.doesNotMatch(JSON.stringify(calls), /COMPOSIO_API_KEY|instance-secret/u);
 });

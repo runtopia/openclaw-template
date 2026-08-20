@@ -194,6 +194,7 @@ export function createOneclawIntegration({
   apiUrl,
   instanceId,
   instanceSecret,
+  mcpSidecarToken,
   stateDir,
   workspaceDir,
   gatewayTarget,
@@ -217,6 +218,7 @@ export function createOneclawIntegration({
 }) {
   const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
   const mainWorkspace = agentWorkspace(workspaceDir, "main");
+  const mcpSidecarUrl = new URL("/internal/mcp/composio", repairTarget || "http://127.0.0.1:8080").toString();
   if (!platformApiUrl || !instanceId || !instanceSecret) {
     return {
       start() {},
@@ -413,6 +415,8 @@ export function createOneclawIntegration({
     if (!snapshot) return null;
     const state = applyMcpSnapshot({
       configPath: configPathForRuntime(),
+      connectionHeaders: { "X-OneClaw-Sidecar-MCP-Token": mcpSidecarToken },
+      connectionUrl: mcpSidecarUrl,
       statePath: mcpStatePath,
       snapshot,
     });

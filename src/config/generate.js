@@ -306,7 +306,8 @@ export function generateConfigDirect(opts) {
   applyRuntimeDefaults(cfg, env);
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
+  fs.chmodSync(configPath, 0o600);
   console.log(`[generate] openclaw.json written (provider=${provider?.id ?? "none"})`);
   return cfg;
 }

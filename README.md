@@ -115,6 +115,8 @@ this avoids a multi-GB Codex harness download during the first cloud boot.
 | `ONECLAW_INSTANCE_SECRET` | Instance secret for heartbeat auth and protected platform-to-runtime repair calls |
 | `ONECLAW_RUNTIME_CONTRACT` | Runtime personality contract version (default: `2`) |
 
+The wrapper also consumes OneClaw's authenticated Runtime MCP snapshot. Startup reconciliation and the existing `sync_mcp` Runtime Command update only `mcp.servers.oneclaw-composio-main`, preserve user-managed MCP servers, and rely on OpenClaw's native `mcp.*` hot reload without restarting the Gateway. Snapshot URLs never travel in Runtime Command payloads or heartbeat data.
+
 ### Optional / Advanced
 
 | Variable | Default | Description |

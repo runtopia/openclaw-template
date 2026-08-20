@@ -421,8 +421,17 @@ const server = app.listen(PORT, () => {
     // config and workspace files are then preloaded locally, allowing the
     // Gateway to become ready with the final personality already in place.
     (async () => {
-      let runtimeProfile = await oneclaw.fetchPersonality({ timeoutMs: 750 });
+      const [profileResult, mcpResult] = await Promise.allSettled([
+        oneclaw.fetchPersonality({ timeoutMs: 750 }),
+        oneclaw.fetchMcpSnapshot({ timeoutMs: 750 }),
+      ]);
+      let runtimeProfile = profileResult.status === "fulfilled"
+        ? profileResult.value
+        : { personality: null, template: null, employees: [], contractVersion: 1 };
       await oneclaw.prepareEmployeesForStartup(runtimeProfile.employees);
+      if (mcpResult.status === "fulfilled" && mcpResult.value) {
+        await oneclaw.applyMcpSnapshot(mcpResult.value);
+      }
       await gateway.ensureGatewayRunning();
       try {
         gatewayRpc.start();
@@ -431,6 +440,9 @@ const server = app.listen(PORT, () => {
           runtimeProfile = await oneclaw.fetchPersonality({ timeoutMs: 3_000 });
         }
         await oneclaw.reconcileAllEmployees(runtimeProfile.employees);
+        await oneclaw.syncMcpFromApi({ timeoutMs: 3_000 }).catch((error) => {
+          console.warn(`[mcp-sync] post-ready reconciliation failed: ${error.message}`);
+        });
         oneclaw.start();
         await oneclaw.sendHeartbeat();
         console.log(`[boot] runtime profile ready after ${bootElapsedMs()}ms`);

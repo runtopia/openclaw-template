@@ -76,7 +76,7 @@ export function buildRuntimeCapabilities(profile, env = process.env) {
     throw new Error(`unsupported OneClaw runtime profile: ${profile}`);
   }
   const full = profile === "full";
-  const capabilities = ["channels", "documents", "employee-agents", "media", "runtime-commands"];
+  const capabilities = ["channels", "documents", "employee-agents", "mcp_snapshot_sync_v1", "media", "runtime-commands"];
   if (full) capabilities.push("browser-automation", "external-agent-clis", "specialist-clis");
   const manifest = {
     schema_version: 1,

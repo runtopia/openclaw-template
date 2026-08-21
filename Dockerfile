@@ -145,6 +145,8 @@ COPY scripts/patch-openclaw-chat-images.js \
      scripts/patch-openclaw-composio-url-redaction.js \
      scripts/patch-openclaw-memory-migration.mjs \
      scripts/patch-openclaw-realtime-base-url.mjs \
+     scripts/patch-openclaw-model-user-agent.mjs \
+     scripts/patch-openclaw-embedding-user-agent.mjs \
      scripts/patch-openclaw-oneclaw-completion-delivery.mjs \
      scripts/patch-oneclaw-channel-delivery.mjs \
      scripts/verify-openclaw-plugin-bundle.mjs \
@@ -168,6 +170,11 @@ RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_mo
 # bridge. Preserve the native Talk protocol while allowing the managed
 # ClawRouters provider to supply its authenticated /api/v1 WebSocket base.
 RUN node /app/scripts/patch-openclaw-realtime-base-url.mjs /usr/local/lib/node_modules/openclaw/dist
+# OpenClaw's OpenAI SDK and Memory Core otherwise expose their library
+# defaults (for example OpenAI/JS) instead of the versioned cloud Runtime.
+# These exact-version patches preserve explicit per-Provider overrides.
+RUN node /app/scripts/patch-openclaw-model-user-agent.mjs /usr/local/lib/node_modules/openclaw/dist
+RUN node /app/scripts/patch-openclaw-embedding-user-agent.mjs /usr/local/lib/node_modules/openclaw/dist
 # Detached generated-media completions must enter OneClaw through the durable
 # Message Tool path, and OneClaw sources must bypass OpenClaw's private
 # internal-ui reply sink, so Channel can allocate an autonomous public Run.
@@ -301,7 +308,7 @@ RUN useradd -m -s /bin/bash openclaw \
 # Image version — pass at build time: docker build --build-arg IMAGE_VERSION=1.2.3
 ARG IMAGE_VERSION
 ENV IMAGE_VERSION=${IMAGE_VERSION}
-ENV ONECLAW_RUNTIME_CONTRACT=1
+ENV ONECLAW_RUNTIME_CONTRACT=3
 RUN node /app/scripts/write-runtime-capabilities.mjs standard /opt/oneclaw/runtime-capabilities.json
 LABEL org.opencontainers.image.version=${IMAGE_VERSION} \
       io.oneclaw.runtime.profile=standard

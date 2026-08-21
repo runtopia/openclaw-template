@@ -11,6 +11,25 @@ test("Dockerfile installs unzip for custom skill archives", () => {
   assert.match(dockerfile, /runtime_packages="[^"]*\bunzip\b/);
 });
 
+test("Docker image reports the user-context personality contract", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  assert.match(dockerfile, /^ENV ONECLAW_RUNTIME_CONTRACT=3$/m);
+});
+
+test("Docker image patches model and embedding requests with the cloud User-Agent", () => {
+  const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  for (const script of [
+    "patch-openclaw-model-user-agent.mjs",
+    "patch-openclaw-embedding-user-agent.mjs",
+  ]) {
+    assert.ok(dockerfile.includes(`scripts/${script}`), `${script} should be copied`);
+    assert.ok(
+      dockerfile.includes(`RUN node /app/scripts/${script} /usr/local/lib/node_modules/openclaw/dist`),
+      `${script} should patch the pinned Runtime`,
+    );
+  }
+});
+
 test("Dockerfile preinstalls portable builtin skill dependencies", () => {
   const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   for (const aptPackage of ["ffmpeg", "gh", "jq", "ripgrep", "tmux"]) {

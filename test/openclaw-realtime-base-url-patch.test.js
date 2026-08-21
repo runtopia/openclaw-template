@@ -23,6 +23,8 @@ test("realtime patch keeps the native bridge and adds a provider base URL", (t) 
     testing.CONFIG_ORIGINAL,
     testing.URL_ORIGINAL,
     testing.BRIDGE_ORIGINAL,
+    testing.USER_AGENT_HELPER_ORIGINAL,
+    testing.WEBSOCKET_HEADERS_ORIGINAL,
   ].join("\n"));
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
 
@@ -32,6 +34,9 @@ test("realtime patch keeps the native bridge and adds a provider base URL", (t) 
   assert.match(patched, /baseUrl: trimToUndefined\(raw\?\.baseUrl\)/);
   assert.match(patched, /cfg\.baseUrl\.replace/);
   assert.match(patched, /baseUrl: config\.baseUrl/);
+  assert.match(patched, /process\.env\.ONECLAW_USER_AGENT/);
+  assert.match(patched, /"User-Agent": resolveOneClawRealtimeUserAgent\(\)/);
+  assert.match(patched, /OneClaw-Cloud\/1\.0/);
   assert.equal(patchOpenclawRealtimeBaseUrl(fixture.distDir), 0, "patch must be idempotent");
 });
 

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { patchConfig, setIn } from "../config/edit.js";
+import { withOneClawUserAgent } from "../integration/user-agent.js";
 
 const SENSITIVE_KEYS = new Set(["apiKey", "token", "secret", "password", "key"]);
 
@@ -241,11 +242,11 @@ export function mountAssistant(router, deps) {
         if (isAnthropic) {
           aiRes = await fetch(`${repairAiKey.baseUrl}/messages`, {
             method: "POST",
-            headers: {
+            headers: withOneClawUserAgent({
               "Content-Type": "application/json",
               "x-api-key": repairAiKey.apiKey,
               "anthropic-version": "2023-06-01",
-            },
+            }),
             body: JSON.stringify({
               model: repairAiKey.model,
               max_tokens: 4096,
@@ -258,10 +259,10 @@ export function mountAssistant(router, deps) {
         } else {
           aiRes = await fetch(`${repairAiKey.baseUrl}/chat/completions`, {
             method: "POST",
-            headers: {
+            headers: withOneClawUserAgent({
               "Content-Type": "application/json",
               "Authorization": `Bearer ${repairAiKey.apiKey}`,
-            },
+            }),
             body: JSON.stringify({
               model: repairAiKey.model || "auto",
               messages: history,

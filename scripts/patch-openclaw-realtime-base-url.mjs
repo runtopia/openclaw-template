@@ -30,6 +30,18 @@ const BRIDGE_ORIGINAL = `\t\t\t\tapiKey: config.apiKey,
 const BRIDGE_PATCHED = `\t\t\t\tapiKey: config.apiKey,
 \t\t\t\tbaseUrl: config.baseUrl,
 \t\t\t\tmodel: config.model,`;
+const USER_AGENT_HELPER_ORIGINAL = `var OpenAIRealtimeVoiceBridge = class OpenAIRealtimeVoiceBridge {`;
+const USER_AGENT_HELPER_PATCHED = `/* ${PATCH_MARKER}: unified outbound user-agent */
+function resolveOneClawRealtimeUserAgent() {
+\tconst configured = process.env.ONECLAW_USER_AGENT?.trim();
+\treturn configured && configured.length <= 256 && !/[\\u0000-\\u001f\\u007f-\\u009f]/u.test(configured) ? configured : "OneClaw-Cloud/1.0";
+}
+var OpenAIRealtimeVoiceBridge = class OpenAIRealtimeVoiceBridge {`;
+const WEBSOCKET_HEADERS_ORIGINAL = `\t\t\t\t\theaders: connection.headers,`;
+const WEBSOCKET_HEADERS_PATCHED = `\t\t\t\t\theaders: {
+\t\t\t\t\t\t"User-Agent": resolveOneClawRealtimeUserAgent(),
+\t\t\t\t\t\t...connection.headers
+\t\t\t\t\t},`;
 
 function replaceExactlyOnce(content, original, patched, label, file) {
   if (content.includes(patched)) return { content, changed: false };
@@ -62,6 +74,8 @@ export function patchOpenclawRealtimeBaseUrl(distDir) {
     ["provider config", CONFIG_ORIGINAL, CONFIG_PATCHED],
     ["WebSocket URL", URL_ORIGINAL, URL_PATCHED],
     ["bridge config", BRIDGE_ORIGINAL, BRIDGE_PATCHED],
+    ["User-Agent helper", USER_AGENT_HELPER_ORIGINAL, USER_AGENT_HELPER_PATCHED],
+    ["WebSocket headers", WEBSOCKET_HEADERS_ORIGINAL, WEBSOCKET_HEADERS_PATCHED],
   ]) {
     const result = replaceExactlyOnce(content, original, patched, label, file);
     content = result.content;
@@ -81,6 +95,10 @@ export const testing = {
   URL_PATCHED,
   BRIDGE_ORIGINAL,
   BRIDGE_PATCHED,
+  USER_AGENT_HELPER_ORIGINAL,
+  USER_AGENT_HELPER_PATCHED,
+  WEBSOCKET_HEADERS_ORIGINAL,
+  WEBSOCKET_HEADERS_PATCHED,
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

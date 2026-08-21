@@ -23,6 +23,7 @@ import { createGatewayManager } from "./gateway/manager.js";
 import { createGatewayRpc } from "./gateway/rpc.js";
 import { createOneclawIntegration, normalizeOneclawApiUrl } from "./integration/oneclaw.js";
 import { createRuntimeMcpSidecarProxy } from "./integration/mcp-proxy.js";
+import { ONECLAW_USER_AGENT_ENV, resolveOneClawUserAgent } from "./integration/user-agent.js";
 import { createRepairRouter } from "./repair/router.js";
 import { createSkillsRouter } from "./skills/router.js";
 import { readEnvProviderKey, readDefaultProviderKey } from "./repair/ai-key.js";
@@ -71,6 +72,10 @@ const ONECLAW_INSTANCE_ID  = process.env.ONECLAW_INSTANCE_ID?.trim();
 const ONECLAW_INSTANCE_SECRET = process.env.ONECLAW_INSTANCE_SECRET?.trim();
 process.env.ONECLAW_API_URL ||= ONECLAW_API_URL;
 process.env.ONECLAW_CHANNEL_ENABLED ??= "1";
+process.env[ONECLAW_USER_AGENT_ENV] = resolveOneClawUserAgent(
+  process.env[ONECLAW_USER_AGENT_ENV],
+  process.env.IMAGE_VERSION,
+);
 if (ONECLAW_INSTANCE_ID) {
   process.env.ONECLAW_RUNTIME_ID ||= ONECLAW_INSTANCE_ID;
 }

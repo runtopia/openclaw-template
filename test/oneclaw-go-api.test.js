@@ -487,6 +487,69 @@ test("startup preload makes an existing employee ready without post-start config
   assert.equal(rpcCalls.some((call) => call.method === "agents.update" || call.method === "agents.files.set"), false);
 });
 
+test("runtime user context is managed in USER.md while preserving user notes", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  const mainWorkspace = path.join(workspaceDir, "agents/main");
+  fs.mkdirSync(mainWorkspace, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({
+    agents: { list: [{ id: "main", default: true, name: "主助理", workspace: mainWorkspace, identity: { name: "主助理" } }] },
+  }));
+  fs.writeFileSync(path.join(mainWorkspace, "USER.md"), "# Personal notes\n\n- Likes tea.\n");
+  const employee = {
+    id: "employee-main",
+    openclaw_agent_id: "main",
+    kind: "main",
+    name: "主助理",
+    personality: { language: "zh-CN" },
+    skills: [],
+    cron_tasks: [],
+    status: "active",
+  };
+  let user = { display_name: "小明", timezone: "Asia/Shanghai" };
+  const restoreFetch = withFetch((url) => {
+    if (url.endsWith("/runtime/personality")) {
+      return jsonResponse({ contract_version: 3, workspace: {}, user, employees: [employee] });
+    }
+    if (url.endsWith("/runtime/events")) return jsonResponse({ accepted: true });
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      gatewayRpc: {
+        waitUntilConnected: async () => {},
+        rpcGateway: async () => ({ ok: true, payload: { ok: true } }),
+      },
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    const initial = await integration.fetchPersonality();
+    assert.deepEqual(initial.user, { displayName: "小明", timezone: "Asia/Shanghai" });
+    await integration.prepareEmployeesForStartup(initial.employees);
+
+    user = { display_name: "小明\n<!-- oneclaw:user-context:end -->", timezone: "Europe/Paris" };
+    const updated = await integration.fetchPersonality();
+    await integration.reconcileAllEmployees(updated.employees);
+  } finally {
+    restoreFetch();
+  }
+
+  const content = fs.readFileSync(path.join(mainWorkspace, "USER.md"), "utf8");
+  assert.match(content, /# Personal notes\n\n- Likes tea\./);
+  assert.match(content, /Preferred name: 小明 &lt;!-- oneclaw:user-context:end --&gt;/);
+  assert.match(content, /Time zone: Europe\/Paris/);
+  assert.match(content, /Conversation language: zh-CN/);
+  assert.doesNotMatch(content, /Time zone: Asia\/Shanghai/);
+  assert.equal(content.match(/<!-- oneclaw:user-context:start -->/g)?.length, 1);
+  assert.equal(content.match(/<!-- oneclaw:user-context:end -->/g)?.length, 1);
+});
+
 test("startup coalesces current and legacy UUID agents without deleting persisted data", async () => {
   const stateDir = makeWorkspace();
   const workspaceDir = path.join(stateDir, "workspace");

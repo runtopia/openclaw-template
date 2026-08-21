@@ -123,7 +123,8 @@ this avoids a multi-GB Codex harness download during the first cloud boot.
 | `ONECLAW_API_URL` | OneClaw API endpoint (default: `https://www.oneclaw.net/api/v1`) |
 | `ONECLAW_INSTANCE_ID` | Instance ID assigned by oneclaw_web |
 | `ONECLAW_INSTANCE_SECRET` | Instance secret for heartbeat auth and protected platform-to-runtime repair calls |
-| `ONECLAW_RUNTIME_CONTRACT` | Runtime personality contract version (default: `2`) |
+| `ONECLAW_RUNTIME_CONTRACT` | Runtime personality contract version (default: `3`) |
+| `ONECLAW_USER_AGENT` | Outbound model/embedding/Realtime identity (default: `OneClaw-Cloud/<IMAGE_VERSION>`; explicit Provider headers win) |
 
 The wrapper also consumes OneClaw's authenticated Runtime MCP snapshot. Startup reconciliation and the existing `sync_mcp` Runtime Command update only `mcp.servers.oneclaw-composio-main`, preserve user-managed MCP servers, and rely on OpenClaw's native `mcp.*` hot reload without restarting the Gateway. OpenClaw connects to a loopback-only Sidecar MCP endpoint protected by a local-scoped token stored with mode `0600`; the Sidecar authenticates to the OneClaw API with the in-memory Runtime secret, and the API injects the platform Composio key upstream. Neither long-lived credential is stored in `openclaw.json`, Runtime Commands, or heartbeat data.
 

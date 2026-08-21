@@ -14,7 +14,7 @@ Give hosted OpenClaw instances the same OneClaw-managed search and semantic-memo
 ## Runtime behavior
 
 - Fresh configuration and persisted-volume redeploys both run `applyRuntimeDefaults()`.
-- With a ClawRouters credential, memory search uses provider `clawrouters`, model `auto`, sources `memory` and `sessions`, and the normalized `/api/v1` base URL.
+- With a ClawRouters credential, memory search uses provider `clawrouters`, the stable versioned model profile `oneclaw-memory-v1`, sources `memory` and `sessions`, and the normalized `/api/v1` base URL. Persistent indexes never use embedding `auto`.
 - The image bundles the first-party `oneclaw-search` OpenClaw plugin outside `/data`, loads it through `plugins.load.paths`, and enables it through `plugins.entries`.
 - If no web-search provider is selected, the runtime selects `oneclaw-search` and enables `web_search`.
 - An explicitly selected provider and an explicit `enabled=false` are preserved.

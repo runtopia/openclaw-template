@@ -70,7 +70,7 @@ test("direct config and repair key use CLAWROUTERS_BASE_URL", () => {
     enabled: true,
     sources: ["memory", "sessions"],
     provider: "clawrouters",
-    model: "auto",
+    model: "oneclaw-memory-v1",
     remote: {
       baseUrl: "https://clawrouters-dev.example.com/api/v1",
       apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
@@ -112,7 +112,20 @@ test("existing openclaw.json runtime defaults are patched from CLAWROUTERS_BASE_
         },
       },
     },
-    agents: { defaults: {} },
+    agents: {
+      defaults: {
+        memorySearch: {
+          enabled: true,
+          sources: ["memory", "sessions"],
+          provider: "clawrouters",
+          model: "auto",
+          remote: {
+            baseUrl: "https://www.clawrouters.com/api/v1",
+            apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },
+          },
+        },
+      },
+    },
   };
 
   const patched = applyRuntimeDefaults(cfg, {
@@ -131,7 +144,7 @@ test("existing openclaw.json runtime defaults are patched from CLAWROUTERS_BASE_
     enabled: true,
     sources: ["memory", "sessions"],
     provider: "clawrouters",
-    model: "auto",
+    model: "oneclaw-memory-v1",
     remote: {
       baseUrl: "https://clawrouters-dev.example.com/api/v1",
       apiKey: { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" },

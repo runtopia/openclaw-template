@@ -9,7 +9,7 @@ import { applyPreinstalledSkillsDefaults } from "./preinstalled-skills.js";
 
 const DEFAULT_HEARTBEAT = { every: "2h", target: "last" };
 const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" };
-const CLAWROUTERS_EMBEDDING_MODEL = "auto";
+const CLAWROUTERS_EMBEDDING_MODEL = "oneclaw-memory-v1";
 const CLAWROUTERS_MANAGED_VOICE_MARKER = "oneclaw-clawrouters";
 const OPENAI_VOICE_PROVIDER_ID = "openai";
 const LEGACY_CLAWROUTERS_VOICE_PROVIDER_ID = "oneclaw-cr-voice";

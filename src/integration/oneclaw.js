@@ -7,6 +7,7 @@ import { CHANNEL_MANIFEST, setChannelAccountConfig, setChannelConfig } from "../
 import { approvePairingRequest, listPairingRequests, normalizePairingChannel, resolveOpenClawEntryFromClawArgs } from "../channels/pairing-store.js";
 import { agentWorkspace, safeAgentFilePath } from "../agents/workspace.js";
 import { patchConfig } from "../config/edit.js";
+import { applyManagedMcpIsolationToAgent, applyMcpSnapshot, readMcpSyncState } from "./mcp-sync.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
@@ -222,6 +223,7 @@ export function createOneclawIntegration({
   apiUrl,
   instanceId,
   instanceSecret,
+  mcpSidecarToken,
   stateDir,
   workspaceDir,
   gatewayTarget,
@@ -245,6 +247,7 @@ export function createOneclawIntegration({
 }) {
   const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
   const mainWorkspace = agentWorkspace(workspaceDir, "main");
+  const mcpSidecarUrl = new URL("/internal/mcp/composio", repairTarget || "http://127.0.0.1:8080").toString();
   if (!platformApiUrl || !instanceId || !instanceSecret) {
     return {
       start() {},
@@ -256,6 +259,9 @@ export function createOneclawIntegration({
       getCachedPersonality() { return null; },
       getCachedEmployees() { return []; },
       fetchPersonality() { return Promise.resolve({ personality: null, template: null }); },
+      fetchMcpSnapshot() { return Promise.resolve(null); },
+      applyMcpSnapshot() { return Promise.resolve(null); },
+      syncMcpFromApi() { return Promise.resolve(null); },
       applyPersonality() { return Promise.resolve(); },
       prepareEmployeesForStartup() { return Promise.resolve({ prepared: 0 }); },
       reconcileAllEmployees() { return Promise.resolve([]); },
@@ -270,6 +276,9 @@ export function createOneclawIntegration({
   let cachedPersonality = null;
   let cachedEmployees = [];
   let reportedOpenClawVersion = String(openclawVersion || "unknown");
+  const runtimeStateDir = stateDir || (workspaceDir ? path.dirname(workspaceDir) : process.env.OPENCLAW_STATE_DIR || process.cwd());
+  const mcpStatePath = path.join(runtimeStateDir, "oneclaw-mcp-state.json");
+  let mcpSyncPromise = Promise.resolve();
   const runtimeCapabilities = loadRuntimeCapabilities(runtimeCapabilitiesPath);
   const usageStats = {
     messages: 0,
@@ -411,6 +420,63 @@ export function createOneclawIntegration({
     return { personality: null, template: null, employees: [], contractVersion: 1 };
   }
 
+  async function fetchMcpSnapshot({ timeoutMs } = {}) {
+    try {
+      const res = await apiFetch("/runtime/integrations/mcp-snapshot", {
+        method: "GET",
+        ...(Number.isFinite(timeoutMs) && timeoutMs > 0
+          ? { signal: AbortSignal.timeout(timeoutMs) }
+          : {}),
+      });
+      if (!res.ok) {
+        const error = new Error(`runtime MCP snapshot fetch failed: ${res.status}`);
+        error.retryable = res.status >= 500 || res.status === 429;
+        throw error;
+      }
+      return await res.json();
+    } catch (error) {
+      if (error?.name === "TimeoutError" || error?.name === "AbortError") error.retryable = true;
+      throw error;
+    }
+  }
+
+  async function applyRuntimeMcpSnapshot(snapshot) {
+    if (!snapshot) return null;
+    const state = applyMcpSnapshot({
+      configPath: configPathForRuntime(),
+      connectionHeaders: { "X-OneClaw-Sidecar-MCP-Token": mcpSidecarToken },
+      connectionUrl: mcpSidecarUrl,
+      statePath: mcpStatePath,
+      snapshot,
+    });
+    console.log(`[mcp-sync] applied revision=${state.revision} servers=${state.server_count}`);
+    return state;
+  }
+
+  function syncMcpFromApi({ timeoutMs } = {}) {
+    const sync = async () => {
+      try {
+        const snapshot = await fetchMcpSnapshot({ timeoutMs });
+        const state = await applyRuntimeMcpSnapshot(snapshot);
+        await sendEvent("mcp_sync_status", {
+          status: state?.status || "applied",
+          revision: state?.revision ?? 0,
+          digest: state?.digest || "",
+          server_count: state?.server_count ?? 0,
+        });
+        return state;
+      } catch (error) {
+        await sendEvent("mcp_sync_status", {
+          status: "failed",
+          error: String(error?.message || error).slice(0, 500),
+        });
+        throw error;
+      }
+    };
+    mcpSyncPromise = mcpSyncPromise.then(sync, sync);
+    return mcpSyncPromise;
+  }
+
   async function reconcileAllEmployees(employees = null) {
     const desiredEmployees = Array.isArray(employees) ? employees : (await fetchPersonality()).employees;
     const results = [];
@@ -529,6 +595,7 @@ export function createOneclawIntegration({
         pluginSnapshot,
         runtimeId: process.env.ONECLAW_RUNTIME_ID || instanceId,
       });
+      const mcpState = readMcpSyncState(mcpStatePath);
       const res = await apiFetch("/runtime/heartbeat", {
         method: "POST",
         body: JSON.stringify({
@@ -547,6 +614,10 @@ export function createOneclawIntegration({
             runtime_supported_skills: runtimeCapabilities.supported_skills,
             platforms,
             oneclaw_channel: oneclawChannel,
+            mcp_revision: Number(mcpState.revision || 0),
+            mcp_digest: String(mcpState.digest || ""),
+            mcp_server_count: Number(mcpState.server_count || 0),
+            mcp_sync_status: String(mcpState.status || "unknown"),
           },
         }),
       });
@@ -833,6 +904,7 @@ export function createOneclawIntegration({
     if (Array.isArray(payload.assigned_skill_slugs)) {
       agent.skills = normalizedSkillSlugs(payload.assigned_skill_slugs);
     }
+    applyManagedMcpIsolationToAgent(agent, mcpStatePath);
     return desired;
   }
 
@@ -962,6 +1034,10 @@ export function createOneclawIntegration({
     }
     if (command?.type === "update_config") {
       await applyUpdateConfigCommand(payload);
+      return;
+    }
+    if (command?.type === "sync_mcp") {
+      await syncMcpFromApi({ timeoutMs: 10_000 });
       return;
     }
     if (command?.type === "delete_agent") {
@@ -1667,6 +1743,7 @@ export function createOneclawIntegration({
   return {
     start, stop, sendHeartbeat, pollCommands, sendEvent, trackMessage,
     fetchPersonality, applyPersonality, prepareEmployeesForStartup, reconcileAllEmployees, applyTemplateFromEnv,
+    fetchMcpSnapshot, applyMcpSnapshot: applyRuntimeMcpSnapshot, syncMcpFromApi,
     getCachedPersonality: () => cachedPersonality,
     getCachedEmployees: () => cachedEmployees,
   };

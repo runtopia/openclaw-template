@@ -35,6 +35,7 @@ export function patchConfig(configPath, patcher) {
   const config = previous ? JSON.parse(previous) : {};
   patcher(config);
   writeConfigIfChanged(configPath, previous, JSON.stringify(config, null, 2));
+  fs.chmodSync(configPath, 0o600);
   return config;
 }
 

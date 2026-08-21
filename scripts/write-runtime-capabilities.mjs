@@ -12,6 +12,7 @@ const STANDARD_SKILLS = [
   "feishu",
   "find-skills",
   "github",
+  "manage-message-channels",
   "notion",
   "pdf",
   "pptx",

@@ -86,3 +86,17 @@ test("preinstalled skills can be disabled and malformed bundles are ignored", (t
     ONECLAW_PREINSTALLED_SKILLS_DIR: path.join(root, "missing"),
   }), false);
 });
+
+test("message channel skill delegates credential setup to the OneClaw app", () => {
+  const skill = fs.readFileSync(path.join(
+    process.cwd(),
+    "resources",
+    "preinstalled-skills",
+    "manage-message-channels",
+    "SKILL.md",
+  ), "utf8");
+
+  assert.match(skill, /#\/channels\?setup=<id>/u);
+  assert.match(skill, /Never ask the user to paste a token/u);
+  assert.match(skill, /Telegram \(`telegram`\)/u);
+});

@@ -51,6 +51,12 @@
       "ref": "114ca7b5572258bb4c68ad6095f79ab981962d95",
       "version": "114ca7b5572258bb4c68ad6095f79ab981962d95",
       "autoEnable": true
+    },
+    {
+      "slug": "manage-message-channels",
+      "source": "oneclaw-first-party",
+      "version": "v1",
+      "autoEnable": true
     }
   ]
 }

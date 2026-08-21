@@ -12,7 +12,7 @@
 - **修复控制台**在 `/repair/*` — AI 诊断对话、网关重启、WhatsApp/微信扫码绑定
 - **健康检查端点** `/health`
 - **登录页** `/login`（由 `SETUP_PASSWORD` 保护）
-- **与 OneClaw Desktop 同源的常用 skills**：默认启用轻量的 skill 查找和自我改进；文档四件套可在构建时开启
+- **与 OneClaw Desktop 同源的常用 skills**：默认启用消息通道管理、轻量的 skill 查找和自我改进；文档四件套可在构建时开启
 
 Docker 默认使用轻量 `cloud` profile：保留 Gateway、MCP、summarize、轻量 skills
 和全部渠道插件，不安装 ClawHub 独立 CLI、浏览器系统库、文档/OCR 运行时、

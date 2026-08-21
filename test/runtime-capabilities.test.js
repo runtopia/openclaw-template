@@ -12,6 +12,7 @@ test("standard runtime declares common document skills", () => {
   assert.equal(manifest.profile, "standard");
   assert.equal(manifest.image_version, "2026.7.1-standard");
   assert.ok(manifest.supported_skills.includes("pdf"));
+  assert.ok(manifest.supported_skills.includes("manage-message-channels"));
   assert.ok(!manifest.supported_skills.includes("coding-agent"));
   assert.match(manifest.capability_digest, /^sha256:[a-f0-9]{64}$/);
 });

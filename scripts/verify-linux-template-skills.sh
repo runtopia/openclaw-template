@@ -46,7 +46,7 @@ const skills = Array.isArray(data) ? data : (data.skills || data.result?.skills 
 const supported = new Set([
   "github", "summarize", "weather",
   "notion", "slack", "discord", "feishu",
-  "find-skills", "self-improving-agent",
+  "find-skills", "self-improving-agent", "manage-message-channels",
 ]);
 for (const slug of ["pdf", "xlsx", "docx", "pptx"]) supported.add(slug);
 if (process.env.ONECLAW_RUNTIME_PROFILE === "full") {

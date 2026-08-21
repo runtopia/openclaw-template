@@ -13,7 +13,7 @@ Deploy **OpenClaw** (an AI coding assistant platform) on Railway as a single con
 - **Repair console** at `/repair/*` — AI diagnostic chat, gateway restart, QR binding for WhatsApp/WeChat
 - **Health endpoint** at `/health`
 - **Login page** at `/login` (protected by `SETUP_PASSWORD`)
-- **Pinned common skills** from OneClaw Desktop, including the document runtime in the standard image
+- **Pinned common skills** from OneClaw Desktop, including in-chat message-channel setup and the document runtime in the standard image
 
 The default Docker build uses the `standard` runtime profile. It contains the
 Gateway, channels, common media tools, and PDF/XLSX/DOCX/PPTX runtimes. Build

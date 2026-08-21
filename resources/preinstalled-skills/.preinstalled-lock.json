@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-06T08:51:12.175Z",
+  "generatedAt": "2026-08-21T00:00:00.000Z",
   "skills": [
     {
       "slug": "pdf",
@@ -48,6 +48,11 @@
       "repoPath": "self-improving-agent",
       "ref": "114ca7b5572258bb4c68ad6095f79ab981962d95",
       "commit": "114ca7b5572258bb4c68ad6095f79ab981962d95"
+    },
+    {
+      "slug": "manage-message-channels",
+      "version": "v1",
+      "source": "oneclaw-first-party"
     }
   ]
 }

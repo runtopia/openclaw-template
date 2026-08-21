@@ -107,12 +107,27 @@ test("Dockerfile bundles the pinned Desktop common skills outside the data volum
     path.join(skillsRoot, ".preinstalled-lock.json"),
     "utf8",
   ));
-  const expected = ["pdf", "xlsx", "docx", "pptx", "find-skills", "self-improving-agent"];
+  const expected = [
+    "pdf",
+    "xlsx",
+    "docx",
+    "pptx",
+    "find-skills",
+    "self-improving-agent",
+    "manage-message-channels",
+  ];
 
   assert.ok(dockerfile.includes("COPY resources/preinstalled-skills ${ONECLAW_PREINSTALLED_SKILLS_DIR}"));
   assert.deepEqual(manifest.skills.map((skill) => skill.slug), expected);
   assert.deepEqual(lock.skills.map((skill) => skill.slug), expected);
   for (const skill of manifest.skills) {
+    if (skill.source === "oneclaw-first-party") {
+      assert.match(skill.version, /^v\d+$/u);
+      assert.equal(lock.skills.find((entry) => entry.slug === skill.slug)?.version, skill.version);
+      assert.equal(lock.skills.find((entry) => entry.slug === skill.slug)?.source, skill.source);
+      assert.ok(fs.existsSync(path.join(skillsRoot, skill.slug, "SKILL.md")));
+      continue;
+    }
     assert.match(skill.ref, /^[0-9a-f]{40}$/u);
     assert.equal(skill.version, skill.ref);
     assert.equal(lock.skills.find((entry) => entry.slug === skill.slug)?.commit, skill.ref);

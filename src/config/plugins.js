@@ -14,8 +14,9 @@
 //   - volume-mount-proof (the volume can't shadow /opt)
 //
 // Discovery only makes a plugin's code findable; activation still requires
-// plugins.entries.<id>.enabled=true (set by auto-config for clawrouters and by
-// runtime defaults for OneClaw Channel), so listing
+// plugins.entries.<id>.enabled=true (set by auto-config and runtime defaults
+// for credential-backed ClawRouters, and by runtime defaults for OneClaw
+// Channel), so listing
 // these paths here is harmless even when a given channel isn't configured.
 //
 // Channel is intentionally absent from both lists below. The Dockerfile copies

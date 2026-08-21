@@ -21,6 +21,22 @@ function isSkillFeatureEnabled(skill, env) {
   return false;
 }
 
+function normalizedSkillSlugs(values) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => String(value || "").trim())
+    .filter((value) => SAFE_SKILL_SLUG.test(value)))].sort();
+}
+
+function enabledBundleSkillSlugs(bundle, cfg, env) {
+  if (!bundle) return [];
+  return bundle.skills
+    .filter((skill) =>
+      skill.autoEnable === true
+      && isSkillFeatureEnabled(skill, env)
+      && cfg?.skills?.entries?.[skill.slug]?.enabled !== false)
+    .map((skill) => skill.slug);
+}
+
 export function resolvePreinstalledSkills(env = process.env) {
   if (isExplicitlyDisabled(env.ONECLAW_PREINSTALLED_SKILLS_ENABLED)) return null;
   const root = path.resolve(env.ONECLAW_PREINSTALLED_SKILLS_DIR?.trim() || DEFAULT_SKILLS_DIR);
@@ -38,6 +54,17 @@ export function resolvePreinstalledSkills(env = process.env) {
     console.warn(`[skills] failed to read ${manifestPath}: ${err.message}`);
     return null;
   }
+}
+
+// Agent-level `skills` arrays are restrictive allowlists in OpenClaw. Merge
+// globally enabled image-bundled skills into such lists so assigning one
+// employee-specific skill cannot accidentally hide standard capabilities.
+export function mergePreinstalledSkillAllowlist(cfg, values, env = process.env) {
+  const bundle = resolvePreinstalledSkills(env);
+  return normalizedSkillSlugs([
+    ...normalizedSkillSlugs(values),
+    ...enabledBundleSkillSlugs(bundle, cfg, env),
+  ]);
 }
 
 // Image-bundled skills are loaded from immutable /opt at the lowest OpenClaw
@@ -77,6 +104,18 @@ export function applyPreinstalledSkillsDefaults(cfg, env = process.env) {
       changed = true;
     } else if (existing.enabled === undefined) {
       existing.enabled = enabled;
+      changed = true;
+    }
+  }
+
+  for (const agent of Array.isArray(cfg.agents?.list) ? cfg.agents.list : []) {
+    if (!Array.isArray(agent?.skills)) continue;
+    const merged = normalizedSkillSlugs([
+      ...agent.skills,
+      ...enabledBundleSkillSlugs(bundle, cfg, env),
+    ]);
+    if (JSON.stringify(agent.skills) !== JSON.stringify(merged)) {
+      agent.skills = merged;
       changed = true;
     }
   }

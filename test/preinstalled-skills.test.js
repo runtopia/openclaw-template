@@ -74,6 +74,28 @@ test("document skills stay disabled in the lean image and enable in document/ful
   assert.equal(full.skills.entries.pdf.enabled, true);
 });
 
+test("globally enabled preinstalled skills are added to every restrictive agent allowlist", (t) => {
+  const root = createBundle();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cfg = {
+    agents: {
+      list: [
+        { id: "main", skills: ["custom"] },
+        { id: "unrestricted" },
+      ],
+    },
+    skills: { entries: { pdf: { enabled: false } } },
+  };
+
+  applyPreinstalledSkillsDefaults(cfg, {
+    ONECLAW_PREINSTALLED_SKILLS_DIR: root,
+    ONECLAW_DOCUMENT_SKILLS: "1",
+  });
+
+  assert.deepEqual(cfg.agents.list[0].skills, ["custom", "xlsx"]);
+  assert.equal(cfg.agents.list[1].skills, undefined);
+});
+
 test("preinstalled skills can be disabled and malformed bundles are ignored", (t) => {
   const root = createBundle();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

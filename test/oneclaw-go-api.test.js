@@ -427,6 +427,16 @@ test("runtime contract v2 reconciles every employee and preserves greeting metad
 test("startup preload makes an existing employee ready without post-start config or file RPCs", async () => {
   const stateDir = makeWorkspace();
   const workspaceDir = path.join(stateDir, "workspace");
+  const preinstalledSkillsDir = path.join(stateDir, "preinstalled-skills");
+  fs.mkdirSync(path.join(preinstalledSkillsDir, "manage-message-channels"), { recursive: true });
+  fs.writeFileSync(
+    path.join(preinstalledSkillsDir, ".preinstalled-manifest.json"),
+    JSON.stringify({ skills: [{ slug: "manage-message-channels", autoEnable: true }] }),
+  );
+  fs.writeFileSync(
+    path.join(preinstalledSkillsDir, "manage-message-channels", "SKILL.md"),
+    "# Manage Message Channels\n",
+  );
   fs.writeFileSync(path.join(stateDir, "openclaw.json"), JSON.stringify({
     agents: { list: [{ id: "main", default: true, workspace: path.join(workspaceDir, "agents/main") }] },
   }));
@@ -471,6 +481,7 @@ test("startup preload makes an existing employee ready without post-start config
       },
       isGatewayReady: () => true,
       isGatewayStarting: () => false,
+      preinstalledSkillsEnv: { ONECLAW_PREINSTALLED_SKILLS_DIR: preinstalledSkillsDir },
     });
     assert.deepEqual(await integration.prepareEmployeesForStartup([employee]), { prepared: 1 });
     await integration.reconcileAllEmployees([employee]);
@@ -481,7 +492,7 @@ test("startup preload makes an existing employee ready without post-start config
   const config = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
   assert.deepEqual(config.agents.list[0].identity, { name: "预加载助理", avatar: "🚀" });
   assert.equal(config.agents.list[0].model, "clawrouters/auto");
-  assert.deepEqual(config.agents.list[0].skills, ["summarize"]);
+  assert.deepEqual(config.agents.list[0].skills, ["manage-message-channels", "summarize"]);
   assert.match(fs.readFileSync(path.join(workspaceDir, "agents/main/SOUL.md"), "utf8"), /启动前准备人格/);
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/profile.md"), "utf8"), "preloaded");
   assert.equal(rpcCalls.some((call) => call.method === "agents.update" || call.method === "agents.files.set"), false);

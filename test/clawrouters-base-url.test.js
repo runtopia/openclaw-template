@@ -81,6 +81,7 @@ test("direct config and repair key use CLAWROUTERS_BASE_URL", () => {
     provider: "oneclaw-search",
   });
   assert.equal(cfg.plugins.entries["oneclaw-search"].enabled, true);
+  assert.equal(cfg.plugins.entries.clawrouters.enabled, true);
 });
 
 test("direct config binds environment token channels to main account", () => {
@@ -155,6 +156,25 @@ test("existing openclaw.json runtime defaults are patched from CLAWROUTERS_BASE_
     provider: "oneclaw-search",
   });
   assert.equal(cfg.plugins.entries["oneclaw-search"].enabled, true);
+  assert.equal(cfg.plugins.entries.clawrouters.enabled, true);
+});
+
+test("runtime defaults activate a preinstalled ClawRouters plugin unless explicitly disabled", () => {
+  const defaulted = { plugins: { allow: ["oneclaw-channel"] } };
+  const optedOut = {
+    plugins: {
+      allow: ["oneclaw-channel"],
+      entries: { clawrouters: { enabled: false } },
+    },
+  };
+
+  applyRuntimeDefaults(defaulted, { CLAWROUTERS_API_KEY: "cr_test" });
+  applyRuntimeDefaults(optedOut, { CLAWROUTERS_API_KEY: "cr_test" });
+
+  assert.equal(defaulted.plugins.entries.clawrouters.enabled, true);
+  assert.ok(defaulted.plugins.allow.includes("clawrouters"));
+  assert.equal(optedOut.plugins.entries.clawrouters.enabled, false);
+  assert.ok(!optedOut.plugins.allow.includes("clawrouters"));
 });
 
 test("runtime defaults preserve an explicit web search provider", () => {

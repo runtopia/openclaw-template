@@ -7,6 +7,7 @@ import { CHANNEL_MANIFEST, setChannelAccountConfig, setChannelConfig } from "../
 import { approvePairingRequest, listPairingRequests, normalizePairingChannel, resolveOpenClawEntryFromClawArgs } from "../channels/pairing-store.js";
 import { agentWorkspace, safeAgentFilePath } from "../agents/workspace.js";
 import { patchConfig } from "../config/edit.js";
+import { mergePreinstalledSkillAllowlist } from "../config/preinstalled-skills.js";
 import { applyManagedMcpIsolationToAgent, applyMcpSnapshot, readMcpSyncState } from "./mcp-sync.js";
 
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
@@ -279,6 +280,7 @@ export function createOneclawIntegration({
   channelBindingPollMs = 1500,
   skillStatusRetryMs = 250,
   skillStatusAttempts = 12,
+  preinstalledSkillsEnv = process.env,
 }) {
   const platformApiUrl = normalizeOneclawApiUrl(apiUrl);
   const mainWorkspace = agentWorkspace(workspaceDir, "main");
@@ -916,7 +918,7 @@ export function createOneclawIntegration({
         }
       }
       const desired = applyShape
-        ? applyEmployeeConfigShape(resolved.agent, payload, resolved.agentId)
+        ? applyEmployeeConfigShape(config, resolved.agent, payload, resolved.agentId)
         : null;
       result = {
         agentId: resolved.agentId,
@@ -952,7 +954,7 @@ export function createOneclawIntegration({
     }
   }
 
-  function applyEmployeeConfigShape(agent, payload, agentId) {
+  function applyEmployeeConfigShape(config, agent, payload, agentId) {
     const desired = desiredEmployeeIdentity(payload, agentId);
     agent.id = agentId;
     agent.name = desired.name;
@@ -968,7 +970,11 @@ export function createOneclawIntegration({
     // skill verification can then run immediately instead of waiting for a
     // post-start config reload to clear blockedByAgentFilter.
     if (Array.isArray(payload.assigned_skill_slugs)) {
-      agent.skills = normalizedSkillSlugs(payload.assigned_skill_slugs);
+      agent.skills = mergePreinstalledSkillAllowlist(
+        config,
+        normalizedSkillSlugs(payload.assigned_skill_slugs),
+        preinstalledSkillsEnv,
+      );
     }
     applyManagedMcpIsolationToAgent(agent, mcpStatePath);
     return desired;
@@ -1062,7 +1068,11 @@ export function createOneclawIntegration({
         agent = { id: targetAgentId };
         config.agents.list.push(agent);
       }
-      nextSkills = normalizedSkillSlugs(update(normalizedSkillSlugs(agent.skills)));
+      nextSkills = mergePreinstalledSkillAllowlist(
+        config,
+        normalizedSkillSlugs(update(normalizedSkillSlugs(agent.skills))),
+        preinstalledSkillsEnv,
+      );
       agent.skills = nextSkills;
     });
     return nextSkills;

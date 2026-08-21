@@ -20,6 +20,7 @@ const CLAWROUTERS_REALTIME_VOICES = new Set([
 const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
 const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
 const ONECLAW_CHANNEL_PLUGIN_ID = "oneclaw-channel";
+const CLAWROUTERS_PLUGIN_ID = "clawrouters";
 const WORKBOARD_PLUGIN_ID = "workboard";
 const RETIRED_ONECLAW_COLLABORATION_PLUGIN_IDS = new Set([
   "oneclaw-workflows",
@@ -371,30 +372,34 @@ function applyNativePlanToolPatch(cfg) {
   return true;
 }
 
-function applyWorkboardPatch(cfg) {
+function applyPluginEnabledByDefault(cfg, pluginId) {
   const plugins = ensureObject(cfg, "plugins");
   const pluginEntries = ensureObject(plugins, "entries");
-  const workboardPlugin = ensureObject(pluginEntries, WORKBOARD_PLUGIN_ID);
+  const plugin = ensureObject(pluginEntries, pluginId);
   let changed = false;
 
-  // Enable Workboard by default for both fresh configs and persisted-volume
-  // upgrades, while preserving an explicit user opt-out.
-  if (workboardPlugin.enabled === undefined) {
-    workboardPlugin.enabled = true;
+  if (plugin.enabled === undefined) {
+    plugin.enabled = true;
     changed = true;
   }
 
   if (
-    workboardPlugin.enabled !== false
+    plugin.enabled !== false
     && Array.isArray(plugins.allow)
     && plugins.allow.length > 0
-    && !plugins.allow.includes(WORKBOARD_PLUGIN_ID)
+    && !plugins.allow.includes(pluginId)
   ) {
-    plugins.allow = [...plugins.allow, WORKBOARD_PLUGIN_ID];
+    plugins.allow = [...plugins.allow, pluginId];
     changed = true;
   }
 
   return changed;
+}
+
+function applyWorkboardPatch(cfg) {
+  // Enable Workboard by default for both fresh configs and persisted-volume
+  // upgrades, while preserving an explicit user opt-out.
+  return applyPluginEnabledByDefault(cfg, WORKBOARD_PLUGIN_ID);
 }
 
 function applyOpenclawProviderAgentRuntimePins(cfg) {
@@ -454,6 +459,10 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   const usesClawroutersMemory = memorySearch?.provider === "clawrouters";
 
   if (hasKey) {
+    // A key can be added after the first deployment. Persisted configs must
+    // activate the image-bundled provider too; provider/search/voice config by
+    // itself does not load the plugin that supplies media generation tools.
+    changed = applyPluginEnabledByDefault(cfg, CLAWROUTERS_PLUGIN_ID) || changed;
     const models = ensureObject(cfg, "models");
     if (!models.mode) {
       models.mode = "merge";

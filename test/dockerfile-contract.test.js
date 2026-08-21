@@ -273,7 +273,7 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
   assert.ok(dockerfile.includes("@oneclaw-plugins/runtime-events"));
   assert.ok(verifier.includes('readInstalledPackage("@oneclaw-plugins/channel")'));
   assert.ok(verifier.includes("installedVersion !== lockedVersion"));
-  assert.match(dockerfile, /^ENV ONECLAW_INTERNAL_CHANNEL_V2=0$/m);
+  assert.match(dockerfile, /^ENV ONECLAW_INTERNAL_CHANNEL_V2=1$/m);
   assert.ok(dockerfile.includes(
     "patch-oneclaw-channel-delivery.mjs",
   ));

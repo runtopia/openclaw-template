@@ -42,10 +42,20 @@ npm run update:local-channel -- --plugin-repo /path/to/oneclaw-plugins
 ```
 
 The command requires `oneclaw-plugins` to be on a clean, committed `develop`
-branch exactly equal to `origin/develop`. It validates and tests Channel, runs typecheck and build, packs a tgz, names it with its SHA-256,
+branch exactly equal to `origin/develop`. The resulting Template bundle is for
+the `develop` integration branch and the 101 test environment. It validates and
+tests Channel, runs typecheck and build, packs a tgz, names it with its SHA-256,
 updates this bundle's manifest and lockfile, removes the superseded Channel
 archive, and runs the bundle contract tests. It deliberately does not commit,
 push, build an image, or restart a Runtime.
+
+`develop` owns the local Channel tgz used by the 101 test environment; `main`
+owns exact npm versions used by formal images. When promoting accepted Runtime
+source from Template `develop` to `main`, keep `main`'s generated bundle files
+instead of hand-merging tgz or lockfile changes. The formal release coordinator
+updates the production bundle to the newly published npm version. After the
+release, merge `main` back into `develop` and rerun this updater to regenerate
+the test bundle.
 
 ## Formal npm and image release
 

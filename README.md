@@ -9,6 +9,7 @@ Deploy **OpenClaw** (an AI coding assistant platform) on Railway as a single con
 - **Persistent state** via Railway Volume (`/data`) — config, credentials, and memory survive redeploys
 - **Semantic memory search** backed by ClawRouters embeddings when a ClawRouters child key is present
 - **OneClaw web search** routed through ClawRouters with server-side SearXNG/Tavily fallback
+- **Realtime voice Talk + TTS** routed through ClawRouters without exposing the child key to the browser
 - **Repair console** at `/repair/*` — AI diagnostic chat, gateway restart, QR binding for WhatsApp/WeChat
 - **Health endpoint** at `/health`
 - **Login page** at `/login` (protected by `SETUP_PASSWORD`)
@@ -45,13 +46,22 @@ Wrapper (Express on PORT)
 2. **Runtime**: OpenClaw hot-reloads Agent, model, key, channel, and binding changes without restarting the Gateway. Only explicit restart operations restart it. Unexpected crashes still auto-heal with exponential backoff.
 3. **Repair**: `/repair/*` endpoints let oneclaw_web's panel (or direct API calls) run AI diagnostics, restart the gateway, or trigger QR binding flows for WhatsApp/WeChat.
 
-### Default memory and web search
+### ClawRouters runtime defaults
 
 With `CLAWROUTERS_API_KEY`, fresh and existing instances converge on the same runtime defaults at every startup:
 
 - `agents.defaults.memorySearch` indexes memory files and sessions through the ClawRouters embeddings endpoint. The index and source files stay on the instance volume.
 - `tools.web.search` selects the image-bundled `oneclaw-search` provider. Search calls use the same user child key and go to ClawRouters `/api/v1/search`; SearXNG/Tavily credentials, caching, fallback, and Credits billing remain server-side.
+- `talk.realtime` selects OpenClaw's native OpenAI-compatible Gateway relay and points it at ClawRouters `/api/v1/realtime`. The Control UI captures and plays audio, while provider credentials, model routing, metering, VAD, and Agent consultation remain Gateway/ClawRouters-owned.
+- `messages.tts` prepares the standard `tts.speak` path through ClawRouters `/api/v1/audio/speech` for read-aloud and turn-based fallback flows. Automatic playback remains disabled.
 - An explicitly selected third-party search provider or `enabled=false` setting is preserved.
+- Explicit user-owned Talk and TTS providers are preserved. If the ClawRouters key is removed, only the OneClaw-managed voice entries are removed from the persisted config.
+
+Realtime Talk already includes live input transcription and synthesized output.
+Reviewed composer dictation is separate: ClawRouters currently exposes batch
+`/audio/transcriptions`, while the pinned Control UI expects a streaming
+transcription provider, so managed cloud dictation is not enabled by this
+runtime default.
 
 ### Native orchestration and structured input
 

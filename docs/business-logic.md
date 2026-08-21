@@ -128,8 +128,9 @@ flowchart LR
 3. 写入 models provider。ClawRouters 使用 env secret ref，不把 key 明文写入配置。
 4. 写入 agent defaults，包括 workspace、默认模型、heartbeat、上下文压缩和 ClawRouters memory search。
 5. 写入插件加载路径 `/opt/openclaw-plugins`，并在有 ClawRouters child key 时启用 `oneclaw-search`。
-6. 写入 Telegram、Discord、Slack、Feishu、WhatsApp、WeChat 渠道配置。
-7. 生成 `session.dmScope=per-channel-peer` 和 `tools.profile=full`；未被用户显式覆盖时，将 `tools.web.search` 指向 OneClaw Search。
+6. 有 ClawRouters child key 且用户未选择自有语音 Provider 时，写入托管的 `messages.tts` 和 `talk.realtime`：TTS 走 `/api/v1/audio/speech`，Realtime Talk 走 Gateway relay → `/api/v1/realtime`，密钥保持 env SecretRef。
+7. 写入 Telegram、Discord、Slack、Feishu、WhatsApp、WeChat 渠道配置。
+8. 生成 `session.dmScope=per-channel-peer` 和 `tools.profile=full`；未被用户显式覆盖时，将 `tools.web.search` 指向 OneClaw Search。
 
 后续启动时，如果配置已存在，wrapper 不重建整份配置，而是修补：
 
@@ -138,6 +139,16 @@ flowchart LR
 - 将 `/opt` 预装插件写入 `state/openclaw.sqlite` 的权威 install records，并清理旧 JSON 记录与重复的 `/data` 插件副本。
 - runtime defaults。
 - 当前 env 中启用的通道。
+
+ClawRouters 托管语音配置使用 `managedBy=oneclaw-clawrouters` 与精确 env
+SecretRef 识别。持久卷升级会保留用户自建的 Talk/TTS Provider；移除 child
+key 时只删除托管语音项，避免 Gateway 继续解析已经不存在的密钥。
+
+OpenClaw 2026.7.1 的原生 OpenAI Realtime bridge 固定连接
+`api.openai.com`。镜像构建会运行 fail-closed 补丁，使 provider `baseUrl`
+可以指向 ClawRouters，同时保留 OpenClaw 自带的 PCM、VAD、字幕、打断和
+Agent consult 协议。普通听写仍是独立能力：当前 ClawRouters ASR 是批量
+`/audio/transcriptions`，不冒充 Control UI 所要求的流式 transcription Provider。
 
 不变量：
 
@@ -398,8 +409,8 @@ Docker：
 | `ONECLAW_INSTANCE_ID` | `createOneclawIntegration()` | Runtime 身份 |
 | `ONECLAW_INSTANCE_SECRET` | auth、platform API | Runtime 到平台鉴权，以及平台访问 `/repair/*` |
 | `ONECLAW_TEMPLATE_ID` | `applyTemplateFromEnv()` | 首次启动应用模板 |
-| `CLAWROUTERS_API_KEY` | config generator | 模型 provider 和媒体生成 |
-| `CLAWROUTERS_BASE_URL` | runtime defaults | ClawRouters API base |
+| `CLAWROUTERS_API_KEY` | config generator / runtime defaults | 模型、媒体、memory/search、TTS 和 Realtime Talk 的 env SecretRef |
+| `CLAWROUTERS_BASE_URL` | runtime defaults | ClawRouters `/api/v1` base，包括 TTS 和 Realtime Talk 路由 |
 | `OPENCLAW_GATEWAY_TOKEN` | gateway auth、proxy | 内部 gateway bearer token |
 | `SETUP_PASSWORD` | login auth | Control UI 登录密码 |
 | `WHATSAPP_ENABLED`、`WECHAT_ENABLED` | channel manifest | 启用 QR 通道插件 |

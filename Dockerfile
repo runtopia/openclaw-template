@@ -144,6 +144,7 @@ COPY scripts/patch-openclaw-chat-images.js \
      scripts/patch-openclaw-assistant-media-agent-roots.js \
      scripts/patch-openclaw-composio-url-redaction.js \
      scripts/patch-openclaw-memory-migration.mjs \
+     scripts/patch-openclaw-realtime-base-url.mjs \
      scripts/patch-openclaw-oneclaw-completion-delivery.mjs \
      scripts/patch-oneclaw-channel-delivery.mjs \
      scripts/verify-openclaw-plugin-bundle.mjs \
@@ -163,6 +164,10 @@ RUN node /app/scripts/patch-openclaw-composio-url-redaction.js /usr/local/lib/no
 # OpenClaw 2026.7.1 can leave duplicate legacy Memory Core state in place,
 # causing its strict startup migration checkpoint to fail on every restart.
 RUN node /app/scripts/patch-openclaw-memory-migration.mjs /usr/local/lib/node_modules/openclaw/dist
+# OpenClaw 2026.7.1 hardcodes api.openai.com for the native OpenAI Realtime
+# bridge. Preserve the native Talk protocol while allowing the managed
+# ClawRouters provider to supply its authenticated /api/v1 WebSocket base.
+RUN node /app/scripts/patch-openclaw-realtime-base-url.mjs /usr/local/lib/node_modules/openclaw/dist
 # Detached generated-media completions must enter OneClaw through the durable
 # Message Tool path, and OneClaw sources must bypass OpenClaw's private
 # internal-ui reply sink, so Channel can allocate an autonomous public Run.

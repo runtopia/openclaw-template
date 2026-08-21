@@ -10,6 +10,13 @@ import { applyPreinstalledSkillsDefaults } from "./preinstalled-skills.js";
 const DEFAULT_HEARTBEAT = { every: "2h", target: "last" };
 const CLAWROUTERS_API_KEY_REF = { source: "env", provider: "default", id: "CLAWROUTERS_API_KEY" };
 const CLAWROUTERS_EMBEDDING_MODEL = "auto";
+const CLAWROUTERS_MANAGED_VOICE_MARKER = "oneclaw-clawrouters";
+const OPENAI_VOICE_PROVIDER_ID = "openai";
+const LEGACY_CLAWROUTERS_VOICE_PROVIDER_ID = "oneclaw-cr-voice";
+const CLAWROUTERS_REALTIME_VOICES = new Set([
+  "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse",
+  "marin", "cedar",
+]);
 const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
 const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
 const ONECLAW_CHANNEL_PLUGIN_ID = "oneclaw-channel";
@@ -58,6 +65,10 @@ function ensureObject(parent, key) {
   return parent[key];
 }
 
+function isObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function setJsonValue(parent, key, value) {
   if (jsonEqual(parent[key], value)) return false;
   parent[key] = value;
@@ -91,6 +102,194 @@ function applyClawroutersMemorySearchPatch(defaults, env) {
   const remote = ensureObject(memorySearch, "remote");
   changed = setJsonValue(remote, "baseUrl", desired.remote.baseUrl) || changed;
   changed = setJsonValue(remote, "apiKey", desired.remote.apiKey) || changed;
+  return changed;
+}
+
+function isClawroutersApiKeyRef(value) {
+  return isObject(value)
+    && value.source === CLAWROUTERS_API_KEY_REF.source
+    && value.provider === CLAWROUTERS_API_KEY_REF.provider
+    && value.id === CLAWROUTERS_API_KEY_REF.id;
+}
+
+function applyClawroutersManagedTtsPatch(cfg, env) {
+  const existingMessages = isObject(cfg.messages) ? cfg.messages : {};
+  const messages = { ...existingMessages };
+  const existingTts = isObject(messages.tts) ? messages.tts : {};
+  const tts = { ...existingTts };
+  const existingProviders = isObject(tts.providers) ? tts.providers : {};
+  const providers = { ...existingProviders };
+  const existingOpenai = isObject(providers[OPENAI_VOICE_PROVIDER_ID])
+    ? providers[OPENAI_VOICE_PROVIDER_ID]
+    : {};
+  const managedOpenai = isClawroutersApiKeyRef(existingOpenai.apiKey);
+  const selectedProvider = typeof tts.provider === "string" ? tts.provider.trim() : "";
+  const userOwnedOpenai = Object.keys(existingOpenai).length > 0 && !managedOpenai;
+  const shouldManage = (!selectedProvider && !userOwnedOpenai)
+    || (selectedProvider === OPENAI_VOICE_PROVIDER_ID && managedOpenai);
+
+  // A user-selected provider, including a personal OpenAI configuration, is
+  // authoritative. OneClaw only fills an absent selection or refreshes the
+  // exact env-backed configuration it previously installed.
+  if (!shouldManage) return false;
+
+  const before = JSON.stringify(existingMessages);
+  tts.provider = OPENAI_VOICE_PROVIDER_ID;
+  providers[OPENAI_VOICE_PROVIDER_ID] = {
+    ...existingOpenai,
+    apiKey: CLAWROUTERS_API_KEY_REF,
+    baseUrl: resolveClawroutersApiBaseUrl(env),
+    model: "tts",
+    speakerVoice: typeof existingOpenai.speakerVoice === "string"
+      && existingOpenai.speakerVoice.trim()
+      ? existingOpenai.speakerVoice
+      : "coral",
+  };
+  tts.providers = providers;
+  messages.tts = tts;
+  if (before === JSON.stringify(messages)) return false;
+  cfg.messages = messages;
+  return true;
+}
+
+function applyClawroutersManagedRealtimePatch(cfg, env) {
+  const existingTalk = isObject(cfg.talk) ? cfg.talk : {};
+  const talk = { ...existingTalk };
+  const existingRealtime = isObject(talk.realtime) ? talk.realtime : {};
+  const realtime = { ...existingRealtime };
+  const existingProviders = isObject(realtime.providers) ? realtime.providers : {};
+  const providers = { ...existingProviders };
+  const existingOpenai = isObject(providers[OPENAI_VOICE_PROVIDER_ID])
+    ? providers[OPENAI_VOICE_PROVIDER_ID]
+    : {};
+  const managedOpenai = existingOpenai.managedBy === CLAWROUTERS_MANAGED_VOICE_MARKER;
+  const selectedProvider = typeof realtime.provider === "string"
+    ? realtime.provider.trim()
+    : "";
+  const legacyManagedProvider = selectedProvider === LEGACY_CLAWROUTERS_VOICE_PROVIDER_ID;
+  const selectedManagedOpenai = selectedProvider === OPENAI_VOICE_PROVIDER_ID && managedOpenai;
+  const unselectedPersonalOpenai = !selectedProvider
+    && Object.keys(existingOpenai).length > 0
+    && !managedOpenai;
+
+  if (
+    (selectedProvider && !legacyManagedProvider && !selectedManagedOpenai)
+    || unselectedPersonalOpenai
+  ) {
+    return false;
+  }
+
+  const legacyConfig = isObject(providers[LEGACY_CLAWROUTERS_VOICE_PROVIDER_ID])
+    ? providers[LEGACY_CLAWROUTERS_VOICE_PROVIDER_ID]
+    : {};
+  const existing = managedOpenai ? existingOpenai : legacyConfig;
+  const existingVoice = typeof existing.speakerVoice === "string"
+    ? existing.speakerVoice.trim().toLowerCase()
+    : "";
+  const before = JSON.stringify(existingTalk);
+  const desired = {
+    ...existing,
+    managedBy: CLAWROUTERS_MANAGED_VOICE_MARKER,
+    apiKey: CLAWROUTERS_API_KEY_REF,
+    baseUrl: resolveClawroutersApiBaseUrl(env),
+    model: "realtime",
+    speakerVoice: CLAWROUTERS_REALTIME_VOICES.has(existingVoice) ? existingVoice : "coral",
+    vadThreshold: typeof existing.vadThreshold === "number" ? existing.vadThreshold : 0.5,
+    silenceDurationMs: typeof existing.silenceDurationMs === "number"
+      ? existing.silenceDurationMs
+      : 700,
+    prefixPaddingMs: typeof existing.prefixPaddingMs === "number"
+      ? existing.prefixPaddingMs
+      : 300,
+  };
+  delete desired.authProviderId;
+  delete desired.transportMode;
+  delete desired.rmsThreshold;
+  delete desired.speed;
+  delete providers[LEGACY_CLAWROUTERS_VOICE_PROVIDER_ID];
+  providers[OPENAI_VOICE_PROVIDER_ID] = desired;
+  talk.realtime = {
+    ...realtime,
+    provider: OPENAI_VOICE_PROVIDER_ID,
+    model: "realtime",
+    transport: "gateway-relay",
+    brain: "agent-consult",
+    consultRouting: "provider-direct",
+    providers,
+  };
+  // clawrouters/auto advertises the disabled thinking override for these
+  // one-shot consults. A fixed non-zero level can be rejected before tools run.
+  talk.consultThinkingLevel = "off";
+  talk.consultFastMode = true;
+  if (before === JSON.stringify(talk)) return false;
+  cfg.talk = talk;
+  return true;
+}
+
+function removeClawroutersManagedTtsPatch(cfg) {
+  if (!isObject(cfg.messages) || !isObject(cfg.messages.tts)) return false;
+  const messages = { ...cfg.messages };
+  const tts = { ...messages.tts };
+  if (!isObject(tts.providers)) return false;
+  const providers = { ...tts.providers };
+  const openai = isObject(providers[OPENAI_VOICE_PROVIDER_ID])
+    ? providers[OPENAI_VOICE_PROVIDER_ID]
+    : null;
+  if (!openai || !isClawroutersApiKeyRef(openai.apiKey)) return false;
+
+  delete providers[OPENAI_VOICE_PROVIDER_ID];
+  if (tts.provider === OPENAI_VOICE_PROVIDER_ID) delete tts.provider;
+  if (Object.keys(providers).length > 0) tts.providers = providers;
+  else delete tts.providers;
+  if (Object.keys(tts).length > 0) messages.tts = tts;
+  else delete messages.tts;
+  if (Object.keys(messages).length > 0) cfg.messages = messages;
+  else delete cfg.messages;
+  return true;
+}
+
+function removeClawroutersManagedRealtimePatch(cfg) {
+  if (!isObject(cfg.talk) || !isObject(cfg.talk.realtime)) return false;
+  const talk = { ...cfg.talk };
+  const realtime = { ...talk.realtime };
+  if (!isObject(realtime.providers)) return false;
+  const providers = { ...realtime.providers };
+  const openai = isObject(providers[OPENAI_VOICE_PROVIDER_ID])
+    ? providers[OPENAI_VOICE_PROVIDER_ID]
+    : null;
+  if (openai?.managedBy !== CLAWROUTERS_MANAGED_VOICE_MARKER) return false;
+
+  const selectedManagedProvider = realtime.provider === OPENAI_VOICE_PROVIDER_ID;
+  delete providers[OPENAI_VOICE_PROVIDER_ID];
+  if (Object.keys(providers).length > 0) realtime.providers = providers;
+  else delete realtime.providers;
+  if (selectedManagedProvider) {
+    delete realtime.provider;
+    if (realtime.model === "realtime") delete realtime.model;
+    if (realtime.transport === "gateway-relay") delete realtime.transport;
+    if (realtime.brain === "agent-consult") delete realtime.brain;
+    if (realtime.consultRouting === "provider-direct") delete realtime.consultRouting;
+  }
+  if (Object.keys(realtime).length > 0) talk.realtime = realtime;
+  else delete talk.realtime;
+  if (talk.consultThinkingLevel === "off") delete talk.consultThinkingLevel;
+  if (talk.consultFastMode === true) delete talk.consultFastMode;
+  if (Object.keys(talk).length > 0) cfg.talk = talk;
+  else delete cfg.talk;
+  return true;
+}
+
+function applyClawroutersManagedVoicePatch(cfg, env) {
+  let changed = false;
+  changed = applyClawroutersManagedTtsPatch(cfg, env) || changed;
+  changed = applyClawroutersManagedRealtimePatch(cfg, env) || changed;
+  return changed;
+}
+
+function removeClawroutersManagedVoicePatch(cfg) {
+  let changed = false;
+  changed = removeClawroutersManagedTtsPatch(cfg) || changed;
+  changed = removeClawroutersManagedRealtimePatch(cfg) || changed;
   return changed;
 }
 
@@ -276,6 +475,12 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   }
   if (hasKey) {
     changed = applyOneclawWebSearchPatch(cfg) || changed;
+    changed = applyClawroutersManagedVoicePatch(cfg, env) || changed;
+  } else {
+    // Persisted Railway volumes outlive environment changes. Remove only the
+    // exact OneClaw-managed voice references so a deleted child key cannot
+    // leave Gateway catalog or startup resolution stuck on a missing secret.
+    changed = removeClawroutersManagedVoicePatch(cfg) || changed;
   }
 
   return changed;

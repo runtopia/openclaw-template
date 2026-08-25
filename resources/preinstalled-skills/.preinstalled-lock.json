@@ -53,6 +53,11 @@
       "slug": "manage-message-channels",
       "version": "v1",
       "source": "oneclaw-first-party"
+    },
+    {
+      "slug": "composio-gmail",
+      "version": "v1",
+      "source": "oneclaw-first-party"
     }
   ]
 }

@@ -57,6 +57,12 @@
       "source": "oneclaw-first-party",
       "version": "v1",
       "autoEnable": true
+    },
+    {
+      "slug": "composio-gmail",
+      "source": "oneclaw-first-party",
+      "version": "v1",
+      "autoEnable": true
     }
   ]
 }

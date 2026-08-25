@@ -122,3 +122,21 @@ test("message channel skill delegates credential setup to the OneClaw app", () =
   assert.match(skill, /Never ask the user to paste a token/u);
   assert.match(skill, /Telegram \(`telegram`\)/u);
 });
+
+test("Gmail skill uses managed MCP tools and the OneClaw authorization card", () => {
+  const skill = fs.readFileSync(path.join(
+    process.cwd(),
+    "resources",
+    "preinstalled-skills",
+    "composio-gmail",
+    "SKILL.md",
+  ), "utf8");
+
+  assert.match(skill, /GMAIL_FETCH_EMAILS/u);
+  assert.match(skill, /GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID/u);
+  assert.match(skill, /GMAIL_GET_ATTACHMENT/u);
+  assert.match(skill, /search_integrations/u);
+  assert.match(skill, /use_integration/u);
+  assert.match(skill, /Never request OAuth tokens/u);
+  assert.doesNotMatch(skill, /python run\.py/u);
+});

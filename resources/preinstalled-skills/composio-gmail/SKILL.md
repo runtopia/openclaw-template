@@ -29,7 +29,18 @@ The client is `/opt/oneclaw-skills/composio-gmail/run.py`. Invoke it with `pytho
    python3 /opt/oneclaw-skills/composio-gmail/run.py read_email --message-id "RETURNED_MESSAGE_ID"
    ```
 
-4. If the client returns `authorization_required`, call `search_integrations` with `query: "gmail"`, select the exact Gmail toolkit and approved read tools, then call `use_integration` to create the OneClaw authorization card. After authorization completes, retry the same Python command once.
+4. If the client returns `authorization_required`, call `search_integrations` with `query: "gmail"`, select the exact Gmail toolkit and approved read tools, then call `use_integration` with toolkit `gmail`, tool `GMAIL_FETCH_EMAILS`, and these bounded arguments:
+
+   ```json
+   {
+     "query": "in:inbox",
+     "max_results": 1,
+     "include_payload": false,
+     "verbose": false
+   }
+   ```
+
+   `use_integration` both creates the OneClaw authorization card and performs one bounded read after authorization. After it completes, always retry the original Python command once and use that deterministic compact response as the answer source. Do not summarize the generic `use_integration` result.
 
 5. Do not use `search_integrations` or `use_integration` for normal email reads after Gmail is connected. Never ask the user to install this skill; it is preinstalled in the Runtime image.
 

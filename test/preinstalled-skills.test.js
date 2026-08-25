@@ -137,6 +137,9 @@ test("Gmail skill uses the deterministic local workflow and OneClaw authorizatio
   assert.match(skill, /read_email/u);
   assert.match(skill, /search_integrations/u);
   assert.match(skill, /use_integration/u);
+  assert.match(skill, /"max_results": 1/u);
+  assert.match(skill, /"include_payload": false/u);
+  assert.match(skill, /always retry the original Python command once/u);
   assert.match(skill, /--max-results 5/u);
   assert.match(skill, /Search results intentionally omit full message payloads/u);
   assert.match(skill, /Never request OAuth tokens/u);

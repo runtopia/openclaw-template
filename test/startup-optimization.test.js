@@ -8,13 +8,15 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 test("startup preloads personality before Gateway and defers pollers until reconciliation", () => {
   const source = fs.readFileSync(path.join(repoRoot, "src", "index.js"), "utf8");
+  const loadCachedProfile = source.indexOf("oneclaw.loadCachedRuntimeProfile()");
   const fetchProfile = source.indexOf("oneclaw.fetchPersonality({ timeoutMs: 750 })");
   const preloadProfile = source.indexOf("oneclaw.prepareEmployeesForStartup(runtimeProfile.employees)");
   const startGateway = source.indexOf("gateway.ensureGatewayRunning()");
   const reconcileProfile = source.indexOf("oneclaw.reconcileAllEmployees(runtimeProfile.employees)");
   const startPollers = source.indexOf("oneclaw.start();", reconcileProfile);
 
-  assert.ok(fetchProfile >= 0);
+  assert.ok(loadCachedProfile >= 0);
+  assert.ok(loadCachedProfile < fetchProfile);
   assert.ok(fetchProfile < preloadProfile);
   assert.ok(preloadProfile < startGateway);
   assert.ok(startGateway < reconcileProfile);

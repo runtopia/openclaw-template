@@ -275,7 +275,12 @@ function ensureConfig() {
 // ── Gateway manager ───────────────────────────────────────────────────────────
 
 ensureConfig();
-migrateAgentWorkspaces({ workspaceRoot: WORKSPACE_DIR, configPath: CONFIG_PATH });
+const workspaceMigrationStartedAt = Date.now();
+const workspaceMigration = migrateAgentWorkspaces({ workspaceRoot: WORKSPACE_DIR, configPath: CONFIG_PATH });
+console.log(
+  `[boot] workspace reconciliation completed in ${Date.now() - workspaceMigrationStartedAt}ms `
+  + `(migrated=${workspaceMigration.migratedAgents.length}, total ${bootElapsedMs()}ms)`,
+);
 
 const gateway = createGatewayManager({
   OPENCLAW_NODE,
@@ -450,28 +455,47 @@ const server = app.listen(PORT, () => {
   console.log(`[sidecar] oneclaw heartbeat: ${ONECLAW_INSTANCE_ID ? "enabled" : "disabled"}`);
 
   if (isConfigured()) {
-    // Fetch the tiny runtime profile before Gateway spawn (bounded so an
-    // unavailable control plane can never block OpenClaw). Existing agents'
-    // config and workspace files are then preloaded locally, allowing the
-    // Gateway to become ready with the final personality already in place.
+    // Reuse the last successful profile on normal restarts so Gateway startup
+    // never waits on the control plane. A fresh volume still performs the
+    // bounded first fetch so existing provisioned agents start with their
+    // assigned identity. Live state is reconciled again after Gateway ready.
     (async () => {
-      const [profileResult, mcpResult] = await Promise.allSettled([
-        oneclaw.fetchPersonality({ timeoutMs: 750 }),
-        oneclaw.fetchMcpSnapshot({ timeoutMs: 750 }),
-      ]);
-      let runtimeProfile = profileResult.status === "fulfilled"
-        ? profileResult.value
-        : { personality: null, template: null, employees: [], contractVersion: 1 };
-      await oneclaw.prepareEmployeesForStartup(runtimeProfile.employees);
-      if (mcpResult.status === "fulfilled" && mcpResult.value) {
-        await oneclaw.applyMcpSnapshot(mcpResult.value);
+      const startupProfileStartedAt = Date.now();
+      let runtimeProfile = oneclaw.loadCachedRuntimeProfile();
+      let startupMcpSnapshot = null;
+      if (!runtimeProfile) {
+        const [profileResult, mcpResult] = await Promise.allSettled([
+          oneclaw.fetchPersonality({ timeoutMs: 750 }),
+          oneclaw.fetchMcpSnapshot({ timeoutMs: 750 }),
+        ]);
+        runtimeProfile = profileResult.status === "fulfilled"
+          ? profileResult.value
+          : { personality: null, template: null, employees: [], contractVersion: 1, source: "unavailable" };
+        startupMcpSnapshot = mcpResult.status === "fulfilled" ? mcpResult.value : null;
       }
+      await oneclaw.prepareEmployeesForStartup(runtimeProfile.employees);
+      if (startupMcpSnapshot) {
+        await oneclaw.applyMcpSnapshot(startupMcpSnapshot);
+      }
+      console.log(
+        `[boot] startup profile prepared from ${runtimeProfile.source || "default"} `
+        + `in ${Date.now() - startupProfileStartedAt}ms (total ${bootElapsedMs()}ms)`,
+      );
+      // Refresh a cached profile concurrently with Gateway initialization. It
+      // only updates the private snapshot here; config/RPC reconciliation still
+      // waits until Gateway ready, so startup I/O cannot race OpenClaw reloads.
+      const liveProfilePromise = runtimeProfile.source === "cache" && ONECLAW_INSTANCE_ID
+        ? oneclaw.fetchPersonality({ timeoutMs: 3_000 })
+        : null;
       await gateway.ensureGatewayRunning();
       try {
         gatewayRpc.start();
         console.log(`[sidecar] gateway ready after ${bootElapsedMs()}ms`);
-        if (!runtimeProfile.employees?.length && ONECLAW_INSTANCE_ID) {
-          runtimeProfile = await oneclaw.fetchPersonality({ timeoutMs: 3_000 });
+        if (runtimeProfile.source !== "network" && ONECLAW_INSTANCE_ID) {
+          const refreshedProfile = liveProfilePromise
+            ? await liveProfilePromise
+            : await oneclaw.fetchPersonality({ timeoutMs: 3_000 });
+          if (refreshedProfile.source === "network") runtimeProfile = refreshedProfile;
         }
         await oneclaw.reconcileAllEmployees(runtimeProfile.employees);
         await oneclaw.syncMcpFromApi({ timeoutMs: 3_000 }).catch((error) => {

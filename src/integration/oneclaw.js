@@ -295,7 +295,17 @@ export function createOneclawIntegration({
       trackMessage() {},
       getCachedPersonality() { return null; },
       getCachedEmployees() { return []; },
-      fetchPersonality() { return Promise.resolve({ personality: null, template: null }); },
+      loadCachedRuntimeProfile() { return null; },
+      fetchPersonality() {
+        return Promise.resolve({
+          personality: null,
+          template: null,
+          user: null,
+          employees: [],
+          contractVersion: 1,
+          source: "unavailable",
+        });
+      },
       fetchMcpSnapshot() { return Promise.resolve(null); },
       applyMcpSnapshot() { return Promise.resolve(null); },
       syncMcpFromApi() { return Promise.resolve(null); },
@@ -315,6 +325,7 @@ export function createOneclawIntegration({
   let reportedOpenClawVersion = String(openclawVersion || "unknown");
   const runtimeStateDir = stateDir || (workspaceDir ? path.dirname(workspaceDir) : process.env.OPENCLAW_STATE_DIR || process.cwd());
   const mcpStatePath = path.join(runtimeStateDir, "oneclaw-mcp-state.json");
+  const personalityCachePath = path.join(runtimeStateDir, "oneclaw-personality-cache.json");
   let mcpSyncPromise = Promise.resolve();
   const runtimeCapabilities = loadRuntimeCapabilities(runtimeCapabilitiesPath);
   const usageStats = {
@@ -427,6 +438,60 @@ export function createOneclawIntegration({
     usageStats.tokens = 0;
   }
 
+  function runtimeProfileFromResponse(data, { source = "network" } = {}) {
+    const defaultModel = String(data?.workspace?.default_model || "");
+    const userContext = normalizeRuntimeUserContext(data?.user);
+    const employees = (Array.isArray(data?.employees) ? data.employees : [])
+      .map((employee) => ({
+        ...employee,
+        model: employee?.model || defaultModel,
+        ...(userContext ? { user_context: userContext } : {}),
+      }));
+    cachedEmployees = employees;
+    const employee = employees.find((item) => item?.kind === "main") || employees[0] || null;
+    cachedPersonality = runtimeEmployeePersonality(employee);
+    return {
+      personality: cachedPersonality,
+      template: normalizeTemplate(employee),
+      user: userContext,
+      employees,
+      contractVersion: Number(data?.contract_version || 1),
+      source,
+    };
+  }
+
+  function saveRuntimeProfileCache(data) {
+    try {
+      atomicWriteFile(
+        personalityCachePath,
+        `${JSON.stringify({ schema_version: 1, instance_id: instanceId, data }, null, 2)}\n`,
+        { mode: 0o600 },
+      );
+    } catch (error) {
+      console.warn(`[personality] cache write failed: ${error.message}`);
+    }
+  }
+
+  function loadCachedRuntimeProfile() {
+    try {
+      const cached = JSON.parse(fs.readFileSync(personalityCachePath, "utf8"));
+      if (
+        cached?.schema_version !== 1
+        || cached.instance_id !== instanceId
+        || !cached.data
+        || typeof cached.data !== "object"
+      ) {
+        throw new Error("unsupported cache format");
+      }
+      const profile = runtimeProfileFromResponse(cached.data, { source: "cache" });
+      console.log(`[personality] loaded cached profile: ${cachedPersonality?.botName || "default"}`);
+      return profile;
+    } catch (error) {
+      if (error.code !== "ENOENT") console.warn(`[personality] cache ignored: ${error.message}`);
+      return null;
+    }
+  }
+
   async function fetchPersonality({ timeoutMs } = {}) {
     try {
       const res = await apiFetch("/runtime/personality", {
@@ -437,30 +502,15 @@ export function createOneclawIntegration({
       });
       if (res.ok) {
         const data = await res.json();
-        const defaultModel = String(data?.workspace?.default_model || "");
-        const userContext = normalizeRuntimeUserContext(data?.user);
-        const employees = (Array.isArray(data.employees) ? data.employees : [])
-          .map((employee) => ({
-            ...employee,
-            model: employee?.model || defaultModel,
-            ...(userContext ? { user_context: userContext } : {}),
-          }));
-        cachedEmployees = employees;
-        const employee = employees.find((item) => item?.kind === "main") || employees[0] || null;
-        cachedPersonality = runtimeEmployeePersonality(employee);
+        const profile = runtimeProfileFromResponse(data);
+        saveRuntimeProfileCache(data);
         console.log(`[personality] fetched: ${cachedPersonality?.botName || "default"}`);
-        return {
-          personality: cachedPersonality,
-          template: normalizeTemplate(employee),
-          user: userContext,
-          employees,
-          contractVersion: Number(data.contract_version || 1),
-        };
+        return profile;
       }
     } catch (err) {
       console.error(`[personality] fetch error: ${err.message}`);
     }
-    return { personality: null, template: null, user: null, employees: [], contractVersion: 1 };
+    return { personality: null, template: null, user: null, employees: [], contractVersion: 1, source: "unavailable" };
   }
 
   async function fetchMcpSnapshot({ timeoutMs } = {}) {
@@ -814,17 +864,24 @@ export function createOneclawIntegration({
     }
   }
 
-  function atomicWriteFile(filePath, content) {
+  function atomicWriteFile(filePath, content, { mode } = {}) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     try {
-      if (fs.readFileSync(filePath, "utf8") === content) return false;
+      if (fs.readFileSync(filePath, "utf8") === content) {
+        if (mode !== undefined) fs.chmodSync(filePath, mode);
+        return false;
+      }
     } catch (err) {
       if (err.code !== "ENOENT") throw err;
     }
     const temporary = `${filePath}.tmp-${process.pid}-${Date.now()}`;
     try {
-      fs.writeFileSync(temporary, content, "utf8");
+      fs.writeFileSync(temporary, content, {
+        encoding: "utf8",
+        ...(mode === undefined ? {} : { mode }),
+      });
       fs.renameSync(temporary, filePath);
+      if (mode !== undefined) fs.chmodSync(filePath, mode);
     } finally {
       if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
     }
@@ -884,6 +941,55 @@ export function createOneclawIntegration({
       String(agent?.id || agent?.agentId || "").trim() === agentId);
   }
 
+  function coalesceConfiguredEmployeeAgentInConfig(config, payload, employeeId, { applyShape = false } = {}) {
+    const identity = employeeAgentIdentity(payload, employeeId);
+    if (!identity.fallback) {
+      return { agentId: identity.fallback, found: false, desired: null, removed: [] };
+    }
+    const agents = Array.isArray(config?.agents?.list) ? config.agents.list : [];
+    const resolved = resolveEmployeeAgent(agents, identity);
+    if (!resolved.agent) {
+      return { agentId: identity.fallback, found: false, desired: null, removed: [] };
+    }
+
+    const aliases = new Set(identity.candidates);
+    const removed = agents
+      .filter((agent) => agent !== resolved.agent && aliases.has(configuredAgentId(agent)))
+      .map(configuredAgentId);
+    if (removed.length > 0) {
+      const removedSet = new Set(removed);
+      config.agents.list = agents.filter((agent) => !removedSet.has(configuredAgentId(agent)));
+      if (Array.isArray(config.bindings)) {
+        const seen = new Set();
+        config.bindings = config.bindings
+          .map((binding) => removedSet.has(String(binding?.agentId || "").trim())
+            ? { ...binding, agentId: resolved.agentId }
+            : binding)
+          .filter((binding) => {
+            const key = JSON.stringify(binding);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+      }
+    }
+    const desired = applyShape
+      ? applyEmployeeConfigShape(config, resolved.agent, payload, resolved.agentId)
+      : null;
+    return {
+      agentId: resolved.agentId,
+      found: true,
+      desired,
+      removed,
+    };
+  }
+
+  function logCoalescedEmployeeAgents(result) {
+    if (result.removed.length > 0) {
+      console.warn(`[agents] coalesced duplicate employee agent(s) ${result.removed.join(", ")} into ${result.agentId}; on-disk data was preserved`);
+    }
+  }
+
   function coalesceConfiguredEmployeeAgent(payload, employeeId, { applyShape = false } = {}) {
     const configPath = configPathForRuntime();
     const identity = employeeAgentIdentity(payload, employeeId);
@@ -892,44 +998,9 @@ export function createOneclawIntegration({
     }
     let result = { agentId: identity.fallback, found: false, desired: null, removed: [] };
     patchConfig(configPath, (config) => {
-      const agents = Array.isArray(config?.agents?.list) ? config.agents.list : [];
-      const resolved = resolveEmployeeAgent(agents, identity);
-      if (!resolved.agent) return;
-
-      const aliases = new Set(identity.candidates);
-      const removed = agents
-        .filter((agent) => agent !== resolved.agent && aliases.has(configuredAgentId(agent)))
-        .map(configuredAgentId);
-      if (removed.length > 0) {
-        const removedSet = new Set(removed);
-        config.agents.list = agents.filter((agent) => !removedSet.has(configuredAgentId(agent)));
-        if (Array.isArray(config.bindings)) {
-          const seen = new Set();
-          config.bindings = config.bindings
-            .map((binding) => removedSet.has(String(binding?.agentId || "").trim())
-              ? { ...binding, agentId: resolved.agentId }
-              : binding)
-            .filter((binding) => {
-              const key = JSON.stringify(binding);
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-        }
-      }
-      const desired = applyShape
-        ? applyEmployeeConfigShape(config, resolved.agent, payload, resolved.agentId)
-        : null;
-      result = {
-        agentId: resolved.agentId,
-        found: true,
-        desired,
-        removed,
-      };
+      result = coalesceConfiguredEmployeeAgentInConfig(config, payload, employeeId, { applyShape });
     });
-    if (result.removed.length > 0) {
-      console.warn(`[agents] coalesced duplicate employee agent(s) ${result.removed.join(", ")} into ${result.agentId}; on-disk data was preserved`);
-    }
+    logCoalescedEmployeeAgents(result);
     return result;
   }
 
@@ -986,22 +1057,31 @@ export function createOneclawIntegration({
       return { prepared: 0 };
     }
     const startedAt = Date.now();
-    let prepared = 0;
-    for (const employee of employees) {
-      if (!employee?.id || employee.status === "deleted") continue;
-      const payload = runtimeEmployeeTemplatePayload(employee);
-      const resolved = coalesceConfiguredEmployeeAgent(payload, employee.id, { applyShape: true });
-      if (!resolved.found) continue;
-      const { agentId, desired } = resolved;
+    const profiles = [];
+    patchConfig(configPath, (config) => {
+      for (const employee of employees) {
+        if (!employee?.id || employee.status === "deleted") continue;
+        const payload = runtimeEmployeeTemplatePayload(employee);
+        const resolved = coalesceConfiguredEmployeeAgentInConfig(
+          config,
+          payload,
+          employee.id,
+          { applyShape: true },
+        );
+        logCoalescedEmployeeAgents(resolved);
+        if (resolved.found) profiles.push({ payload, ...resolved });
+      }
+    });
+
+    for (const { payload, agentId, desired } of profiles) {
       const workspace = agentWorkspace(workspaceDir, agentId);
       atomicWriteFile(path.join(workspace, "IDENTITY.md"), desired.content);
       atomicWriteFile(path.join(workspace, "SOUL.md"), employeeSoulContent(payload));
       syncEmployeeUserContext(agentId, payload);
       await reconcileEmployeeMemory(agentId, payload.memory_files || payload.memoryFiles || []);
-      prepared += 1;
     }
-    console.log(`[boot] preloaded ${prepared} employee profile(s) in ${Date.now() - startedAt}ms`);
-    return { prepared };
+    console.log(`[boot] preloaded ${profiles.length} employee profile(s) in ${Date.now() - startedAt}ms`);
+    return { prepared: profiles.length };
   }
 
   async function syncEmployeeIdentity(payload, agentId) {
@@ -1834,7 +1914,7 @@ export function createOneclawIntegration({
 
   return {
     start, stop, sendHeartbeat, pollCommands, sendEvent, trackMessage,
-    fetchPersonality, applyPersonality, prepareEmployeesForStartup, reconcileAllEmployees, applyTemplateFromEnv,
+    fetchPersonality, loadCachedRuntimeProfile, applyPersonality, prepareEmployeesForStartup, reconcileAllEmployees, applyTemplateFromEnv,
     fetchMcpSnapshot, applyMcpSnapshot: applyRuntimeMcpSnapshot, syncMcpFromApi,
     getCachedPersonality: () => cachedPersonality,
     getCachedEmployees: () => cachedEmployees,

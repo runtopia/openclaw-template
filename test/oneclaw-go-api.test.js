@@ -498,6 +498,121 @@ test("startup preload makes an existing employee ready without post-start config
   assert.equal(rpcCalls.some((call) => call.method === "agents.update" || call.method === "agents.files.set"), false);
 });
 
+test("successful personality fetch persists a private restart cache", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  const response = {
+    contract_version: 3,
+    workspace: { default_model: "clawrouters/auto" },
+    user: { display_name: "缓存用户", timezone: "Asia/Shanghai" },
+    employees: [{
+      id: "employee-main",
+      openclaw_agent_id: "main",
+      kind: "main",
+      name: "缓存助理",
+      system_prompt: "Use the cached profile on restart.",
+      personality: { language: "zh-CN" },
+      skills: [],
+      cron_tasks: [],
+      status: "active",
+    }],
+  };
+  const restoreFetch = withFetch((url) => {
+    if (url.endsWith("/runtime/personality")) return jsonResponse(response);
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      stateDir,
+      workspaceDir,
+      isGatewayReady: () => false,
+      isGatewayStarting: () => false,
+    });
+    assert.equal((await integration.fetchPersonality()).source, "network");
+  } finally {
+    restoreFetch();
+  }
+
+  const cachePath = path.join(stateDir, "oneclaw-personality-cache.json");
+  assert.equal(fs.statSync(cachePath).mode & 0o777, 0o600);
+  const restarted = createOneclawIntegration({
+    apiUrl: "https://oneclaw.example.com/api/v1",
+    instanceId: "runtime-1",
+    instanceSecret: "secret-1",
+    stateDir,
+    workspaceDir,
+    isGatewayReady: () => false,
+    isGatewayStarting: () => false,
+  });
+  const cached = restarted.loadCachedRuntimeProfile();
+  assert.equal(cached.source, "cache");
+  assert.equal(cached.employees[0].name, "缓存助理");
+  assert.deepEqual(cached.user, { displayName: "缓存用户", timezone: "Asia/Shanghai" });
+});
+
+test("startup preload batches multiple employee config updates into one write", async () => {
+  const stateDir = makeWorkspace();
+  const workspaceDir = path.join(stateDir, "workspace");
+  const configPath = path.join(stateDir, "openclaw.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    agents: {
+      list: [
+        { id: "main", default: true, workspace: path.join(workspaceDir, "agents/main") },
+        { id: "employee-2", workspace: path.join(workspaceDir, "agents/employee-2") },
+      ],
+    },
+  }));
+  const employees = [{
+    id: "employee-main",
+    openclaw_agent_id: "main",
+    kind: "main",
+    name: "主助理",
+    system_prompt: "Main profile.",
+    personality: { language: "zh-CN" },
+    skills: [],
+    cron_tasks: [],
+    status: "active",
+  }, {
+    id: "employee-2-id",
+    openclaw_agent_id: "employee-2",
+    kind: "hired",
+    name: "研究助理",
+    system_prompt: "Research profile.",
+    personality: { language: "en" },
+    skills: [],
+    cron_tasks: [],
+    status: "active",
+  }];
+  const integration = createOneclawIntegration({
+    apiUrl: "https://oneclaw.example.com/api/v1",
+    instanceId: "runtime-1",
+    instanceSecret: "secret-1",
+    stateDir,
+    workspaceDir,
+    isGatewayReady: () => false,
+    isGatewayStarting: () => false,
+  });
+  const originalRenameSync = fs.renameSync;
+  let configWrites = 0;
+  fs.renameSync = (source, destination) => {
+    if (destination === configPath) configWrites += 1;
+    return originalRenameSync(source, destination);
+  };
+  try {
+    assert.deepEqual(await integration.prepareEmployeesForStartup(employees), { prepared: 2 });
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+
+  assert.equal(configWrites, 1);
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.deepEqual(config.agents.list.map((agent) => agent.name), ["主助理", "研究助理"]);
+});
+
 test("runtime user context is managed in USER.md while preserving user notes", async () => {
   const stateDir = makeWorkspace();
   const workspaceDir = path.join(stateDir, "workspace");

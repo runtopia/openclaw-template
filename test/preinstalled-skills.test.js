@@ -137,6 +137,8 @@ test("Gmail skill uses managed MCP tools and the OneClaw authorization card", ()
   assert.match(skill, /GMAIL_GET_ATTACHMENT/u);
   assert.match(skill, /search_integrations/u);
   assert.match(skill, /use_integration/u);
+  assert.match(skill, /max_results/u);
+  assert.match(skill, /never use an invented `limit` field/u);
   assert.match(skill, /Never request OAuth tokens/u);
   assert.doesNotMatch(skill, /python run\.py/u);
 });

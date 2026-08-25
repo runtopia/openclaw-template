@@ -78,6 +78,15 @@ export function validatePluginGitState({ branch, status, ahead, behind }) {
   }
 }
 
+export function channelValidationSteps() {
+  return [
+    ["install", "--frozen-lockfile"],
+    ["test"],
+    ["typecheck"],
+    ["build"],
+  ];
+}
+
 function assertPluginRepositoryReady(pluginRepo) {
   const pluginDir = path.join(pluginRepo, "plugins", "oneclaw-channel");
   const packagePath = path.join(pluginDir, "package.json");
@@ -116,9 +125,9 @@ export function main(argv = process.argv.slice(2)) {
 
   console.log(`Building ${channelPackageName}@${pluginPackage.version} from ${pluginRepo}`);
   run("node", ["scripts/validate-plugin-releases.mjs", "oneclaw-channel"], pluginRepo);
-  run("corepack", ["pnpm", "test"], pluginDir);
-  run("corepack", ["pnpm", "typecheck"], pluginDir);
-  run("corepack", ["pnpm", "build"], pluginDir);
+  for (const step of channelValidationSteps()) {
+    run("corepack", ["pnpm", ...step], pluginDir);
+  }
 
   const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-channel-pack-"));
   try {

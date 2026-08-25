@@ -2,12 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  channelValidationSteps,
   contentAddressedArchiveName,
   obsoleteChannelArchives,
   parseArguments,
   updateChannelDependency,
   validatePluginGitState,
 } from "../scripts/update-local-oneclaw-channel.mjs";
+
+test("local Channel updater repairs dependencies from the frozen lockfile before validation", () => {
+  assert.deepEqual(channelValidationSteps(), [
+    ["install", "--frozen-lockfile"],
+    ["test"],
+    ["typecheck"],
+    ["build"],
+  ]);
+});
 
 test("local Channel updater defaults to the sibling plugin repository", () => {
   assert.deepEqual(parseArguments([], "/workspace/openclaw-template", {}), {

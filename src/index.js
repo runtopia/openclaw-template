@@ -22,6 +22,7 @@ import express from "express";
 import { createGatewayManager } from "./gateway/manager.js";
 import { createGatewayRpc } from "./gateway/rpc.js";
 import { createOneclawIntegration, normalizeOneclawApiUrl } from "./integration/oneclaw.js";
+import { createRuntimeGmailProxy } from "./integration/gmail-proxy.js";
 import { createRuntimeMcpSidecarProxy } from "./integration/mcp-proxy.js";
 import { ONECLAW_USER_AGENT_ENV, resolveOneClawUserAgent } from "./integration/user-agent.js";
 import { createRepairRouter } from "./repair/router.js";
@@ -356,6 +357,14 @@ app.all("/internal/mcp/composio", createRuntimeMcpSidecarProxy({
   instanceId: ONECLAW_INSTANCE_ID,
   instanceSecret: ONECLAW_INSTANCE_SECRET,
   sidecarToken: MCP_SIDECAR_TOKEN,
+}));
+
+// Deterministic Gmail workflow entry used by the image-bundled skill. The
+// wrapper owns Runtime authentication; callers can only reach it on loopback.
+app.post("/internal/integrations/gmail/invoke", createRuntimeGmailProxy({
+  apiUrl: normalizeOneclawApiUrl(ONECLAW_API_URL),
+  instanceId: ONECLAW_INSTANCE_ID,
+  instanceSecret: ONECLAW_INSTANCE_SECRET,
 }));
 
 // ── 登录 ────────────────────────────────────────────────────────────────────

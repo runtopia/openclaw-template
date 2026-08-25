@@ -123,7 +123,7 @@ test("message channel skill delegates credential setup to the OneClaw app", () =
   assert.match(skill, /Telegram \(`telegram`\)/u);
 });
 
-test("Gmail skill uses managed MCP tools and the OneClaw authorization card", () => {
+test("Gmail skill uses the deterministic local workflow and OneClaw authorization card", () => {
   const skill = fs.readFileSync(path.join(
     process.cwd(),
     "resources",
@@ -132,13 +132,13 @@ test("Gmail skill uses managed MCP tools and the OneClaw authorization card", ()
     "SKILL.md",
   ), "utf8");
 
-  assert.match(skill, /GMAIL_FETCH_EMAILS/u);
-  assert.match(skill, /GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID/u);
-  assert.match(skill, /GMAIL_GET_ATTACHMENT/u);
+  assert.match(skill, /\/opt\/oneclaw-skills\/composio-gmail\/run\.py/u);
+  assert.match(skill, /latest_emails/u);
+  assert.match(skill, /read_email/u);
   assert.match(skill, /search_integrations/u);
   assert.match(skill, /use_integration/u);
-  assert.match(skill, /max_results/u);
-  assert.match(skill, /never use an invented `limit` field/u);
+  assert.match(skill, /--max-results 5/u);
+  assert.match(skill, /Search results intentionally omit full message payloads/u);
   assert.match(skill, /Never request OAuth tokens/u);
-  assert.doesNotMatch(skill, /python run\.py/u);
+  assert.match(skill, /Do not use `search_integrations` or `use_integration` for normal email reads/u);
 });

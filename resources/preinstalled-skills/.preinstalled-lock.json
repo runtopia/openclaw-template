@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-21T00:00:00.000Z",
+  "generatedAt": "2026-08-25T00:00:00.000Z",
   "skills": [
     {
       "slug": "pdf",
@@ -56,7 +56,7 @@
     },
     {
       "slug": "composio-gmail",
-      "version": "v2",
+      "version": "v3",
       "source": "oneclaw-first-party"
     }
   ]

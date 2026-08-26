@@ -71,6 +71,9 @@ export function main(argv = process.argv.slice(2)) {
   const manifestSnapshot = fs.readFileSync(manifestPath);
   const lockfileSnapshot = fs.readFileSync(lockfilePath);
   const oldArchives = fs.readdirSync(tarballsDir).filter((entry) => archivePattern.test(entry));
+  const archiveSnapshots = new Map(
+    oldArchives.map((entry) => [entry, fs.readFileSync(path.join(tarballsDir, entry))]),
+  );
   try {
     run("corepack", ["pnpm", "pack", "--pack-destination", temporaryDir], pluginDir);
     const packed = fs.readdirSync(temporaryDir).filter((entry) => entry.endsWith(".tgz"));
@@ -87,18 +90,19 @@ export function main(argv = process.argv.slice(2)) {
       "install", "--package-lock-only", "--ignore-scripts", "--legacy-peer-deps",
       "--no-audit", "--no-fund",
     ], bundleDir);
-    run("node", ["--test", "test/oneclaw-plugin-bundle.test.js"], templateRoot);
     for (const archive of oldArchives) {
       if (archive !== nextArchive) fs.rmSync(path.join(tarballsDir, archive));
     }
+    run("node", ["--test", "test/oneclaw-plugin-bundle.test.js"], templateRoot);
     console.log(`Updated Template Integrations bundle: ${nextArchive}`);
   } catch (error) {
     fs.writeFileSync(manifestPath, manifestSnapshot);
     fs.writeFileSync(lockfilePath, lockfileSnapshot);
-    for (const entry of fs.readdirSync(tarballsDir)) {
-      if (archivePattern.test(entry) && !oldArchives.includes(entry)) {
-        fs.rmSync(path.join(tarballsDir, entry));
-      }
+    for (const entry of fs.readdirSync(tarballsDir).filter((value) => archivePattern.test(value))) {
+      fs.rmSync(path.join(tarballsDir, entry));
+    }
+    for (const [entry, contents] of archiveSnapshots) {
+      fs.writeFileSync(path.join(tarballsDir, entry), contents);
     }
     throw error;
   } finally {
@@ -114,4 +118,3 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exitCode = 1;
   }
 }
-

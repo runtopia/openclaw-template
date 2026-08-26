@@ -43,6 +43,7 @@ const NON_DISCOVERABLE_PLUGIN_INSTALL_IDS = [
 // "openclaw-weixin"); there is no official wechat plugin.
 const PREINSTALLED_PACKAGES = [
   "@oneclaw-plugins/clawrouters",
+  "@oneclaw-plugins/integrations",
   "@oneclaw-plugins/openclaw-search",
   "@openclaw/slack",
   "@openclaw/discord",
@@ -53,6 +54,7 @@ const PREINSTALLED_PACKAGES = [
 
 const OFFICIAL_NPM_PLUGIN_INSTALLS = [
   { pluginId: "clawrouters", packageName: "@oneclaw-plugins/clawrouters" },
+  { pluginId: "oneclaw-integrations", packageName: "@oneclaw-plugins/integrations" },
   { pluginId: "slack", packageName: "@openclaw/slack" },
   { pluginId: "discord", packageName: "@openclaw/discord" },
   { pluginId: "feishu", packageName: "@openclaw/feishu" },
@@ -67,6 +69,7 @@ const PREINSTALLED_PLUGIN_IDS = [
   "oneclaw-workflows",
   "oneclaw-employee-catalog",
   "oneclaw-channel",
+  "oneclaw-integrations",
   "slack",
   "discord",
   "feishu",

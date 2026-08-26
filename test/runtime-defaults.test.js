@@ -9,11 +9,12 @@ import {
   generateConfigDirect,
 } from "../src/config/generate.js";
 
-test("runtime defaults enable Channel, Workboard, and the native plan tool without provider credentials", () => {
+test("runtime defaults enable Channel, Integrations, Workboard, and the native plan tool without provider credentials", () => {
   const cfg = {};
 
   assert.equal(applyRuntimeDefaults(cfg, {}), true);
   assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
+  assert.equal(cfg.plugins.entries["oneclaw-integrations"].enabled, true);
   assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);
 });
@@ -43,7 +44,7 @@ test("runtime defaults remove retired collaboration plugin registrations", () =>
   assert.equal(cfg.plugins.entries["oneclaw-workflows"], undefined);
   assert.equal(cfg.plugins.entries["oneclaw-employee-catalog"], undefined);
   assert.deepEqual(cfg.plugins.entries.custom, { enabled: true });
-  assert.deepEqual(cfg.plugins.allow, ["clawrouters", "oneclaw-channel", "workboard"]);
+  assert.deepEqual(cfg.plugins.allow, ["clawrouters", "oneclaw-channel", "oneclaw-integrations", "workboard"]);
 });
 
 test("runtime defaults preserve an explicit Workboard opt-out", () => {
@@ -64,6 +65,7 @@ test("runtime defaults extend only an already-restrictive plugin allowlist", () 
   assert.deepEqual(restrictive.plugins.allow, [
     "clawrouters",
     "oneclaw-channel",
+    "oneclaw-integrations",
     "workboard",
   ]);
   assert.deepEqual(nonRestrictive.plugins.allow, []);
@@ -95,6 +97,7 @@ test("fresh config enables bundled OneClaw Channel and native orchestration with
   assert.equal(cfg.plugins.entries["oneclaw-workflows"], undefined);
   assert.equal(cfg.plugins.entries["oneclaw-employee-catalog"], undefined);
   assert.equal(cfg.plugins.entries["oneclaw-channel"].enabled, true);
+  assert.equal(cfg.plugins.entries["oneclaw-integrations"].enabled, true);
   assert.equal(cfg.plugins.entries.workboard.enabled, true);
   assert.equal(cfg.tools.experimental.planTool, true);
 });

@@ -20,6 +20,7 @@ const CLAWROUTERS_REALTIME_VOICES = new Set([
 const ONECLAW_SEARCH_PLUGIN_ID = "oneclaw-search";
 const ONECLAW_SEARCH_PROVIDER_ID = "oneclaw-search";
 const ONECLAW_CHANNEL_PLUGIN_ID = "oneclaw-channel";
+const ONECLAW_INTEGRATIONS_PLUGIN_ID = "oneclaw-integrations";
 const CLAWROUTERS_PLUGIN_ID = "clawrouters";
 const WORKBOARD_PLUGIN_ID = "workboard";
 const RETIRED_ONECLAW_COLLABORATION_PLUGIN_IDS = new Set([
@@ -449,6 +450,7 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   }
   changed = removeRetiredOneclawCollaborationPlugins(cfg) || changed;
   changed = applyOneclawChannelPatch(cfg) || changed;
+  changed = applyPluginEnabledByDefault(cfg, ONECLAW_INTEGRATIONS_PLUGIN_ID) || changed;
   changed = applyWorkboardPatch(cfg) || changed;
   changed = applyNativePlanToolPatch(cfg) || changed;
   changed = applyPreinstalledSkillsDefaults(cfg, env) || changed;

@@ -20,6 +20,7 @@ test("cloud Runtime declares locked OneClaw plugin artifacts", () => {
   assert.deepEqual(Object.keys(ONECLAW_PACKAGES).sort(), [
     "@oneclaw-plugins/channel",
     "@oneclaw-plugins/clawrouters",
+    "@oneclaw-plugins/integrations",
     "@oneclaw-plugins/openclaw-search",
     "@oneclaw-plugins/runtime-events",
   ]);
@@ -47,8 +48,25 @@ test("cloud Runtime declares locked OneClaw plugin artifacts", () => {
     assert.match(channelEntry.resolved, /^https:\/\/registry\.npmjs\.org\//u);
   }
 
+  const localIntegrationsSpec = ONECLAW_PACKAGES["@oneclaw-plugins/integrations"];
+  const localIntegrationsMatch = localIntegrationsSpec.match(
+    /^file:(tarballs\/oneclaw-plugins-integrations-[0-9A-Za-z.+-]+-([a-f0-9]{64})\.tgz)$/u,
+  );
+  const integrationsEntry = lockfile.packages["node_modules/@oneclaw-plugins/integrations"];
+  if (localIntegrationsMatch) {
+    const [, integrationsTarball, integrationsSha256] = localIntegrationsMatch;
+    assert.equal(
+      createHash("sha256").update(fs.readFileSync(path.join(bundleDir, integrationsTarball))).digest("hex"),
+      integrationsSha256,
+    );
+    assert.equal(integrationsEntry.resolved, localIntegrationsSpec);
+    assert.match(integrationsEntry.integrity, /^sha512-/u);
+  } else {
+    assert.match(localIntegrationsSpec, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u);
+  }
+
   for (const [packageName, version] of Object.entries(ONECLAW_PACKAGES)
-    .filter(([packageName]) => packageName !== "@oneclaw-plugins/channel")) {
+    .filter(([packageName, spec]) => packageName !== "@oneclaw-plugins/channel" && !spec.startsWith("file:"))) {
     assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u);
     assert.equal(manifest.dependencies[packageName], version);
     assert.equal(lockfile.packages[""].dependencies[packageName], version);
@@ -90,9 +108,9 @@ test("plugin source stays outside the template while local deployment tarballs a
   assert.equal(fs.existsSync(path.join(repoRoot, "resources", "openclaw-plugins")), false);
   assert.equal(fs.existsSync(path.join(repoRoot, "resources", "oneclaw-packages")), false);
   const channelSpec = ONECLAW_PACKAGES["@oneclaw-plugins/channel"];
-  const expectedTarballs = channelSpec.startsWith("file:")
-    ? [path.basename(channelSpec.slice("file:".length))]
-    : [];
+  const expectedTarballs = Object.values(ONECLAW_PACKAGES)
+    .filter((spec) => spec.startsWith("file:"))
+    .map((spec) => path.basename(spec.slice("file:".length)));
   const tarballsDir = path.join(bundleDir, "tarballs");
   const tarballs = fs.existsSync(tarballsDir)
     ? fs.readdirSync(tarballsDir).filter((entry) => entry.endsWith(".tgz"))

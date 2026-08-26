@@ -115,7 +115,6 @@ test("Dockerfile bundles the pinned Desktop common skills outside the data volum
     "find-skills",
     "self-improving-agent",
     "manage-message-channels",
-    "composio-gmail",
   ];
 
   assert.ok(dockerfile.includes("COPY resources/preinstalled-skills ${ONECLAW_PREINSTALLED_SKILLS_DIR}"));

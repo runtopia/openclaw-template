@@ -123,7 +123,7 @@ test("message channel skill delegates credential setup to the OneClaw app", () =
   assert.match(skill, /Telegram \(`telegram`\)/u);
 });
 
-test("Gmail skill uses the deterministic local workflow and OneClaw authorization card", () => {
+test("Gmail skill uses one authorization-aware deterministic tool", () => {
   const skill = fs.readFileSync(path.join(
     process.cwd(),
     "resources",
@@ -132,16 +132,13 @@ test("Gmail skill uses the deterministic local workflow and OneClaw authorizatio
     "SKILL.md",
   ), "utf8");
 
-  assert.match(skill, /\/opt\/oneclaw-skills\/composio-gmail\/run\.py/u);
+  assert.match(skill, /registered `oneclaw_gmail` tool/u);
   assert.match(skill, /latest_emails/u);
   assert.match(skill, /read_email/u);
-  assert.match(skill, /search_integrations/u);
-  assert.match(skill, /use_integration/u);
-  assert.match(skill, /"max_results": 1/u);
-  assert.match(skill, /"include_payload": false/u);
-  assert.match(skill, /always retry the original Python command once/u);
-  assert.match(skill, /--max-results 5/u);
+  assert.match(skill, /"maxResults": 5/u);
+  assert.match(skill, /owns first-time authorization/u);
+  assert.match(skill, /resumes the same request/u);
+  assert.match(skill, /Do not call `search_integrations`, `use_integration`, `exec`/u);
   assert.match(skill, /Search results intentionally omit full message payloads/u);
   assert.match(skill, /Never request OAuth tokens/u);
-  assert.match(skill, /Do not use `search_integrations` or `use_integration` for normal email reads/u);
 });

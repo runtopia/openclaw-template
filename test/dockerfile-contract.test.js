@@ -305,6 +305,7 @@ test("Dockerfile installs official OneClaw packages beside one shared Runtime Ev
     "utf8",
   );
   assert.ok(dockerfile.includes("@oneclaw-plugins/runtime-events"));
+  assert.ok(dockerfile.includes("@oneclaw-plugins/integrations/openclaw.plugin.json"));
   assert.ok(verifier.includes('readInstalledPackage("@oneclaw-plugins/channel")'));
   assert.ok(verifier.includes("installedVersion !== lockedVersion"));
   assert.match(dockerfile, /^ENV ONECLAW_INTERNAL_CHANNEL_V2=1$/m);

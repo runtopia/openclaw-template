@@ -229,6 +229,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   # plugin recorded by src/config/plugin-install-index.js.
   && for plugin_dir in \
        "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/clawrouters" \
+       "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/integrations" \
        "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/openclaw-search" \
        "${OPENCLAW_PLUGINS_DIR}/node_modules/@openclaw/slack" \
        "${OPENCLAW_PLUGINS_DIR}/node_modules/@openclaw/discord" \
@@ -246,6 +247,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/runtime-events/package.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/clawrouters/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/channel/openclaw.plugin.json" \
+  && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/integrations/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/@oneclaw-plugins/openclaw-search/openclaw.plugin.json" \
   && test -f "${OPENCLAW_PLUGINS_DIR}/node_modules/openclaw/package.json" \
   && node --input-type=module -e "import { createRequire } from 'node:module'; const rootRequire = createRequire('${OPENCLAW_PLUGINS_DIR}/package.json'); const channelRequire = createRequire('/usr/local/lib/node_modules/openclaw/dist/extensions/oneclaw-channel/package.json'); for (const dependency of ['@oneclaw-plugins/runtime-events', 'ajv', 'ws']) { const root = rootRequire.resolve(dependency); const channel = channelRequire.resolve(dependency); if (root !== channel) throw new Error('Bundled OneClaw Channel did not resolve shared ' + dependency); } const openclaw = channelRequire.resolve('openclaw'); if (!openclaw.startsWith('/usr/local/lib/node_modules/openclaw/')) throw new Error('Bundled OneClaw Channel did not resolve the global OpenClaw host');" \

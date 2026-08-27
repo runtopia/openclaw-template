@@ -6,7 +6,7 @@
   "dependencies": {
     "@oneclaw-plugins/channel": "file:tarballs/oneclaw-plugins-channel-0.1.26-de1ac89d7e06d45a290cb3f2d748b1856956a5f9bbe11f6af67f58ad5a6894c9.tgz",
     "@oneclaw-plugins/clawrouters": "0.4.1",
-    "@oneclaw-plugins/integrations": "file:tarballs/oneclaw-plugins-integrations-0.1.0-fb5f72695a15daf46773df7a0f4c8a66d7b62ec4e7b8cbba58d5092173eac188.tgz",
+    "@oneclaw-plugins/integrations": "file:tarballs/oneclaw-plugins-integrations-0.1.0-f63a91e0cb2957e5690c3f5ebd632f6b9964b832dafb8aaf22762f6be7222a17.tgz",
     "@oneclaw-plugins/openclaw-search": "0.2.0",
     "@oneclaw-plugins/runtime-events": "0.1.3",
     "@openclaw/discord": "2026.7.1",

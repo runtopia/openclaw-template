@@ -10,7 +10,18 @@ import { patchConfig } from "../config/edit.js";
 import { mergePreinstalledSkillAllowlist } from "../config/preinstalled-skills.js";
 import { applyManagedMcpIsolationToAgent, applyMcpSnapshot, readMcpSyncState } from "./mcp-sync.js";
 
-const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
+const DEFAULT_PLATFORM_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const MIN_PLATFORM_HEARTBEAT_INTERVAL_MS = 60 * 1000;
+const MAX_PLATFORM_HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000;
+
+export function platformHeartbeatIntervalMs(raw) {
+  if (raw == null || String(raw).trim() === "") return DEFAULT_PLATFORM_HEARTBEAT_INTERVAL_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PLATFORM_HEARTBEAT_INTERVAL_MS;
+  return Math.max(MIN_PLATFORM_HEARTBEAT_INTERVAL_MS, Math.min(MAX_PLATFORM_HEARTBEAT_INTERVAL_MS, Math.trunc(parsed)));
+}
+
+const HEARTBEAT_INTERVAL_MS = platformHeartbeatIntervalMs(process.env.ONECLAW_PLATFORM_HEARTBEAT_INTERVAL_MS);
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
 const COMMAND_LONG_POLL_MS = Math.max(0, Math.min(30_000, Number(process.env.ONECLAW_COMMAND_LONG_POLL_MS ?? 25_000) || 25_000));
 const EMPLOYEE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;

@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createOneclawIntegration, normalizeOneclawApiUrl } from "../src/integration/oneclaw.js";
+import {
+  createOneclawIntegration,
+  normalizeOneclawApiUrl,
+  platformHeartbeatIntervalMs,
+} from "../src/integration/oneclaw.js";
 
 function makeWorkspace() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "oneclaw-go-api-"));
@@ -40,6 +44,14 @@ test("normalizes OneClaw Go API base URL to /api/v1", () => {
   assert.equal(normalizeOneclawApiUrl("https://oneclaw.example.com/api/v2/"), "https://oneclaw.example.com/api/v2");
   assert.equal(normalizeOneclawApiUrl("https://oneclaw.example.com", "2"), "https://oneclaw.example.com/api/v2");
   assert.throws(() => normalizeOneclawApiUrl("https://oneclaw.example.com", "latest"), /invalid OneClaw API version/);
+});
+
+test("uses a bounded five-minute platform heartbeat interval", () => {
+  assert.equal(platformHeartbeatIntervalMs(undefined), 5 * 60 * 1000);
+  assert.equal(platformHeartbeatIntervalMs("invalid"), 5 * 60 * 1000);
+  assert.equal(platformHeartbeatIntervalMs("30000"), 60 * 1000);
+  assert.equal(platformHeartbeatIntervalMs("420000"), 7 * 60 * 1000);
+  assert.equal(platformHeartbeatIntervalMs("3600000"), 10 * 60 * 1000);
 });
 
 test("heartbeat sends Go API snake_case payload and applies queued template command", async () => {

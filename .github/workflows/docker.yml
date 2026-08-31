@@ -94,3 +94,29 @@ jobs:
             type=gha,scope=runtime-standard
             type=gha,scope=runtime-full
           cache-to: type=gha,mode=max,scope=runtime-full
+
+      - name: Notify WeChat Work
+        env:
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
+          IMAGE_VERSION: ${{ steps.ver.outputs.value }}
+        run: |
+          if [[ -z "$WECOM_WEBHOOK_URL" ]]; then
+            echo "::warning::WECOM_WEBHOOK_URL is not configured; skipping production release notification."
+            exit 0
+          fi
+
+          release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}"
+          workflow_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          image="${REGISTRY}/${IMAGE_NAME}:${IMAGE_VERSION}"
+          content=$(printf '## 🚀 OneClaw Template 发布成功\n\n> **版本**：[%s](%s)\n> **镜像**：`%s`\n> **发布人**：%s\n\n[查看发布流水线](%s)' \
+            "$GITHUB_REF_NAME" "$release_url" "$image" "$GITHUB_ACTOR" "$workflow_url")
+          payload=$(jq -cn --arg content "$content" '{msgtype:"markdown",markdown:{content:$content}}')
+
+          if ! response=$(curl --fail --silent --show-error --retry 2 --max-time 15 \
+            -H 'Content-Type: application/json' \
+            -d "$payload" \
+            "$WECOM_WEBHOOK_URL"); then
+            echo "::warning::Failed to send WeChat Work production release notification."
+          elif ! jq -e '.errcode == 0' <<<"$response" >/dev/null; then
+            echo "::warning::WeChat Work rejected the production release notification: $response"
+          fi

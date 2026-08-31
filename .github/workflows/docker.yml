@@ -97,19 +97,30 @@ jobs:
 
       - name: Notify WeChat Work
         env:
-          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_PRODUCTION_WEBHOOK_URL }}
           IMAGE_VERSION: ${{ steps.ver.outputs.value }}
         run: |
           if [[ -z "$WECOM_WEBHOOK_URL" ]]; then
-            echo "::warning::WECOM_WEBHOOK_URL is not configured; skipping production release notification."
+            echo "::warning::WECOM_PRODUCTION_WEBHOOK_URL is not configured; skipping production release notification."
             exit 0
           fi
 
           release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}"
           workflow_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           image="${REGISTRY}/${IMAGE_NAME}:${IMAGE_VERSION}"
-          content=$(printf '## 🚀 OneClaw Template 发布成功\n\n> **版本**：[%s](%s)\n> **镜像**：`%s`\n> **发布人**：%s\n\n[查看发布流水线](%s)' \
-            "$GITHUB_REF_NAME" "$release_url" "$image" "$GITHUB_ACTOR" "$workflow_url")
+          release_ref=$(git rev-parse "${GITHUB_REF_NAME}^{commit}")
+          previous_tag=$(git describe --tags --abbrev=0 "${release_ref}^" --match 'v*' 2>/dev/null || true)
+          range="${release_ref}^..${release_ref}"
+          if [[ -n "$previous_tag" ]]; then
+            range="${previous_tag}..${release_ref}"
+          fi
+          commit_count=$(git rev-list --count "$range")
+          change_log=$(git log --max-count=10 --format='- [`%h`]('${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}'/commit/%H) %s' "$range")
+          if (( commit_count > 10 )); then
+            change_log+=$'\n'"- 另外 $((commit_count - 10)) 个提交"
+          fi
+          content=$(printf '## 🚀 OneClaw Template 发布成功\n\n> **版本**：[%s](%s)\n> **镜像**：`%s`\n> **发布人**：%s\n\n**自 %s 后的 Commits**\n%s\n\n[查看发布流水线](%s)' \
+            "$GITHUB_REF_NAME" "$release_url" "$image" "$GITHUB_ACTOR" "${previous_tag:-上次发布}" "$change_log" "$workflow_url")
           payload=$(jq -cn --arg content "$content" '{msgtype:"markdown",markdown:{content:$content}}')
 
           if ! response=$(curl --fail --silent --show-error --retry 2 --max-time 15 \

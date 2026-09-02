@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { buildRuntimeChannelAccessPolicy, mergeChannelPolicy } from "../channels/access-policy.js";
 import { CHANNEL_MANIFEST, setChannelAccountConfig, setChannelConfig } from "../channels/manifest.js";
 import { approvePairingRequest, listPairingRequests, normalizePairingChannel, resolveOpenClawEntryFromClawArgs } from "../channels/pairing-store.js";
@@ -51,6 +52,38 @@ export function loadRuntimeCapabilities(
       capability_digest: "",
       capabilities: [],
       supported_skills: [],
+    };
+  }
+}
+
+export function loadIntegrationActions(
+  manifestPath = process.env.ONECLAW_INTEGRATION_ACTIONS_PATH
+    || path.join(
+      process.env.OPENCLAW_PLUGINS_DIR?.trim() || "/opt/openclaw-plugins",
+      "node_modules/@oneclaw-plugins/integrations/oneclaw.actions.json",
+    ),
+) {
+  try {
+    const body = fs.readFileSync(manifestPath);
+    const manifest = JSON.parse(body.toString("utf8"));
+    if (manifest?.schema_version !== 1 || !Array.isArray(manifest.actions)) {
+      throw new Error("invalid action manifest shape");
+    }
+    const actionIds = [...new Set(manifest.actions.map((action) => String(action?.id || "").trim()).filter(Boolean))].sort();
+    if (actionIds.length !== manifest.actions.length) {
+      throw new Error("action manifest contains blank or duplicate ids");
+    }
+    return {
+      schema_version: 1,
+      digest: `sha256:${createHash("sha256").update(body).digest("hex")}`,
+      action_ids: actionIds,
+    };
+  } catch (error) {
+    console.warn(`[capabilities] integration actions unavailable (${error.message})`);
+    return {
+      schema_version: 1,
+      digest: "",
+      action_ids: [],
     };
   }
 }
@@ -288,6 +321,7 @@ export function createOneclawIntegration({
   openclawVersion = process.env.OPENCLAW_VERSION || "unknown",
   runtimeContract = process.env.ONECLAW_RUNTIME_CONTRACT || "3",
   runtimeCapabilitiesPath = process.env.ONECLAW_RUNTIME_CAPABILITIES_PATH || "/opt/oneclaw/runtime-capabilities.json",
+  integrationActionsPath,
   channelBindingPollMs = 1500,
   skillStatusRetryMs = 250,
   skillStatusAttempts = 12,
@@ -339,6 +373,7 @@ export function createOneclawIntegration({
   const personalityCachePath = path.join(runtimeStateDir, "oneclaw-personality-cache.json");
   let mcpSyncPromise = Promise.resolve();
   const runtimeCapabilities = loadRuntimeCapabilities(runtimeCapabilitiesPath);
+  const integrationActions = loadIntegrationActions(integrationActionsPath);
   const usageStats = {
     messages: 0,
     tokens: 0,
@@ -716,6 +751,7 @@ export function createOneclawIntegration({
             runtime_capability_digest: runtimeCapabilities.capability_digest,
             runtime_capabilities: runtimeCapabilities.capabilities,
             runtime_supported_skills: runtimeCapabilities.supported_skills,
+            oneclaw_integration_actions: integrationActions,
             platforms,
             oneclaw_channel: oneclawChannel,
             mcp_revision: Number(mcpState.revision || 0),

@@ -11,6 +11,7 @@ test("integration action heartbeat snapshot comes from the installed manifest", 
   const manifestPath = path.join(directory, "oneclaw.actions.json");
   fs.writeFileSync(manifestPath, JSON.stringify({
     schema_version: 1,
+    groups: [{ id: "media" }],
     actions: [
       { id: "media.browse_templates" },
       { id: "gmail.latest_emails" },
@@ -20,9 +21,15 @@ test("integration action heartbeat snapshot comes from the installed manifest", 
   const snapshot = loadIntegrationActions(manifestPath);
   assert.deepEqual(snapshot.action_ids, ["gmail.latest_emails", "media.browse_templates"]);
   assert.match(snapshot.digest, /^sha256:[a-f0-9]{64}$/u);
+  assert.equal(snapshot.manifest.groups[0].id, "media");
 });
 
 test("missing integration action manifest reports no supported actions", () => {
   const snapshot = loadIntegrationActions("/missing/oneclaw.actions.json");
-  assert.deepEqual(snapshot, { schema_version: 1, digest: "", action_ids: [] });
+  assert.deepEqual(snapshot, {
+    schema_version: 1,
+    digest: "",
+    action_ids: [],
+    manifest: null,
+  });
 });

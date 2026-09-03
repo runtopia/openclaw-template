@@ -67,6 +67,7 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
   }));
   fs.writeFileSync(integrationActionsPath, JSON.stringify({
     schema_version: 1,
+    groups: [{ id: "gmail" }],
     actions: [{ id: "gmail.latest_emails" }],
   }));
   const restoreFetch = withFetch((url, opts) => {
@@ -89,6 +90,7 @@ test("heartbeat sends Go API snake_case payload and applies queued template comm
     assert.deepEqual(body.agent.runtime_supported_skills, ["pdf", "coding-agent"]);
     assert.deepEqual(body.agent.oneclaw_integration_actions.action_ids, ["gmail.latest_emails"]);
     assert.match(body.agent.oneclaw_integration_actions.digest, /^sha256:[a-f0-9]{64}$/u);
+    assert.equal(body.agent.oneclaw_integration_actions.manifest.groups[0].id, "gmail");
     assert.equal(body.agent.platforms.telegram, true);
     return jsonResponse({
       instance_id: "runtime-1",

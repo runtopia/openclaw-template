@@ -66,7 +66,11 @@ export function loadIntegrationActions(
   try {
     const body = fs.readFileSync(manifestPath);
     const manifest = JSON.parse(body.toString("utf8"));
-    if (manifest?.schema_version !== 1 || !Array.isArray(manifest.actions)) {
+    if (
+      manifest?.schema_version !== 1
+      || !Array.isArray(manifest.groups)
+      || !Array.isArray(manifest.actions)
+    ) {
       throw new Error("invalid action manifest shape");
     }
     const actionIds = [...new Set(manifest.actions.map((action) => String(action?.id || "").trim()).filter(Boolean))].sort();
@@ -77,6 +81,7 @@ export function loadIntegrationActions(
       schema_version: 1,
       digest: `sha256:${createHash("sha256").update(body).digest("hex")}`,
       action_ids: actionIds,
+      manifest,
     };
   } catch (error) {
     console.warn(`[capabilities] integration actions unavailable (${error.message})`);
@@ -84,6 +89,7 @@ export function loadIntegrationActions(
       schema_version: 1,
       digest: "",
       action_ids: [],
+      manifest: null,
     };
   }
 }
@@ -373,7 +379,6 @@ export function createOneclawIntegration({
   const personalityCachePath = path.join(runtimeStateDir, "oneclaw-personality-cache.json");
   let mcpSyncPromise = Promise.resolve();
   const runtimeCapabilities = loadRuntimeCapabilities(runtimeCapabilitiesPath);
-  const integrationActions = loadIntegrationActions(integrationActionsPath);
   const usageStats = {
     messages: 0,
     tokens: 0,
@@ -735,6 +740,9 @@ export function createOneclawIntegration({
         runtimeId: process.env.ONECLAW_RUNTIME_ID || instanceId,
       });
       const mcpState = readMcpSyncState(mcpStatePath);
+      // The installed plugin manifest is the authoritative source. Reload it
+      // for every heartbeat so plugin updates do not require an API release.
+      const integrationActions = loadIntegrationActions(integrationActionsPath);
       const res = await apiFetch("/runtime/heartbeat", {
         method: "POST",
         body: JSON.stringify({

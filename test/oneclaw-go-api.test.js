@@ -3159,3 +3159,70 @@ test("unbind channel command removes runtime binding without restarting gateway"
   assert.equal(unbindCalls, 1);
   assert.equal(restartCalls, 0);
 });
+
+test("legacy unbind commands derive the same per-agent account ids used during binding", async () => {
+  const workspaceDir = makeWorkspace();
+  const unbound = [];
+  const restoreFetch = withFetch((url, opts) => {
+    if (url === "https://oneclaw.example.com/api/v1/runtime/heartbeat") {
+      return jsonResponse({
+        instance_id: "runtime-1",
+        status: "running",
+        last_heartbeat: new Date().toISOString(),
+        commands: [
+          {
+            id: "cmd-unbind-telegram",
+            type: "update_config",
+            payload: {
+              action: "unbind_channel",
+              employee_id: "employee-telegram",
+              openclaw_agent_id: "agent-telegram",
+              channel: "telegram",
+              state: { status: "unbound", enabled: false },
+            },
+          },
+          {
+            id: "cmd-unbind-whatsapp",
+            type: "update_config",
+            payload: {
+              action: "unbind_channel",
+              employee_id: "employee-whatsapp",
+              openclaw_agent_id: "agent-whatsapp",
+              channel: "whatsapp",
+              state: { status: "unbound", enabled: false },
+            },
+          },
+        ],
+      });
+    }
+    if (url === "http://gateway.local/repair/unbind-channel") {
+      unbound.push(JSON.parse(opts.body));
+      return jsonResponse({ ok: true, result: { removed: true } });
+    }
+    if (url === "https://oneclaw.example.com/api/v1/runtime/events") {
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  try {
+    const integration = createOneclawIntegration({
+      apiUrl: "https://oneclaw.example.com/api/v1",
+      instanceId: "runtime-1",
+      instanceSecret: "secret-1",
+      workspaceDir,
+      gatewayTarget: "http://gateway.local",
+      gatewayToken: "gateway-token",
+      isGatewayReady: () => true,
+      isGatewayStarting: () => false,
+    });
+    await integration.sendHeartbeat();
+  } finally {
+    restoreFetch();
+  }
+
+  assert.deepEqual(unbound, [
+    { channel: "telegram", accountId: "agent-telegram", agentId: "agent-telegram" },
+    { channel: "whatsapp", accountId: "employee-whatsapp", agentId: "agent-whatsapp" },
+  ]);
+});

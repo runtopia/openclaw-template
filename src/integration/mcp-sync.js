@@ -160,14 +160,6 @@ export function applyMcpSnapshot({ configPath, connectionHeaders, connectionUrl,
       config.mcp.servers = {};
     }
     delete config.mcp.servers[ONECLAW_COMPOSIO_MCP_SERVER_ID];
-    if (desired) {
-      const sidecarToken = String(connectionHeaders?.["X-OneClaw-Sidecar-MCP-Token"] || "").trim();
-      if (!/^[a-f0-9]{64}$/u.test(sidecarToken)) throw new Error("invalid Sidecar MCP token");
-      config.mcp.servers[desired.id] = {
-        ...desired.config,
-        headers: { "X-OneClaw-Sidecar-MCP-Token": sidecarToken },
-      };
-    }
     if (Object.keys(config.mcp.servers).length === 0) delete config.mcp.servers;
     if (Object.keys(config.mcp).length === 0) delete config.mcp;
 
@@ -175,9 +167,7 @@ export function applyMcpSnapshot({ configPath, connectionHeaders, connectionUrl,
     for (const agent of agents) {
       const agentId = String(agent?.id || agent?.agentId || "").trim();
       if (!agentId) continue;
-      const shouldDeny = Boolean(desired && !desired.targetAgentIds.includes(agentId));
-      const managed = mergeDeny(agent, shouldDeny, previousManagedDenies[agentId] === true);
-      if (shouldDeny && managed) managedAgentDenies[agentId] = true;
+      mergeDeny(agent, false, previousManagedDenies[agentId] === true);
     }
   });
   fs.chmodSync(configPath, 0o600);
@@ -185,7 +175,9 @@ export function applyMcpSnapshot({ configPath, connectionHeaders, connectionUrl,
     schema_version: SNAPSHOT_SCHEMA_VERSION,
     revision: snapshot.revision,
     digest: snapshot.digest,
-    managed_server_ids: desired ? [desired.id] : [],
+    managed_server_ids: [],
+    broker_server_ids: desired ? [desired.id] : [],
+    connected_tool_count: desired?.protocol.tool_filter.include.length ?? 0,
     managed_agent_denies: managedAgentDenies,
     server_count: snapshot.servers.length,
     status: "applied",

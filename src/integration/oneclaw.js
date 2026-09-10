@@ -2325,7 +2325,10 @@ export function createOneclawIntegration({
 
   function runtimeChannelAccountId(channel, employeeId, runtimeAccountId) {
     const accountId = String(runtimeAccountId || "").trim();
-    return accountId || employeeId;
+    if (accountId) return accountId;
+    const runtimeChannel = runtimeChannelName(channel);
+    if (runtimeChannel === "whatsapp" || runtimeChannel === "openclaw-weixin") return employeeId;
+    return "";
   }
 
   function runtimeAccountIdFromPayload(payload, channel, employeeId) {
@@ -2339,7 +2342,8 @@ export function createOneclawIntegration({
       stateConfig.accountId ||
       "",
     ).trim();
-    return runtimeChannelAccountId(channel, employeeId, runtimeAccountId);
+    return runtimeChannelAccountId(channel, employeeId, runtimeAccountId)
+      || runtimeAgentId(payload, employeeId);
   }
 
   function runtimeAgentId(payload, employeeId) {

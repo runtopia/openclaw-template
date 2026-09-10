@@ -147,6 +147,7 @@ COPY scripts/patch-openclaw-chat-images.js \
      scripts/patch-openclaw-realtime-base-url.mjs \
      scripts/patch-openclaw-model-user-agent.mjs \
      scripts/patch-openclaw-embedding-user-agent.mjs \
+     scripts/patch-openclaw-oneclaw-cron-access.mjs \
      scripts/patch-openclaw-oneclaw-completion-delivery.mjs \
      scripts/patch-oneclaw-channel-delivery.mjs \
      scripts/verify-openclaw-plugin-bundle.mjs \
@@ -175,6 +176,10 @@ RUN node /app/scripts/patch-openclaw-realtime-base-url.mjs /usr/local/lib/node_m
 # These exact-version patches preserve explicit per-Provider overrides.
 RUN node /app/scripts/patch-openclaw-model-user-agent.mjs /usr/local/lib/node_modules/openclaw/dist
 RUN node /app/scripts/patch-openclaw-embedding-user-agent.mjs /usr/local/lib/node_modules/openclaw/dist
+# OneClaw API authentication already scopes every inbound Session to its
+# Workspace. Let those turns use the native Cron tool while keeping Gateway
+# and Nodes behind OpenClaw's owner-only control-plane policy.
+RUN node /app/scripts/patch-openclaw-oneclaw-cron-access.mjs /usr/local/lib/node_modules/openclaw
 # Detached generated-media completions must enter OneClaw through the durable
 # Message Tool path, and OneClaw sources must bypass OpenClaw's private
 # internal-ui reply sink, so Channel can allocate an autonomous public Run.

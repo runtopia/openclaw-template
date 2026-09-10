@@ -55,9 +55,10 @@ test("leased sync_mcp command fetches the authoritative snapshot before acknowle
   await integration.pollCommands();
 
   const config = JSON.parse(fs.readFileSync(path.join(stateDir, "openclaw.json"), "utf8"));
-  assert.equal(config.mcp.servers["oneclaw-composio-main"].transport, "streamable-http");
-  assert.equal(config.mcp.servers["oneclaw-composio-main"].url, "http://127.0.0.1:9090/internal/mcp/composio");
-  assert.equal(config.mcp.servers["oneclaw-composio-main"].headers["X-OneClaw-Sidecar-MCP-Token"], "b".repeat(64));
+  assert.equal(config.mcp?.servers?.["oneclaw-composio-main"], undefined);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "oneclaw-mcp-state.json"), "utf8"));
+  assert.deepEqual(state.broker_server_ids, ["oneclaw-composio-main"]);
+  assert.equal(state.connected_tool_count, 1);
   const snapshotIndex = calls.findIndex((call) => call.target.endsWith("/runtime/integrations/mcp-snapshot"));
   const ackIndex = calls.findIndex((call) => call.target.endsWith("/runtime/commands/sync-1/ack"));
   assert.ok(snapshotIndex >= 0 && ackIndex > snapshotIndex);

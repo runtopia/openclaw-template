@@ -7,7 +7,7 @@
 启动应出现：
 
 ```text
-[oneclaw-cron] creation_policy_ready policy=isolated-agentTurn-announce-v2
+[oneclaw-cron] creation_policy_ready policy=isolated-agentTurn-announce-v3
 ```
 
 它只证明 Channel 创建规则已加载，不代表某个任务已创建或已投递。
@@ -48,4 +48,4 @@
 
 ## 验证稳定性
 
-不能以 develop 一次投递成功代替生产问题验收。应在相同修复镜像中分别验证标准 `job`、扁平参数、`job.data` / `job.job`、省略 payload.kind 的文本提醒；显式 `systemEvent + main + delivery:none` 也必须归一化。仓库回归测试会再经过当前 OpenClaw 的真实参数恢复函数，防止它覆盖 Hook 的结果。生产历史调用的实际入口仍需现场日志确认。
+不能以 develop 一次投递成功代替生产问题验收。应在相同修复镜像中分别验证标准 `job`、扁平参数、`job.data` / `job.job`、省略 payload.kind 的文本提醒；显式 `systemEvent + main + delivery:none` 也必须归一化。仓库回归测试会再经过当前 OpenClaw 的真实参数恢复函数，防止它覆盖 Hook 的结果。2026-09-11 16:28 的现场日志已确认原生 Hook 的 `channelId` 为 `oneclaw:session_...`，此前精确匹配 `oneclaw` 的判断误跳过了该调用。v3 同时识别纯渠道 ID 和完整 OneClaw Session 地址，投递目标仍从可信运行/Session 上下文解析，不能仅使用模型参数。

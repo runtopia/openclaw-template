@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { buildRuntimeChannelAccessPolicy, mergeChannelPolicy } from "../channels/access-policy.js";
 import { CHANNEL_MANIFEST, setChannelAccountConfig, setChannelConfig } from "../channels/manifest.js";
 import { approvePairingRequest, listPairingRequests, normalizePairingChannel, resolveOpenClawEntryFromClawArgs } from "../channels/pairing-store.js";
@@ -10,7 +11,18 @@ import { patchConfig } from "../config/edit.js";
 import { mergePreinstalledSkillAllowlist } from "../config/preinstalled-skills.js";
 import { applyManagedMcpIsolationToAgent, applyMcpSnapshot, readMcpSyncState } from "./mcp-sync.js";
 
-const HEARTBEAT_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 小时
+const DEFAULT_PLATFORM_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const MIN_PLATFORM_HEARTBEAT_INTERVAL_MS = 60 * 1000;
+const MAX_PLATFORM_HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000;
+
+export function platformHeartbeatIntervalMs(raw) {
+  if (raw == null || String(raw).trim() === "") return DEFAULT_PLATFORM_HEARTBEAT_INTERVAL_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PLATFORM_HEARTBEAT_INTERVAL_MS;
+  return Math.max(MIN_PLATFORM_HEARTBEAT_INTERVAL_MS, Math.min(MAX_PLATFORM_HEARTBEAT_INTERVAL_MS, Math.trunc(parsed)));
+}
+
+const HEARTBEAT_INTERVAL_MS = platformHeartbeatIntervalMs(process.env.ONECLAW_PLATFORM_HEARTBEAT_INTERVAL_MS);
 const COMMAND_POLL_INTERVAL_MS = Number(process.env.ONECLAW_COMMAND_POLL_INTERVAL_MS ?? 5_000);
 const COMMAND_LONG_POLL_MS = Math.max(0, Math.min(30_000, Number(process.env.ONECLAW_COMMAND_LONG_POLL_MS ?? 25_000) || 25_000));
 const EMPLOYEE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -40,6 +52,56 @@ export function loadRuntimeCapabilities(
       capability_digest: "",
       capabilities: [],
       supported_skills: [],
+    };
+  }
+}
+
+export function loadIntegrationActions(
+  manifestPath = process.env.ONECLAW_INTEGRATION_ACTIONS_PATH
+    || path.join(
+      process.env.OPENCLAW_PLUGINS_DIR?.trim() || "/opt/openclaw-plugins",
+      "node_modules/@oneclaw-plugins/integrations/oneclaw.actions.json",
+    ),
+) {
+  try {
+    const body = fs.readFileSync(manifestPath);
+    const manifest = JSON.parse(body.toString("utf8"));
+    if (
+      manifest?.schema_version !== 1
+      || !Array.isArray(manifest.groups)
+      || !Array.isArray(manifest.actions)
+    ) {
+      throw new Error("invalid action manifest shape");
+    }
+    const actionIds = [...new Set(manifest.actions.map((action) => String(action?.id || "").trim()).filter(Boolean))].sort();
+    if (actionIds.length !== manifest.actions.length) {
+      throw new Error("action manifest contains blank or duplicate ids");
+    }
+    const executorsPath = path.join(path.dirname(manifestPath), "oneclaw.executors.json");
+    let dynamic = {};
+    if (fs.existsSync(executorsPath)) {
+      const executors = JSON.parse(fs.readFileSync(executorsPath, "utf8"));
+      if (executors.schema_version !== 1 || !Array.isArray(executors.contracts)
+        || executors.contracts.length === 0 || executors.contracts.length > 32
+        || !executors.contracts.every((contract) => typeof contract === "string" && contract.length <= 128)) {
+        throw new Error("invalid integration executors");
+      }
+      dynamic = { dynamic_version: 1, executors: [...new Set(executors.contracts)] };
+    }
+    return {
+      ...dynamic,
+      schema_version: 1,
+      digest: `sha256:${createHash("sha256").update(body).digest("hex")}`,
+      action_ids: actionIds,
+      manifest,
+    };
+  } catch (error) {
+    console.warn(`[capabilities] integration actions unavailable (${error.message})`);
+    return {
+      schema_version: 1,
+      digest: "",
+      action_ids: [],
+      manifest: null,
     };
   }
 }
@@ -277,6 +339,7 @@ export function createOneclawIntegration({
   openclawVersion = process.env.OPENCLAW_VERSION || "unknown",
   runtimeContract = process.env.ONECLAW_RUNTIME_CONTRACT || "3",
   runtimeCapabilitiesPath = process.env.ONECLAW_RUNTIME_CAPABILITIES_PATH || "/opt/oneclaw/runtime-capabilities.json",
+  integrationActionsPath,
   channelBindingPollMs = 1500,
   skillStatusRetryMs = 250,
   skillStatusAttempts = 12,
@@ -689,6 +752,9 @@ export function createOneclawIntegration({
         runtimeId: process.env.ONECLAW_RUNTIME_ID || instanceId,
       });
       const mcpState = readMcpSyncState(mcpStatePath);
+      // The installed plugin manifest is the authoritative source. Reload it
+      // for every heartbeat so plugin updates do not require an API release.
+      const integrationActions = loadIntegrationActions(integrationActionsPath);
       const res = await apiFetch("/runtime/heartbeat", {
         method: "POST",
         body: JSON.stringify({
@@ -705,6 +771,7 @@ export function createOneclawIntegration({
             runtime_capability_digest: runtimeCapabilities.capability_digest,
             runtime_capabilities: runtimeCapabilities.capabilities,
             runtime_supported_skills: runtimeCapabilities.supported_skills,
+            oneclaw_integration_actions: integrationActions,
             platforms,
             oneclaw_channel: oneclawChannel,
             mcp_revision: Number(mcpState.revision || 0),
@@ -1520,7 +1587,7 @@ export function createOneclawIntegration({
         version: payload.version,
         force: payload.force,
       });
-      await installSkillForAgent(spec, agentId, payload.credentials);
+      await installSkillForAgent({ ...spec, verify_ready: payload.verify_ready === true }, agentId, payload.credentials);
       addAgentSkillToAllowlist(agentId, slug);
       if (employeeId) {
         await sendEvent("skill_status", {
@@ -1700,7 +1767,7 @@ export function createOneclawIntegration({
   }
 
   async function verifyInstalledSkillIfRequired(spec, identifiers, agentId) {
-    if (!skillNeedsRuntimeVerification(spec)) return;
+    if (spec.verify_ready !== true && !skillNeedsRuntimeVerification(spec)) return;
     const slug = String(spec?.slug || identifiers[0] || "").trim();
     const wasAllowed = readAgentSkillAllowlist(agentId).includes(slug);
     addAgentSkillToAllowlist(agentId, slug);
@@ -2270,7 +2337,10 @@ export function createOneclawIntegration({
 
   function runtimeChannelAccountId(channel, employeeId, runtimeAccountId) {
     const accountId = String(runtimeAccountId || "").trim();
-    return accountId || employeeId;
+    if (accountId) return accountId;
+    const runtimeChannel = runtimeChannelName(channel);
+    if (runtimeChannel === "whatsapp" || runtimeChannel === "openclaw-weixin") return employeeId;
+    return "";
   }
 
   function runtimeAccountIdFromPayload(payload, channel, employeeId) {
@@ -2284,7 +2354,8 @@ export function createOneclawIntegration({
       stateConfig.accountId ||
       "",
     ).trim();
-    return runtimeChannelAccountId(channel, employeeId, runtimeAccountId);
+    return runtimeChannelAccountId(channel, employeeId, runtimeAccountId)
+      || runtimeAgentId(payload, employeeId);
   }
 
   function runtimeAgentId(payload, employeeId) {

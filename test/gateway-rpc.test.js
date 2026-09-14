@@ -159,7 +159,9 @@ test("gateway rpc surfaces prolonged startup-sidecars retries as stuck startup s
   t.after(() => rpc.close());
 
   rpc.start();
-  await assert.rejects(() => rpc.waitUntilConnected(120), /gateway WS not connected/);
+  // Startup retries are clamped to a 100 ms minimum. Allow enough wall time
+  // for two complete rejected handshakes even on a contended CI runner.
+  await assert.rejects(() => rpc.waitUntilConnected(260), /gateway WS not connected/);
 
   const state = rpc.getConnectionState();
   assert.equal(state.connected, false);

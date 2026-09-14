@@ -47,7 +47,7 @@ function fixture(t, config) {
   };
 }
 
-test("MCP snapshot preserves user servers and isolates non-target Agents", (t) => {
+test("MCP snapshot preserves user servers while keeping Composio actions behind the broker", (t) => {
   const paths = fixture(t, {
     mcp: { servers: { local: { command: "local-server" } } },
     agents: { list: [{ id: "main" }, { id: "worker", tools: { deny: ["dangerous"] } }] },
@@ -55,22 +55,33 @@ test("MCP snapshot preserves user servers and isolates non-target Agents", (t) =
   const state = applyMcpSnapshot({ ...paths, snapshot: snapshot(4) });
   const config = JSON.parse(fs.readFileSync(paths.configPath, "utf8"));
   assert.deepEqual(config.mcp.servers.local, { command: "local-server" });
-  assert.equal(config.mcp.servers[ONECLAW_COMPOSIO_MCP_SERVER_ID].transport, "streamable-http");
-  assert.equal(config.mcp.servers[ONECLAW_COMPOSIO_MCP_SERVER_ID].url, "http://127.0.0.1:8080/internal/mcp/composio");
-  assert.equal(config.mcp.servers[ONECLAW_COMPOSIO_MCP_SERVER_ID].headers["X-OneClaw-Sidecar-MCP-Token"], "a".repeat(64));
+  assert.equal(config.mcp.servers[ONECLAW_COMPOSIO_MCP_SERVER_ID], undefined);
   assert.equal(config.agents.list[0].tools, undefined);
-  assert.deepEqual(config.agents.list[1].tools.deny, ["dangerous", `${ONECLAW_COMPOSIO_MCP_SERVER_ID}__*`]);
-  assert.equal(state.managed_agent_denies.worker, true);
+  assert.deepEqual(config.agents.list[1].tools.deny, ["dangerous"]);
+  assert.deepEqual(state.managed_server_ids, []);
+  assert.deepEqual(state.broker_server_ids, [ONECLAW_COMPOSIO_MCP_SERVER_ID]);
+  assert.equal(state.connected_tool_count, 1);
   assert.equal(fs.statSync(paths.configPath).mode & 0o777, 0o600);
   assert.equal(fs.statSync(paths.statePath).mode & 0o777, 0o600);
   assert.doesNotMatch(fs.readFileSync(paths.statePath, "utf8"), /trs_secret_value/u);
 });
 
-test("empty MCP snapshot removes only OneClaw-owned config and deny entries", (t) => {
+test("empty MCP snapshot removes legacy OneClaw-owned config and deny entries", (t) => {
+  const pattern = `${ONECLAW_COMPOSIO_MCP_SERVER_ID}__*`;
   const paths = fixture(t, {
-    mcp: { servers: { local: { command: "local-server" } } },
-    agents: { list: [{ id: "main" }, { id: "worker" }] },
+    mcp: {
+      servers: {
+        local: { command: "local-server" },
+        [ONECLAW_COMPOSIO_MCP_SERVER_ID]: { transport: "streamable-http", url: "http://legacy.invalid" },
+      },
+    },
+    agents: { list: [{ id: "main" }, { id: "worker", tools: { deny: [pattern] } }] },
   });
+  fs.writeFileSync(paths.statePath, JSON.stringify({
+    revision: 3,
+    managed_server_ids: [ONECLAW_COMPOSIO_MCP_SERVER_ID],
+    managed_agent_denies: { worker: true },
+  }));
   applyMcpSnapshot({ ...paths, snapshot: snapshot(4) });
   const empty = snapshot(5, []);
   applyMcpSnapshot({ ...paths, snapshot: empty });

@@ -9,7 +9,6 @@ import { approvePairingRequest, listPairingRequests, normalizePairingChannel, re
 import { agentWorkspace, safeAgentFilePath } from "../agents/workspace.js";
 import { patchConfig } from "../config/edit.js";
 import { mergePreinstalledSkillAllowlist } from "../config/preinstalled-skills.js";
-import { filterScenarioCapabilities } from "./scenario-capabilities.js";
 import { applyManagedMcpIsolationToAgent, applyMcpSnapshot, readMcpSyncState } from "./mcp-sync.js";
 
 const DEFAULT_PLATFORM_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
@@ -63,11 +62,10 @@ export function loadIntegrationActions(
       process.env.OPENCLAW_PLUGINS_DIR?.trim() || "/opt/openclaw-plugins",
       "node_modules/@oneclaw-plugins/integrations/oneclaw.actions.json",
     ),
-  runtimeCapabilities = loadRuntimeCapabilities(),
 ) {
   try {
     const body = fs.readFileSync(manifestPath);
-    let manifest = JSON.parse(body.toString("utf8"));
+    const manifest = JSON.parse(body.toString("utf8"));
     if (
       manifest?.schema_version !== 1
       || !Array.isArray(manifest.groups)
@@ -79,11 +77,22 @@ export function loadIntegrationActions(
     if (actionIds.length !== manifest.actions.length) {
       throw new Error("action manifest contains blank or duplicate ids");
     }
-    manifest = filterScenarioCapabilities(manifest, runtimeCapabilities);
+    const executorsPath = path.join(path.dirname(manifestPath), "oneclaw.executors.json");
+    let dynamic = {};
+    if (fs.existsSync(executorsPath)) {
+      const executors = JSON.parse(fs.readFileSync(executorsPath, "utf8"));
+      if (executors.schema_version !== 1 || !Array.isArray(executors.contracts)
+        || executors.contracts.length === 0 || executors.contracts.length > 32
+        || !executors.contracts.every((contract) => typeof contract === "string" && contract.length <= 128)) {
+        throw new Error("invalid integration executors");
+      }
+      dynamic = { dynamic_version: 1, executors: [...new Set(executors.contracts)] };
+    }
     return {
+      ...dynamic,
       schema_version: 1,
-      digest: `sha256:${createHash("sha256").update(JSON.stringify(manifest)).digest("hex")}`,
-      action_ids: manifest.actions.map((action) => action.id).sort(),
+      digest: `sha256:${createHash("sha256").update(body).digest("hex")}`,
+      action_ids: actionIds,
       manifest,
     };
   } catch (error) {
@@ -1578,7 +1587,7 @@ export function createOneclawIntegration({
         version: payload.version,
         force: payload.force,
       });
-      await installSkillForAgent(spec, agentId, payload.credentials);
+      await installSkillForAgent({ ...spec, verify_ready: payload.verify_ready === true }, agentId, payload.credentials);
       addAgentSkillToAllowlist(agentId, slug);
       if (employeeId) {
         await sendEvent("skill_status", {
@@ -1758,7 +1767,7 @@ export function createOneclawIntegration({
   }
 
   async function verifyInstalledSkillIfRequired(spec, identifiers, agentId) {
-    if (!skillNeedsRuntimeVerification(spec)) return;
+    if (spec.verify_ready !== true && !skillNeedsRuntimeVerification(spec)) return;
     const slug = String(spec?.slug || identifiers[0] || "").trim();
     const wasAllowed = readAgentSkillAllowlist(agentId).includes(slug);
     addAgentSkillToAllowlist(agentId, slug);

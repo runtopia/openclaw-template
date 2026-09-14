@@ -9,6 +9,7 @@ import { approvePairingRequest, listPairingRequests, normalizePairingChannel, re
 import { agentWorkspace, safeAgentFilePath } from "../agents/workspace.js";
 import { patchConfig } from "../config/edit.js";
 import { mergePreinstalledSkillAllowlist } from "../config/preinstalled-skills.js";
+import { filterScenarioCapabilities } from "./scenario-capabilities.js";
 import { applyManagedMcpIsolationToAgent, applyMcpSnapshot, readMcpSyncState } from "./mcp-sync.js";
 
 const DEFAULT_PLATFORM_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
@@ -62,10 +63,11 @@ export function loadIntegrationActions(
       process.env.OPENCLAW_PLUGINS_DIR?.trim() || "/opt/openclaw-plugins",
       "node_modules/@oneclaw-plugins/integrations/oneclaw.actions.json",
     ),
+  runtimeCapabilities = loadRuntimeCapabilities(),
 ) {
   try {
     const body = fs.readFileSync(manifestPath);
-    const manifest = JSON.parse(body.toString("utf8"));
+    let manifest = JSON.parse(body.toString("utf8"));
     if (
       manifest?.schema_version !== 1
       || !Array.isArray(manifest.groups)
@@ -77,10 +79,11 @@ export function loadIntegrationActions(
     if (actionIds.length !== manifest.actions.length) {
       throw new Error("action manifest contains blank or duplicate ids");
     }
+    manifest = filterScenarioCapabilities(manifest, runtimeCapabilities);
     return {
       schema_version: 1,
-      digest: `sha256:${createHash("sha256").update(body).digest("hex")}`,
-      action_ids: actionIds,
+      digest: `sha256:${createHash("sha256").update(JSON.stringify(manifest)).digest("hex")}`,
+      action_ids: manifest.actions.map((action) => action.id).sort(),
       manifest,
     };
   } catch (error) {

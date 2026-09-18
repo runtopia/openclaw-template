@@ -437,8 +437,11 @@ test("runtime contract v2 reconciles every employee and preserves greeting metad
   const englishSoul = fs.readFileSync(path.join(workspaceDir, "agents/employee-2/SOUL.md"), "utf8");
   assert.match(englishSoul, /## Role\nResearch verified sources\./);
   assert.match(englishSoul, /## 回复语言\n默认使用英语回复用户/);
+  assert.match(englishSoul, /大文件先写可运行骨架/);
+  assert.match(englishSoul, /不要执行不完整工具参数或盲目重放有副作用的操作/);
   const chineseSoul = fs.readFileSync(path.join(workspaceDir, "agents/main/SOUL.md"), "utf8");
   assert.match(chineseSoul, /## 回复语言\n默认使用简体中文回复用户/);
+  assert.match(chineseSoul, /明确告知任务未完成/);
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/main/memory/main.md"), "utf8"), "主记忆");
   assert.equal(fs.readFileSync(path.join(workspaceDir, "agents/employee-2/MEMORY.md"), "utf8"), "research memory");
   const syncEvents = events.filter((event) => event.event === "template_sync");

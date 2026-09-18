@@ -9,6 +9,32 @@ import {
   generateConfigDirect,
 } from "../src/config/generate.js";
 
+test("managed agent output budget is explicit, bounded, preserved and idempotent", () => {
+  const env = { CLAWROUTERS_API_KEY: "fixture-key" };
+  const cfg = { models: { providers: { custom: { models: [{ id: "auto" }] } } } };
+  applyRuntimeDefaults(cfg, env);
+  const model = cfg.models.providers.clawrouters.models[0];
+  assert.equal(model.maxTokens, 32768);
+  assert.equal(model.contextWindow, 200000);
+  assert.equal(model.reasoning, false);
+  assert.equal(model.compat.supportsReasoningEffort, false);
+  assert.equal(cfg.models.providers.custom.models[0].maxTokens, undefined);
+  assert.equal(applyRuntimeDefaults(cfg, env), false);
+  model.maxTokens = 16384;
+  model.contextWindow = 128000;
+  applyRuntimeDefaults(cfg, env);
+  assert.equal(cfg.models.providers.clawrouters.models[0].maxTokens, 16384);
+  assert.equal(cfg.models.providers.clawrouters.models[0].contextWindow, 128000);
+});
+
+test("managed output budget environment defaults reject invalid or unbounded values", () => {
+  for (const [value, expected] of [["65536", 65536], ["0", 32768], ["999999999", 32768], ["bad", 32768], ["1.5", 32768]]) {
+    const cfg = {};
+    applyRuntimeDefaults(cfg, { CLAWROUTERS_API_KEY: "fixture-key", CLAWROUTERS_MAX_OUTPUT_TOKENS: value });
+    assert.equal(cfg.models.providers.clawrouters.models[0].maxTokens, expected);
+  }
+});
+
 test("runtime defaults enable Channel, Integrations, Workboard, and the native plan tool without provider credentials", () => {
   const cfg = {};
 

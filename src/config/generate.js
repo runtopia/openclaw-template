@@ -14,6 +14,7 @@ import { resolvePreinstalledPluginPaths } from "./plugins.js";
 import {
   resolveClawroutersApiBaseUrl,
   buildClawroutersMemorySearch,
+  buildClawroutersProviderShape,
   applyRuntimeDefaults,
 } from "./runtime-defaults.js";
 
@@ -52,17 +53,7 @@ export function buildHttpEndpoints(env = process.env) {
 // 其他 provider 的模型由 openclaw 从 API 端点动态拉取（models.mode = "merge"）。
 
 function providerClawrouters(env = process.env) {
-  return {
-    baseUrl: resolveClawroutersApiBaseUrl(env),
-    // SecretRef：key 从运行时环境变量读，不明文写入配置文件
-    apiKey: CLAWROUTERS_API_KEY_REF,
-    api: "openai-completions",
-    // 仅声明 auto 入口点——插件激活后会补充完整模型列表
-    models: [
-      { id: "auto", name: "auto", input: ["text", "image"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
-    ],
-  };
+  return buildClawroutersProviderShape(env);
 }
 
 function providerAnthropic() {

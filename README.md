@@ -50,6 +50,8 @@ Wrapper (Express on PORT)
 
 With `CLAWROUTERS_API_KEY`, fresh and existing instances converge on the same runtime defaults at every startup:
 
+- `clawrouters/auto` explicitly declares a 32,768-token per-response output budget and a 200,000-token context window. Existing explicit budgets are preserved; `CLAWROUTERS_MAX_OUTPUT_TOKENS` sets the initial output default (integer 1–65,536). CR must cap each request to the actual selected model's supported limit. This is not a whole-task token budget.
+- Employee profiles direct large artifacts to incremental write/edit/validation rounds and require an explicit incomplete report when recovery or the task budget is exhausted. Native OpenClaw owns recovery; the wrapper does not blindly replay tools or add another execution loop.
 - `agents.defaults.memorySearch` indexes memory files and sessions through the ClawRouters embeddings endpoint. The index and source files stay on the instance volume.
 - `tools.web.search` selects the image-bundled `oneclaw-search` provider. Search calls use the same user child key and go to ClawRouters `/api/v1/search`; SearXNG/Tavily credentials, caching, fallback, and Credits billing remain server-side.
 - `talk.realtime` selects OpenClaw's native OpenAI-compatible Gateway relay and points it at ClawRouters `/api/v1/realtime`. The Control UI captures and plays audio, while provider credentials, model routing, metering, VAD, and Agent consultation remain Gateway/ClawRouters-owned.

@@ -81,13 +81,21 @@ function hasClawroutersKey(env = process.env) {
   return Boolean((env.CLAWROUTERS_KEY || env.CLAWROUTERS_API_KEY)?.trim());
 }
 
-function buildClawroutersProviderShape(env) {
+export function buildClawroutersProviderShape(env, existingProvider) {
+  const existingAuto = existingProvider?.models?.find((model) => model?.id === "auto");
+  const requestedLimit = Number(env.CLAWROUTERS_MAX_OUTPUT_TOKENS);
+  const defaultLimit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 && requestedLimit <= 65536
+    ? requestedLimit : 32768;
   return {
     baseUrl: resolveClawroutersApiBaseUrl(env),
     apiKey: CLAWROUTERS_API_KEY_REF,
     api: "openai-completions",
     models: [
       { id: "auto", name: "auto", input: ["text", "image"],
+        contextWindow: existingAuto?.contextWindow ?? 200000,
+        maxTokens: existingAuto?.maxTokens ?? defaultLimit,
+        reasoning: false,
+        compat: { ...existingAuto?.compat, supportsReasoningEffort: false },
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
     ],
   };
@@ -471,7 +479,7 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
       changed = true;
     }
     const providers = ensureObject(models, "providers");
-    changed = setJsonValue(providers, "clawrouters", buildClawroutersProviderShape(env)) || changed;
+    changed = setJsonValue(providers, "clawrouters", buildClawroutersProviderShape(env, provider)) || changed;
   } else if (env.CLAWROUTERS_BASE_URL?.trim() && provider) {
     const nextBaseUrl = resolveClawroutersApiBaseUrl(env);
     if (provider.baseUrl !== nextBaseUrl) {

@@ -23,9 +23,10 @@ function isHttpsRequest(req) {
 
 function sessionCookieAttributes(req) {
   // 控制台页面和实例域名通常不是同源，内嵌 WebSocket 需要浏览器在跨站请求中携带 cookie。
-  // HTTPS 入口使用 SameSite=None; Secure；本地 HTTP 调试无法设置 Secure，只能退回 Lax。
+  // HTTPS 入口使用分区 Cookie，允许受信任 Web 页面中的嵌入查看器使用同一张短期票据。
+  // 本地 HTTP 调试无法设置 Secure/Partitioned，只能退回 Lax 并使用独立窗口。
   return isHttpsRequest(req)
-    ? "HttpOnly; Path=/; SameSite=None; Secure; Max-Age=604800"
+    ? "HttpOnly; Path=/; SameSite=None; Secure; Partitioned; Max-Age=604800"
     : "HttpOnly; Path=/; SameSite=Lax; Max-Age=604800";
 }
 

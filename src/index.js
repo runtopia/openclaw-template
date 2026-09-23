@@ -434,6 +434,7 @@ const browserPreview = createBrowserRoutes({
   isAuthed,
   credentialsConfigured: Boolean(SETUP_PASSWORD || ONECLAW_INSTANCE_SECRET),
   startBrowser: () => startManagedBrowser(gatewayRpc),
+  frameOrigin: process.env.ONECLAW_BROWSER_USE_WEB_URL || "https://www.oneclaw.net",
 });
 app.use("/browser", browserPreview.router);
 

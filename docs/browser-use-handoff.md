@@ -65,3 +65,9 @@
 Channel/Integrations 会移除 process.env 中的实例密钥。分享工具应使用进程内共享凭据闭包，并兼容 ONECLAW_RUNTIME_ID，不能因为环境变量被清理就判断为非托管环境。平台 API 更新后会在 personality 中返回 app_url。
 
 101 的无特权 Docker 容器无法创建 Chromium namespace sandbox；已为 18081 持久化 browser.noSandbox=true，仍保持 DISPLAY=:99 和 headless=false。同类新实例需显式配置 ONECLAW_BROWSER_NO_SANDBOX=1；不因此关闭 SSRF/导航保护。
+
+### 启动期间重载的恢复
+
+Wrapper 的浏览器启动记录必须在 RPC 断线后补交清理确认。已成功返回的启动可重试幂等 admin-end；连接中断/超时、或者上个 Wrapper 遗留的记录，只有在原生 openclaw profile 报告 running、cdpReady 和已登记 PID 后才能清理。不会自动删除 Agent 工具或后台进程的占用，也不会因清理完成就自动交还 AI。
+
+同一 Gateway 进程重复注册插件时共用一个控制权对象，避免把热重载误认为崩溃、或产生多个状态文件写入者。真正进程重启仍遵循暂停和保守恢复规则。

@@ -8,7 +8,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createBrowserDesktop, cleanupStaleBrowserLocks } from "../src/browser/desktop.js";
-import { createBrowserRoutes, startManagedBrowser } from "../src/browser/routes.js";
+import { browserFrameAncestors, createBrowserRoutes, startManagedBrowser } from "../src/browser/routes.js";
+
+test("browser preview frames only the configured trusted web origin", async (t) => {
+  assert.equal(browserFrameAncestors("https://www.oneclaw.net"), "'self' https://www.oneclaw.net");
+  assert.equal(browserFrameAncestors("http://localhost:3000"), "'self' http://localhost:3000");
+  for (const url of ["http://evil.example", "https://user:pass@example.com", "https://example.com/path", "https://example.com?token=x", "javascript:alert(1)", undefined]) {
+    assert.equal(browserFrameAncestors(url), "'self'");
+  }
+  const { base } = await fixture(t, { frameOrigin: "https://www.oneclaw.net" });
+  const response = await fetch(`${base}/browser/`, { headers: { cookie: "valid=1" } });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-security-policy") || "", /frame-ancestors 'self' https:\/\/www\.oneclaw\.net/);
+});
 
 test("headed browser defaults enforce visible mode while preserving unrelated choices", () => {
   const cfg = { tools: { profile: "coding", alsoAllow: ["other"] } };
@@ -179,4 +191,12 @@ test("coding agents can share Browser Use links unless explicitly denied", () =>
   const denied = { tools: { profile: "coding", deny: ["browser_use"] } };
   applyBrowserDefaults(denied, env);
   assert.deepEqual(denied.tools.alsoAllow, ["browser"]);
+});
+
+
+test("interrupted browser RPC remains uncertain rather than pretending startup ended", async () => {
+  const rpc = { waitUntilConnected: async () => {}, rpcGateway: async () => ({ ok: false, error: { code: "disconnected", message: "gateway WS closed" } }) };
+  await assert.rejects(startManagedBrowser(rpc), (error) => error.browserOperationUncertain === true);
+  rpc.rpcGateway = async () => { throw new Error("rpc timeout: browser.request"); };
+  await assert.rejects(startManagedBrowser(rpc), (error) => error.browserOperationUncertain === true);
 });

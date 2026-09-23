@@ -170,3 +170,13 @@ test("headed mode removes launch overrides from persisted config", () => {
   assert.equal(cfg.browser.profiles.work.headless, true);
   assert.equal(applyBrowserDefaults(cfg, env), false);
 });
+
+test("coding agents can share Browser Use links unless explicitly denied", () => {
+  const env = { ONECLAW_BROWSER_ENABLED: "1", ONECLAW_BROWSER_USE_ENABLED: "1" };
+  const cfg = { tools: { profile: "coding" } };
+  applyBrowserDefaults(cfg, env);
+  assert.deepEqual(cfg.tools.alsoAllow, ["browser", "browser_use"]);
+  const denied = { tools: { profile: "coding", deny: ["browser_use"] } };
+  applyBrowserDefaults(denied, env);
+  assert.deepEqual(denied.tools.alsoAllow, ["browser"]);
+});

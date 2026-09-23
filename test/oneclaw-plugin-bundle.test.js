@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -125,6 +126,12 @@ test("Browser Use is bundled as an immutable local archive with matching lock me
   const match = spec.match(/^file:(tarballs\/oneclaw-plugins-browser-use-[0-9A-Za-z.+-]+-([a-f0-9]{64})\.tgz)$/u);
   assert.ok(match);
   const bytes = fs.readFileSync(path.join(bundleDir, match[1]));
+  const archive = path.join(bundleDir, match[1]);
+  const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).split("\n");
+  assert.ok(files.includes("package/skills/browser-use/SKILL.md"));
+  assert.ok(files.includes("package/policy.mjs"));
+  const plugin = JSON.parse(execFileSync("tar", ["-xOf", archive, "package/openclaw.plugin.json"], { encoding: "utf8" }));
+  assert.deepEqual(plugin.skills, ["skills"]);
   assert.equal(createHash("sha256").update(bytes).digest("hex"), match[2]);
   const entry = lockfile.packages["node_modules/@oneclaw-plugins/browser-use"];
   assert.equal(entry.resolved, spec);

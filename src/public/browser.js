@@ -16,13 +16,13 @@ const controlHeaders = () => controller ? { "X-Browser-Controller": controller }
 async function connect(mode = "view") {
   connectionMode = mode;
   if (rfb) { rfb.disconnect(); rfb = null; }
-  status.textContent = "正在连接显示服务…";
+  status.textContent = "正在连接画面…";
   try {
     const response = await fetch("/browser/status");
-    if (!response.ok || response.redirected) throw new Error("请先登录，或检查浏览器服务配置");
+    if (!response.ok || response.redirected) throw new Error("暂时无法打开画面，请重新登录后再试");
     const state = await response.json();
     start.disabled = !state.ready || (controlState?.available && controlState.mode !== "ai");
-    if (!state.ready) throw new Error(state.error || "显示服务尚未就绪，请稍后重新连接");
+    if (!state.ready) throw new Error("画面还没准备好，请稍后重新连接");
     const url = new URL(mode === "human" ? "/browser/control/ws" : "/browser/ws", location.href);
     if (mode === "human") url.searchParams.set("controller", controller);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -30,20 +30,20 @@ async function connect(mode = "view") {
     rfb = client;
     client.viewOnly = mode !== "human";
     client.scaleViewport = true;
-    client.addEventListener("connect", () => { if (rfb === client) status.textContent = mode === "human" ? "已连接 · 你正在操作" : "已连接 · 只读预览"; });
-    client.addEventListener("disconnect", () => { if (rfb === client) status.textContent = "画面连接已断开，请重新连接"; });
-    client.addEventListener("securityfailure", () => { if (rfb === client) status.textContent = "画面连接认证失败"; });
+    client.addEventListener("connect", () => { if (rfb === client) status.textContent = mode === "human" ? "已连接 · 现在由你操作" : "已连接 · 你正在观看"; });
+    client.addEventListener("disconnect", () => { if (rfb === client) status.textContent = "画面断开了，请重新连接"; });
+    client.addEventListener("securityfailure", () => { if (rfb === client) status.textContent = "无法验证访问权限，请重新登录"; });
   } catch (err) { status.textContent = err.message; }
 }
 start.addEventListener("click", async () => {
   start.disabled = true;
-  status.textContent = "OpenClaw 正在启动浏览器…";
+  status.textContent = "正在打开浏览器…";
   try {
     const response = await fetch("/browser/start", { method: "POST" });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "浏览器启动失败");
-    status.textContent = "浏览器已启动 · 只读预览";
-  } catch (err) { status.textContent = err.message; }
+    if (!response.ok) throw new Error(data.error || "暂时没能打开浏览器");
+    status.textContent = "浏览器已打开 · 你正在观看";
+  } catch { status.textContent = "暂时没能打开浏览器，请稍后重试"; }
   finally { start.disabled = false; }
 });
 document.querySelector("#reconnect").addEventListener("click", () => connect(controlState?.mode === "human" && controlState?.mine ? "human" : "view"));
@@ -51,24 +51,24 @@ async function refreshControl() {
   const requestId = ++statusRequestId;
   try {
     const response = await fetch("/browser/control/status", { headers: controlHeaders() });
-    if (!response.ok) throw new Error("控制服务暂不可用");
+    if (!response.ok) throw new Error("暂时无法切换操作人");
     const nextState = await response.json();
     if (requestId !== statusRequestId) return;
     controlState = nextState;
     const { available, mode, mine, inFlight = 0 } = controlState;
     takeover.hidden = !available || !(mode === "ai" || (mode === "paused" && mine));
-    takeover.textContent = mode === "paused" ? "继续接管" : "接管浏览器";
+    takeover.textContent = mode === "paused" ? "继续操作" : "我来操作";
     release.hidden = !available || !mine || mode === "ai";
     release.disabled = busy || inFlight > 0;
     recover.hidden = !available || mode !== "paused" || mine;
     recover.disabled = busy || inFlight > 0;
     takeover.disabled = busy || (mode === "paused" && inFlight > 0);
     if (available) start.disabled = mode !== "ai";
-    controlStatus.textContent = !available ? "实时只读预览 · Browser Use 接管插件未启用" : {
-      ai: "AI 可操作浏览器 · 你正在观看",
-      waiting: `等待 ${inFlight} 个在途操作结束，期间已阻止新的受管操作`,
-      human: mine ? "你已接管 · AI 的受管浏览器操作已阻止" : "其他页面正在接管 · 你仍可观看",
-      paused: inFlight > 0 ? `控制已暂停 · 正在确认 ${inFlight} 个在途操作，暂不能输入或交还` : "控制已暂停 · 断线不会自动交还 AI；可继续接管或明确交还",
+    controlStatus.textContent = !available ? "你正在观看助手操作" : {
+      ai: "助手可以操作 · 你正在观看",
+      waiting: "等助手完成当前操作，你就可以接手",
+      human: mine ? "现在由你操作 · 助手正在等你" : "另一个页面正在操作 · 你仍可观看",
+      paused: inFlight > 0 ? "操作已暂停 · 正在确认上一步是否完成，暂时不能接手或交还" : "操作已暂停 · 你可以继续操作，或让助手继续",
     }[mode];
     const desired = available && mode === "human" && mine ? "human" : "view";
     if (connectionMode !== desired) await connect(desired);
@@ -85,10 +85,10 @@ async function controlAction(action) {
   try {
     const response = await fetch(`/browser/control/${action}`, { method: "POST", headers: controlHeaders() });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "控制权切换失败");
+    if (!response.ok) throw new Error(result.error || "暂时没能切换操作人");
     if (result.token) { controller = result.token; sessionStorage.setItem("browser-use-controller", controller); }
     if (action === "release" || action === "recover") { controller = null; sessionStorage.removeItem("browser-use-controller"); }
-  } catch (err) { status.textContent = err.message; }
+  } catch { status.textContent = "暂时没能切换操作人，请稍后重试"; }
   finally { busy = false; await refreshControl(); }
 }
 takeover.addEventListener("click", () => controlAction(controlState?.mode === "paused" ? "resume" : "request"));

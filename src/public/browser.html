@@ -1,9 +1,9 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Browser Use</title><link rel="stylesheet" href="/browser/viewer.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>助手的工作画面</title><link rel="stylesheet" href="/browser/viewer.css"></head>
 <body>
-<header><strong>Browser Use</strong><span id="status" role="status">正在连接显示服务…</span><button id="start" disabled>启动浏览器</button><button id="takeover" hidden>接管浏览器</button><button id="release" hidden>交还 AI</button><button id="recover" hidden>恢复 AI 控制</button><button id="reconnect">重新连接</button></header>
-<p id="control-status" role="status">实时预览 · 正在检查 Browser Use 控制服务…</p><p>接管只协调浏览器操作，不会停止页面自身的脚本。交还后 AI 需重新读取页面；若聊天任务已结束，请在对话中让它继续。</p>
-<main id="screen" aria-label="云端浏览器实时画面"></main>
+<header><strong>工作画面</strong><span id="status" role="status">正在连接画面…</span><button id="start" disabled>打开浏览器</button><button id="takeover" hidden>我来操作</button><button id="release" hidden>让助手继续</button><button id="recover" hidden>让助手继续</button><button id="reconnect">重新连接画面</button></header>
+<p id="control-status" role="status">正在查看谁在操作…</p><p>需要登录或亲自操作时，你可以接手。完成后点击“让助手继续”；如果助手已经结束回复，在聊天里发“继续”即可。</p>
+<main id="screen" aria-label="助手正在使用的浏览器"></main>
 <script type="module" src="/browser/viewer.js"></script>
 </body></html>

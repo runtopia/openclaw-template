@@ -129,4 +129,5 @@ test("browser cookie login uses cross-site cookie attributes behind https proxy"
   const cookie = login.headers.get("set-cookie") || "";
   assert.match(cookie, /SameSite=None/);
   assert.match(cookie, /Secure/);
+  assert.match(cookie, /Partitioned/);
 });

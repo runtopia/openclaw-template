@@ -34,8 +34,18 @@ export function sameOrigin(req) {
   } catch { return false; }
 }
 
+export function browserFrameAncestors(webUrl) {
+  try {
+    const url = new URL(webUrl);
+    if (url.username || url.password || url.search || url.hash || !["", "/"].includes(url.pathname)) return "'self'";
+    const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (url.protocol !== "https:" && !(local && url.protocol === "http:")) return "'self'";
+    return `'self' ${url.origin}`;
+  } catch { return "'self'"; }
+}
+
 export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser, handoff,
-  novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
+  frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
   const router = express.Router();
   const controlWs = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const proxy = httpProxy.createProxyServer({ target, ws: true });
@@ -83,7 +93,7 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
   });
   router.get("/", (req, res) => {
     if (!req.originalUrl.split("?")[0].endsWith("/")) return res.redirect("/browser/");
-    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'");
+    res.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors ${browserFrameAncestors(frameOrigin)}`);
     res.sendFile(fileURLToPath(new URL("../public/browser.html", import.meta.url)));
   });
   router.get("/viewer.js", (_req, res) => res.sendFile(fileURLToPath(new URL("../public/browser.js", import.meta.url))));

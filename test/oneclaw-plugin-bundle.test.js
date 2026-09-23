@@ -130,8 +130,10 @@ test("Browser Use is bundled as an immutable local archive with matching lock me
   const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).split("\n");
   assert.ok(files.includes("package/skills/browser-use/SKILL.md"));
   assert.ok(files.includes("package/policy.mjs"));
+  assert.ok(files.includes("package/share.mjs"));
   const plugin = JSON.parse(execFileSync("tar", ["-xOf", archive, "package/openclaw.plugin.json"], { encoding: "utf8" }));
   assert.deepEqual(plugin.skills, ["skills"]);
+  assert.ok(plugin.contracts.tools.includes("browser_use"));
   assert.equal(createHash("sha256").update(bytes).digest("hex"), match[2]);
   const entry = lockfile.packages["node_modules/@oneclaw-plugins/browser-use"];
   assert.equal(entry.resolved, spec);

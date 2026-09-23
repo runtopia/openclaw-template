@@ -13,7 +13,7 @@ OpenClaw 原生 browser 工具负责 Chromium 的启动、标签页、操作和�
 4. 原生截图是工具结果，需通过 OneClaw Channel 明确交付给用户。
 
 平台可复用 `POST /repair/openclaw-login`，body 为 `{"next":"/browser/"}`，获取一次性登录链接。
-第一版按新窗口/新标签打开，页面 CSP 仅允许同源嵌入；不提供跨站 iframe 嵌入。
+独立窗口/新标签仍可使用。HTTPS Runtime 可把 `/browser/` 嵌入到 `ONECLAW_BROWSER_USE_WEB_URL` 指定的可信 Web origin：页面 CSP 只开放该精确 origin，平台签发的一次性登录票据在嵌入环境设置 `Secure; SameSite=None; Partitioned` 的会话 Cookie。Viewer 的 HTTP 和 WebSocket 仍由 Runtime 自己鉴权，控制 API 仍要求 Viewer 同源 Origin。未配置合法 HTTPS Web origin 时保持 `frame-ancestors 'self'`；本地跨主机 HTTP 因 Cookie 属性限制继续使用独立窗口。浏览器不支持分区 Cookie 或阻止第三方嵌入时，Web 必须保留独立窗口退路。
 
 观看连接仍为服务端强制只读（x11vnc `-viewonly`）。当前 develop 增加了 Browser Use 接管，通过独立的受控输入连接支持人工操作；部署和边界见 [Browser Use 接管](browser-use-handoff.md)。不提供录像，也不能用前端切换 viewOnly 替代接管协调。
 

@@ -295,3 +295,5 @@ Need help? [Request support on Railway Station](https://station.railway.com/all-
 ## Cloud browser and live preview
 
 The standard image includes a headed Chromium browser controlled by OpenClaw, with a read-only live desktop at `/browser/`. Sign in through `/login`, then start the browser from the preview page or the native browser tool. Browser profiles persist on the existing `/data` volume. See [browser runtime setup and boundaries](docs/browser-runtime.md) for configuration, authentication, and verification.
+
+Browser Use takeover is also enabled by default in the current develop image. Its plugin ships as a SHA-256-addressed local archive in the locked plugin bundle; no npm publication or source-directory mount is required. See [handoff setup and boundaries](docs/browser-use-handoff.md).

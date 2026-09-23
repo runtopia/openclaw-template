@@ -308,6 +308,7 @@ ARG CACHEBUST=v20260212-chromium
 # OpenClaw. Preview/display binaries are image-baked, never installed on /data.
 ARG ONECLAW_BROWSER_ENABLED=1
 ENV ONECLAW_BROWSER_ENABLED=${ONECLAW_BROWSER_ENABLED}
+ENV ONECLAW_BROWSER_USE_ENABLED=${ONECLAW_BROWSER_ENABLED}
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
   if [ "$ONECLAW_BROWSER_ENABLED" = "1" ]; then \

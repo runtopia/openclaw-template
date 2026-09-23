@@ -81,6 +81,7 @@ export function buildRuntimeCapabilities(profile, env = process.env) {
   if (full) capabilities.push("external-agent-clis", "specialist-clis");
   if (full || env.ONECLAW_BROWSER_ENABLED === "1") capabilities.push("browser-automation");
   if (env.ONECLAW_BROWSER_ENABLED === "1") capabilities.push("browser-live-preview");
+  if (env.ONECLAW_BROWSER_ENABLED === "1" && env.ONECLAW_BROWSER_USE_ENABLED === "1") capabilities.push("browser-handoff");
   const manifest = {
     schema_version: 1,
     profile,

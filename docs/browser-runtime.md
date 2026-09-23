@@ -15,8 +15,7 @@ OpenClaw 原生 browser 工具负责 Chromium 的启动、标签页、操作和�
 平台可复用 `POST /repair/openclaw-login`，body 为 `{"next":"/browser/"}`，获取一次性登录链接。
 第一版按新窗口/新标签打开，页面 CSP 仅允许同源嵌入；不提供跨站 iframe 嵌入。
 
-**第一版为服务端强制只读**（x11vnc `-viewonly`），不提供人工输入、接管、自动暂停或录像。
-登录、扫码、验证码中的人工输入场景尚未实现，不能用前端切换 viewOnly 来替代接管协调。
+观看连接仍为服务端强制只读（x11vnc `-viewonly`）。当前 develop 增加了 Browser Use 接管，通过独立的受控输入连接支持人工操作；部署和边界见 [Browser Use 接管](browser-use-handoff.md)。不提供录像，也不能用前端切换 viewOnly 替代接管协调。
 
 ## 配置和持久化
 

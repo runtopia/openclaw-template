@@ -145,3 +145,15 @@ test("redeploy clears dead Chromium symlinks but preserves live sockets and prof
   assert.equal(fs.readFileSync(path.join(dir, "Preferences"), "utf8"), "keep");
   assert.equal(fs.readdirSync(dir).includes("SingletonLock"), false);
 });
+
+test("Browser Use resolves the locked package path instead of the prototype mount", () => {
+  const cfg = {};
+  const env = { ONECLAW_BROWSER_ENABLED: "1", ONECLAW_BROWSER_USE_ENABLED: "1" };
+  applyBrowserDefaults(cfg, env);
+  assert.equal(cfg.plugins.entries["oneclaw-browser-use"].enabled, true);
+  assert.deepEqual(cfg.plugins.load.paths, ["/opt/openclaw-plugins/node_modules/@oneclaw-plugins/browser-use"]);
+  assert.equal(applyBrowserDefaults(cfg, env), false);
+  const custom = {};
+  applyBrowserDefaults(custom, { ...env, OPENCLAW_PLUGINS_DIR: "/tmp/bundle" });
+  assert.equal(custom.plugins.load.paths[0], "/tmp/bundle/node_modules/@oneclaw-plugins/browser-use");
+});

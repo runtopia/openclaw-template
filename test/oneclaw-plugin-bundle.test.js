@@ -18,6 +18,7 @@ const ONECLAW_PACKAGES = Object.fromEntries(
 test("cloud Runtime declares locked OneClaw plugin artifacts", () => {
   assert.equal(manifest.private, true);
   assert.deepEqual(Object.keys(ONECLAW_PACKAGES).sort(), [
+    "@oneclaw-plugins/browser-use",
     "@oneclaw-plugins/channel",
     "@oneclaw-plugins/clawrouters",
     "@oneclaw-plugins/integrations",
@@ -115,5 +116,18 @@ test("plugin source stays outside the template while local deployment tarballs a
   const tarballs = fs.existsSync(tarballsDir)
     ? fs.readdirSync(tarballsDir).filter((entry) => entry.endsWith(".tgz"))
     : [];
-  assert.deepEqual(tarballs.sort(), expectedTarballs);
+  assert.deepEqual(tarballs.sort(), expectedTarballs.sort());
+});
+
+
+test("Browser Use is bundled as an immutable local archive with matching lock metadata", () => {
+  const spec = manifest.dependencies["@oneclaw-plugins/browser-use"];
+  const match = spec.match(/^file:(tarballs\/oneclaw-plugins-browser-use-[0-9A-Za-z.+-]+-([a-f0-9]{64})\.tgz)$/u);
+  assert.ok(match);
+  const bytes = fs.readFileSync(path.join(bundleDir, match[1]));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), match[2]);
+  const entry = lockfile.packages["node_modules/@oneclaw-plugins/browser-use"];
+  assert.equal(entry.resolved, spec);
+  assert.equal(entry.integrity, `sha512-${createHash("sha512").update(bytes).digest("base64")}`);
+  assert.equal(lockfile.packages[""].dependencies["@oneclaw-plugins/browser-use"], spec);
 });

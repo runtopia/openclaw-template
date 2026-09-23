@@ -1,3 +1,5 @@
+import path from "node:path";
+
 // Only opt into the image's headed browser defaults when its desktop is enabled.
 // Explicit user settings and tool deny lists retain precedence.
 export function applyBrowserDefaults(cfg, env = process.env) {
@@ -27,7 +29,7 @@ export function applyBrowserDefaults(cfg, env = process.env) {
     cfg.plugins.entries["oneclaw-browser-use"] ??= { enabled: true };
     cfg.plugins.load ??= {};
     cfg.plugins.load.paths ??= [];
-    const pluginDir = env.ONECLAW_BROWSER_USE_PLUGIN_DIR || "/opt/openclaw-browser-use";
+    const pluginDir = env.ONECLAW_BROWSER_USE_PLUGIN_DIR || path.join(env.OPENCLAW_PLUGINS_DIR || "/opt/openclaw-plugins", "node_modules/@oneclaw-plugins/browser-use");
     if (!cfg.plugins.load.paths.includes(pluginDir)) cfg.plugins.load.paths.push(pluginDir);
     if (Array.isArray(cfg.plugins.allow) && !cfg.plugins.allow.includes("oneclaw-browser-use")) cfg.plugins.allow.push("oneclaw-browser-use");
   }

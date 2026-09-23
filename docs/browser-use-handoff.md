@@ -1,14 +1,14 @@
-# Browser Use：人工接管与交还（开发分支）
+# Browser Use：人工接管与交还（develop 测试版）
 
 基于已提交的只读浏览器版本。独立 OpenClaw 插件 `oneclaw-browser-use` 位于 oneclaw-plugins 仓库；不修改 OpenClaw 核心，也不依赖聊天客户端或 OneClaw Channel 在线。
 
 ## 开启方式
 
-- 使用本分支 Wrapper，并在镜像内放置对应插件到 `/opt/openclaw-browser-use`。
-- 设置 `ONECLAW_BROWSER_USE_ENABLED=1`；浏览器依赖继续使用 `ONECLAW_BROWSER_ENABLED=1`。
+- 插件通过内容寻址本地 `.tgz` 锁定在 `resources/openclaw-plugin-bundle`，构建时安装到 `/opt/openclaw-plugins/node_modules/@oneclaw-plugins/browser-use`，不需要目录挂载或 npm 发布。
+- 新镜像默认设置 `ONECLAW_BROWSER_USE_ENABLED=1`，与 `ONECLAW_BROWSER_ENABLED=1` 一起启用；实例环境中已有的覆盖值需自行检查。
 - 插件目录可通过 `ONECLAW_BROWSER_USE_PLUGIN_DIR` 指定。目录需归 root 或 Runtime 用户所有，不能可被其他用户任意修改。
-- 未开启新开关时仍为只读预览。现有 develop 上的 `e1eeba6` 不包含接管功能。
-- 101 的独立开发实例为 `oneclaw-browser-use-dev`，端口 18084；18083 仍为只读版本。开发镜像从已验证的基础镜像叠加 Wrapper 和插件源码用于验证，尚未更新正式 npm/锁定插件包。
+- 未开启新开关时仍为只读预览。历史提交 `e1eeba6` 仅包含只读预览。
+- 101 的独立开发实例为 `oneclaw-browser-use-dev`，端口 18084；18083 是原只读演示。开发实例使用过叠加源码的验收镜像；现在 develop 的部署镜像统一使用锁定本地 tar 包。
 
 ## 状态与边界
 
@@ -39,4 +39,6 @@
 - 独立测试容器：`node /app/scripts/verify-browser-handoff.mjs`，验证排空、排他、启动拦截、凭证校验、输入关闭与交还。
 - 实际页面验证接管后的鼠标输入，并在断线/交还时确认可写连接关闭。
 
-正式接入 develop 时，先按插件仓库流程集成源代码，再生成锁定测试插件包；不要把开发镜像或工作目录挂载作为正式发布方式。
+更新测试包：先将插件源代码合入并推送插件仓库 develop，再执行 `npm run update:local-browser-use`。脚本要求插件仓库干净且与 origin/develop 同步；生成的归档包含完整 SHA-256，不覆盖同名包内容。
+
+如需彻底关闭接管，除 `ONECLAW_BROWSER_USE_ENABLED=0` 外，也应将已有配置中的 `plugins.entries.oneclaw-browser-use.enabled` 设为 false，避免旧插件设置继续生效。

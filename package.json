@@ -16,7 +16,8 @@
     "update:oneclaw-plugins": "node scripts/update-oneclaw-plugins.mjs",
     "update:local-channel": "node scripts/update-local-oneclaw-channel.mjs",
     "update:local-integrations": "node scripts/update-local-oneclaw-integrations.mjs",
-    "release:oneclaw-plugin": "node scripts/release-oneclaw-plugin.mjs"
+    "release:oneclaw-plugin": "node scripts/release-oneclaw-plugin.mjs",
+    "update:local-browser-use": "node scripts/update-local-oneclaw-browser-use.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",

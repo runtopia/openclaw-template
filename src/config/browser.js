@@ -21,5 +21,15 @@ export function applyBrowserDefaults(cfg, env = process.env) {
       if (!tools.alsoAllow.includes("browser")) tools.alsoAllow.push("browser");
     }
   }
+  if (env.ONECLAW_BROWSER_USE_ENABLED === "1") {
+    cfg.plugins ??= {};
+    cfg.plugins.entries ??= {};
+    cfg.plugins.entries["oneclaw-browser-use"] ??= { enabled: true };
+    cfg.plugins.load ??= {};
+    cfg.plugins.load.paths ??= [];
+    const pluginDir = env.ONECLAW_BROWSER_USE_PLUGIN_DIR || "/opt/openclaw-browser-use";
+    if (!cfg.plugins.load.paths.includes(pluginDir)) cfg.plugins.load.paths.push(pluginDir);
+    if (Array.isArray(cfg.plugins.allow) && !cfg.plugins.allow.includes("oneclaw-browser-use")) cfg.plugins.allow.push("oneclaw-browser-use");
+  }
   return before !== JSON.stringify(cfg);
 }

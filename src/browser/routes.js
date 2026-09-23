@@ -1,5 +1,7 @@
 import express from "express";
 import httpProxy from "http-proxy";
+import net from "node:net";
+import { WebSocketServer } from "ws";
 import { fileURLToPath } from "node:url";
 
 export async function startManagedBrowser(gatewayRpc) {
@@ -21,9 +23,10 @@ export function sameOrigin(req) {
   } catch { return false; }
 }
 
-export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser,
+export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser, handoff,
   novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
   const router = express.Router();
+  const controlWs = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const proxy = httpProxy.createProxyServer({ target, ws: true });
   const sockets = new Set();
   proxy.on("error", (_err, _req, socket) => socket?.destroy?.());
@@ -43,12 +46,26 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     next();
   });
   router.get("/status", (_req, res) => res.json(desktop.status()));
+  const controllerToken = (req) => req.headers["x-browser-controller"];
+  router.get("/control/status", async (req, res) => {
+    if (!handoff) return res.json({ available: false });
+    try { res.json({ available: true, ...await handoff.status(controllerToken(req)) }); }
+    catch (err) { res.status(503).json({ available: false, error: err.message }); }
+  });
+  router.post("/control/:action", async (req, res) => {
+    if (!sameOrigin(req)) return res.status(403).json({ error: "Same-origin request required" });
+    if (!handoff) return res.status(503).json({ error: "Browser Use plugin is not enabled" });
+    const action = req.params.action;
+    if (!["request", "release", "resume", "recover"].includes(action)) return res.sendStatus(404);
+    try { res.json(await handoff[action](controllerToken(req))); }
+    catch (err) { res.status(409).json({ error: err.message }); }
+  });
   let starting;
   router.post("/start", async (req, res) => {
     if (!sameOrigin(req)) return res.status(403).json({ error: "Same-origin request required" });
     if (!desktop.status().ready) return res.status(503).json({ error: "Desktop is not ready" });
     try {
-      starting ??= Promise.resolve().then(startBrowser).finally(() => { starting = null; });
+      starting ??= Promise.resolve().then(() => handoff ? handoff.runNative(startBrowser) : startBrowser()).finally(() => { starting = null; });
       await starting;
       res.json({ ok: true });
     } catch (err) { res.status(503).json({ error: err.message }); }
@@ -68,6 +85,33 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     try { pathname = new URL(req.url, "http://internal").pathname; }
     catch { socket.destroy(); return true; }
     if (pathname !== "/browser" && !pathname.startsWith("/browser/")) return false;
+    if (pathname === "/browser/control/ws") {
+      if (!handoff || !credentialsConfigured || !isAuthed(req) || !sameOrigin(req)) {
+        socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        return true;
+      }
+      const token = new URL(req.url, "http://internal").searchParams.get("controller");
+      handoff.connect(token, () => {
+        let ws;
+        controlWs.handleUpgrade(req, socket, head, (connection) => { ws = connection; });
+        if (!ws) throw new Error("VNC upgrade failed");
+        const upstream = net.connect({ host: "127.0.0.1", port: 5901 });
+        ws.on("message", (data, binary) => {
+          if (!binary || upstream.writableLength > 1024 * 1024) return ws.terminate();
+          upstream.write(data);
+        });
+        upstream.on("data", (data) => {
+          if (ws.readyState !== 1 || ws.bufferedAmount > 8 * 1024 * 1024) return ws.terminate();
+          ws.send(data);
+        });
+        upstream.on("error", () => ws.terminate());
+        upstream.on("close", () => ws.terminate());
+        ws.on("close", () => upstream.destroy());
+        ws.on("error", () => upstream.destroy());
+        return ws;
+      }).catch(() => { if (!socket.destroyed) socket.end("HTTP/1.1 409 Conflict\r\nConnection: close\r\n\r\n"); });
+      return true;
+    }
     const status = !credentialsConfigured || !desktop.status().ready ? 503
       : !isAuthed(req) ? 401 : !sameOrigin(req) ? 403 : pathname !== "/browser/ws" ? 404 : 0;
     if (status) {
@@ -83,5 +127,8 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
   return { router, handleUpgrade, close() {
     for (const socket of sockets) socket.destroy();
     proxy.close();
+    for (const ws of controlWs.clients) ws.terminate();
+    controlWs.close();
+    handoff?.close();
   } };
 }

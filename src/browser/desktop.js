@@ -46,6 +46,7 @@ export function createBrowserDesktop({ env = process.env, log = console.log } = 
   const display = ":99";
   const children = new Set();
   let stopped = false, ready = false, pending, retryTimer, failures = 0, error = null;
+  let controlChild = null;
   if (enabled) env.DISPLAY = display;
   function killChildren() {
     for (const child of children) {
@@ -60,6 +61,7 @@ export function createBrowserDesktop({ env = process.env, log = console.log } = 
     ready = false;
     error = message;
     log(`[browser-desktop] ${message}`);
+    controlChild?.kill("SIGTERM");
     killChildren();
     if (++failures <= 5) {
       retryTimer = setTimeout(() => { pending = null; start().catch(() => {}); }, Math.min(1000 * 2 ** failures, 30000));
@@ -109,11 +111,41 @@ export function createBrowserDesktop({ env = process.env, log = console.log } = 
     })().catch((err) => { failed(err.message); throw err; });
     return pending;
   }
+  async function startControl() {
+    if (!ready || stopped) throw new Error("Desktop is not ready");
+    if (controlChild) throw new Error("Writable desktop is already running");
+    if (await tcpReady(5901)) throw new Error("Control port is occupied");
+    const child = spawn("x11vnc", ["-display", display, "-localhost", "-rfbport", "5901", "-forever", "-shared", "-nopw", "-noxdamage", "-clear_all"], { env, stdio: "ignore" });
+    controlChild = child;
+    let launchError;
+    child.on("error", (err) => { launchError = err; if (controlChild === child) controlChild = null; });
+    child.on("exit", () => { if (controlChild === child) controlChild = null; });
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && controlChild === child && !launchError) {
+      if (await tcpReady(5901)) return;
+      await delay(100);
+    }
+    await stopControl();
+    throw new Error(launchError?.message || "Writable desktop failed to start");
+  }
+  async function stopControl() {
+    const child = controlChild;
+    if (!child) return;
+    await new Promise((resolve, reject) => {
+      const force = setTimeout(() => child.kill("SIGKILL"), 1500);
+      const timer = setTimeout(() => { clearTimeout(force); reject(new Error("Writable desktop did not exit; AI remains paused")); }, 5000);
+      const cleanup = () => { clearTimeout(force); clearTimeout(timer); };
+      child.once("exit", () => { cleanup(); resolve(); });
+      child.once("error", (err) => { cleanup(); reject(err); });
+      child.kill("SIGTERM");
+    });
+  }
   function stop() {
     stopped = true;
     ready = false;
     clearTimeout(retryTimer);
+    controlChild?.kill("SIGTERM");
     killChildren();
   }
-  return { start, stop, status: () => ({ enabled, ready, error, viewOnly: true }) };
+  return { start, stop, startControl, stopControl, controlReady: () => Boolean(controlChild), status: () => ({ enabled, ready, error, viewOnly: true }) };
 }

@@ -19,6 +19,7 @@ import path from "node:path";
 
 import express from "express";
 
+import { createBrowserHandoff } from "./browser/handoff.js";
 import { createBrowserDesktop } from "./browser/desktop.js";
 import { createBrowserRoutes, startManagedBrowser } from "./browser/routes.js";
 import { createGatewayManager } from "./gateway/manager.js";
@@ -425,7 +426,10 @@ app.use("/skills", requireAuthApi);
 app.use("/skills", jsonParser);
 app.use("/skills", createSkillsRouter());
 
+const browserHandoff = process.env.ONECLAW_BROWSER_USE_ENABLED === "1"
+  ? createBrowserHandoff({ rpc: gatewayRpc, desktop: browserDesktop }) : null;
 const browserPreview = createBrowserRoutes({
+  handoff: browserHandoff,
   desktop: browserDesktop,
   isAuthed,
   credentialsConfigured: Boolean(SETUP_PASSWORD || ONECLAW_INSTANCE_SECRET),

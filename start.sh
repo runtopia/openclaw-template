@@ -2,7 +2,7 @@
 # OpenClaw startup script.
 #
 # 架构：
-#   PID 1: node src/index.js
+#   PID 1: tini → node src/index.js（tini 回收 Chromium 等孤儿子进程）
 #     ├─ 启动时写好 openclaw.json（幂等，env 驱动，无 setup 向导）
 #     ├─ spawn openclaw gateway run（子进程，内部端口 18789）
 #     ├─ 对外监听 $PORT，/health + /repair/* + 反代其他请求到 gateway

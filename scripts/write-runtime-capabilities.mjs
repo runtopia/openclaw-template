@@ -78,7 +78,9 @@ export function buildRuntimeCapabilities(profile, env = process.env) {
   }
   const full = profile === "full";
   const capabilities = ["channels", "documents", "employee-agents", "mcp_snapshot_sync_v1", "media", "runtime-commands"];
-  if (full) capabilities.push("browser-automation", "external-agent-clis", "specialist-clis");
+  if (full) capabilities.push("external-agent-clis", "specialist-clis");
+  if (full || env.ONECLAW_BROWSER_ENABLED === "1") capabilities.push("browser-automation");
+  if (env.ONECLAW_BROWSER_ENABLED === "1") capabilities.push("browser-live-preview");
   const manifest = {
     schema_version: 1,
     profile,
@@ -91,7 +93,9 @@ export function buildRuntimeCapabilities(profile, env = process.env) {
 }
 
 export function writeRuntimeCapabilities(profile, outputPath, env = process.env) {
-  requireBinaries([...STANDARD_BINS, ...(profile === "full" ? FULL_BINS : [])]);
+  requireBinaries([...STANDARD_BINS, ...(profile === "full" ? FULL_BINS : []),
+    ...(env.ONECLAW_BROWSER_ENABLED === "1" ? ["chromium", "Xvfb", "xdpyinfo", "openbox", "x11vnc", "/usr/bin/websockify"] : []),
+  ]);
   const manifest = buildRuntimeCapabilities(profile, env);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

@@ -1,4 +1,4 @@
-// index.js — PID 1 进程
+// index.js — Wrapper 主进程（镜像中由 tini 启动并回收孤儿子进程）
 //
 // 职责：
 //   1. 启动时通过 env 变量写好 openclaw.json（纯 env 驱动，无 setup 向导）
@@ -19,6 +19,8 @@ import path from "node:path";
 
 import express from "express";
 
+import { createBrowserDesktop } from "./browser/desktop.js";
+import { createBrowserRoutes, startManagedBrowser } from "./browser/routes.js";
 import { createGatewayManager } from "./gateway/manager.js";
 import { createGatewayRpc } from "./gateway/rpc.js";
 import { createOneclawIntegration, normalizeOneclawApiUrl } from "./integration/oneclaw.js";
@@ -82,6 +84,9 @@ if (ONECLAW_INSTANCE_ID) {
 }
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
+
+// DISPLAY must be inherited by every Gateway spawn, including crash recovery.
+const browserDesktop = createBrowserDesktop();
 
 // ── Gateway token ─────────────────────────────────────────────────────────────
 
@@ -420,6 +425,14 @@ app.use("/skills", requireAuthApi);
 app.use("/skills", jsonParser);
 app.use("/skills", createSkillsRouter());
 
+const browserPreview = createBrowserRoutes({
+  desktop: browserDesktop,
+  isAuthed,
+  credentialsConfigured: Boolean(SETUP_PASSWORD || ONECLAW_INSTANCE_SECRET),
+  startBrowser: () => startManagedBrowser(gatewayRpc),
+});
+app.use("/browser", browserPreview.router);
+
 // ── WebUI 入口 ────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
   if (!isAuthed(req)) return res.redirect("/login");
@@ -463,6 +476,10 @@ const server = app.listen(PORT, () => {
   console.log(`[sidecar] repair API: http://localhost:${PORT}/repair`);
   console.log(`[sidecar] oneclaw heartbeat: ${ONECLAW_INSTANCE_ID ? "enabled" : "disabled"}`);
 
+  // Display startup is bounded; its failure must not stop repair/heartbeat.
+  const desktopReady = browserDesktop.start().catch((err) => {
+    console.warn(`[browser-desktop] startup failed: ${err.message}`);
+  });
   if (isConfigured()) {
     // Reuse the last successful profile on normal restarts so Gateway startup
     // never waits on the control plane. A fresh volume still performs the
@@ -496,6 +513,7 @@ const server = app.listen(PORT, () => {
       const liveProfilePromise = runtimeProfile.source === "cache" && ONECLAW_INSTANCE_ID
         ? oneclaw.fetchPersonality({ timeoutMs: 3_000 })
         : null;
+      await desktopReady;
       await gateway.ensureGatewayRunning();
       try {
         gatewayRpc.start();
@@ -540,6 +558,7 @@ server.keepAliveTimeout = 75000;
 // 到网关的鉴权由中继在 connect 帧注入 params.auth.token 完成（token 不进 URL/前端）。
 // 不再用 proxy.ws 透明代理——网关新版只认 connect 帧里的 token，忽略 Authorization 头。
 server.on("upgrade", (req, socket, head) => {
+  if (browserPreview.handleUpgrade(req, socket, head)) return;
   if (!isAuthed(req)) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     socket.destroy();
@@ -554,6 +573,8 @@ server.on("upgrade", (req, socket, head) => {
 
 function shutdown(signal) {
   console.log(`[sidecar] ${signal} received — shutting down`);
+  browserPreview.close();
+  browserDesktop.stop();
   oneclaw.stop();
   gatewayRpc.close();
   gateway.stopGateway();

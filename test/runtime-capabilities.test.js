@@ -26,3 +26,9 @@ test("full runtime is additive and has a different capability digest", () => {
   assert.ok(full.capabilities.includes("browser-automation"));
   assert.notEqual(full.capability_digest, standard.capability_digest);
 });
+
+test("standard browser image advertises automation and live preview", () => {
+  const manifest = buildRuntimeCapabilities("standard", { ONECLAW_BROWSER_ENABLED: "1" });
+  assert.ok(manifest.capabilities.includes("browser-automation"));
+  assert.ok(manifest.capabilities.includes("browser-live-preview"));
+});

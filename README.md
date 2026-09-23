@@ -291,3 +291,7 @@ A: OpenClaw's plugin discovery does not scan global `node_modules`. Plugins are 
 ## Support
 
 Need help? [Request support on Railway Station](https://station.railway.com/all-templates/d0880c01-2cc5-462c-8b76-d84c1a203348)
+
+## Cloud browser and live preview
+
+The standard image includes a headed Chromium browser controlled by OpenClaw, with a read-only live desktop at `/browser/`. Sign in through `/login`, then start the browser from the preview page or the native browser tool. Browser profiles persist on the existing `/data` volume. See [browser runtime setup and boundaries](docs/browser-runtime.md) for configuration, authentication, and verification.

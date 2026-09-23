@@ -304,6 +304,19 @@ RUN test -f ${ONECLAW_PREINSTALLED_SKILLS_DIR}/.preinstalled-manifest.json \
 # Cache buster - change this to force rebuild
 ARG CACHEBUST=v20260212-chromium
 
+# The headed browser shares this container; only its native control is owned by
+# OpenClaw. Preview/display binaries are image-baked, never installed on /data.
+ARG ONECLAW_BROWSER_ENABLED=1
+ENV ONECLAW_BROWSER_ENABLED=${ONECLAW_BROWSER_ENABLED}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+  if [ "$ONECLAW_BROWSER_ENABLED" = "1" ]; then \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      chromium chromium-sandbox xvfb x11-utils openbox x11vnc novnc websockify \
+      fonts-noto-cjk fonts-noto-color-emoji fonts-liberation; \
+    test -f /usr/share/novnc/core/rfb.js; \
+  fi
+
 COPY src ./src
 COPY start.sh ./start.sh
 
@@ -319,6 +332,13 @@ ENV ONECLAW_RUNTIME_CONTRACT=3
 RUN node /app/scripts/write-runtime-capabilities.mjs standard /opt/oneclaw/runtime-capabilities.json
 LABEL org.opencontainers.image.version=${IMAGE_VERSION} \
       io.oneclaw.runtime.profile=standard
+
+# Chromium/crashpad can orphan descendants. Reap them without changing the
+# wrapper's Gateway shutdown/restart policy.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update && apt-get install -y --no-install-recommends tini
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 ENV PORT=8080
 ENV OPENCLAW_ENTRY=/usr/local/lib/node_modules/openclaw/dist/entry.js

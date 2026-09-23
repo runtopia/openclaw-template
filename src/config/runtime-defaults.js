@@ -5,6 +5,7 @@
 // generate.js imports and re-exports applyRuntimeDefaults (and the two
 // shared helpers below) so the public API of generate.js is unchanged.
 
+import { applyBrowserDefaults } from "./browser.js";
 import { applyPreinstalledSkillsDefaults } from "./preinstalled-skills.js";
 
 const DEFAULT_HEARTBEAT = { every: "2h", target: "last" };
@@ -462,6 +463,7 @@ export function applyRuntimeDefaults(cfg, env = process.env) {
   changed = applyWorkboardPatch(cfg) || changed;
   changed = applyNativePlanToolPatch(cfg) || changed;
   changed = applyPreinstalledSkillsDefaults(cfg, env) || changed;
+  changed = applyBrowserDefaults(cfg, env) || changed;
 
   const hasKey = hasClawroutersKey(env);
   const provider = cfg?.models?.providers?.clawrouters;

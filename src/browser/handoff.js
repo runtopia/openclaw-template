@@ -4,6 +4,9 @@ import crypto from "node:crypto";
 // release AI until writable transport has exited. All transitions serialize.
 export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs = 45000 }) {
   let owner = null, lastSeen = 0, client = null, stopped = false, chain = Promise.resolve();
+  const liveStarts = new Set();
+  const pendingEnds = new Map();
+  let sawConnection = false;
   const serial = (fn) => {
     const result = chain.then(fn);
     chain = result.catch(() => {});
@@ -14,6 +17,30 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
     if (!frame.ok) throw new Error(frame.error?.message || "Browser Use plugin is unavailable");
     return frame.payload;
   };
+  async function settleStarts(discover = false) {
+    if (!rpc.isGatewayConnected()) return;
+    if (discover) {
+      const result = await command("admin-starts");
+      for (const item of result.starts || []) {
+        if (typeof item.callId === "string" && !liveStarts.has(item.callId) && !pendingEnds.has(item.callId)) pendingEnds.set(item.callId, true);
+      }
+    }
+    if (!pendingEnds.size) return;
+    let startupComplete;
+    for (const [callId, uncertain] of pendingEnds) {
+      if (liveStarts.has(callId)) continue;
+      if (uncertain) {
+        if (startupComplete === undefined) {
+          const frame = await rpc.rpcGateway("browser.request", { method: "GET", path: "/", query: { profile: "openclaw" } }, 5000);
+          const state = frame.payload;
+          startupComplete = frame.ok && state?.profile === "openclaw" && state.running === true && state.cdpReady === true && Number.isInteger(state.pid) && state.pid > 0;
+        }
+        if (!startupComplete) continue;
+      }
+      await command("admin-end", null, { callId });
+      pendingEnds.delete(callId);
+    }
+  }
   const matches = (token) => typeof token === "string" && Boolean(owner) && token === owner;
   function requireOwner(token) { if (!matches(token)) throw new Error("This page does not own browser control"); }
   async function revoke() {
@@ -26,6 +53,7 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
     if (owner) await command("pause");
   }
   async function inspect() {
+    await settleStarts();
     const state = await command("status");
     if (owner && state.mode === "waiting" && state.inFlight === 0) {
       await command("grant");
@@ -79,9 +107,21 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
   }
   async function runNative(fn) {
     const callId = crypto.randomUUID();
-    await serial(() => command("admin-begin", null, { callId }));
-    try { return await fn(); }
-    finally { await serial(() => command("admin-end", null, { callId })); }
+    liveStarts.add(callId);
+    let uncertain = false;
+    try {
+      await serial(() => command("admin-begin", null, { callId }));
+      return await fn();
+    } catch (error) {
+      uncertain = error.browserOperationUncertain === true;
+      throw error;
+    } finally {
+      liveStarts.delete(callId);
+      // Retain the acknowledgement across disconnections. An ambiguous start
+      // is only settled after the managed browser reports a ready owned PID.
+      pendingEnds.set(callId, uncertain);
+      await serial(() => settleStarts()).catch(() => {});
+    }
   }
   function recover() {
     return serial(async () => {
@@ -110,14 +150,19 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
   }
   async function tick() {
     return serial(async () => {
-      if (!owner || stopped) return;
+      if (stopped) return;
+      const connected = rpc.isGatewayConnected();
       try {
+        await settleStarts(connected && !sawConnection);
+        sawConnection = connected;
+        if (!owner) return;
         if (now() - lastSeen > heartbeatMs || !rpc.isGatewayConnected()) {
           await pause();
           return;
         }
         await inspect();
       } catch {
+        sawConnection = false;
         // Losing the control plane never leaves an interactive connection.
         await revoke().catch(() => {});
       }

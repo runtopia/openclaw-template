@@ -180,3 +180,11 @@ test("coding agents can share Browser Use links unless explicitly denied", () =>
   applyBrowserDefaults(denied, env);
   assert.deepEqual(denied.tools.alsoAllow, ["browser"]);
 });
+
+
+test("interrupted browser RPC remains uncertain rather than pretending startup ended", async () => {
+  const rpc = { waitUntilConnected: async () => {}, rpcGateway: async () => ({ ok: false, error: { code: "disconnected", message: "gateway WS closed" } }) };
+  await assert.rejects(startManagedBrowser(rpc), (error) => error.browserOperationUncertain === true);
+  rpc.rpcGateway = async () => { throw new Error("rpc timeout: browser.request"); };
+  await assert.rejects(startManagedBrowser(rpc), (error) => error.browserOperationUncertain === true);
+});

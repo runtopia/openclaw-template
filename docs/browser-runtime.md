@@ -23,9 +23,9 @@ OpenClaw 原生 browser 工具负责 Chromium 的启动、标签页、操作和�
 - 运行变量 `ONECLAW_BROWSER_ENABLED=0`：关闭显示服务和 Wrapper 浏览器配置补全，不删除用户已有的 OpenClaw 浏览器配置。
 - `ONECLAW_BROWSER_NO_SANDBOX=1`：显式开启 OpenClaw 的 `browser.noSandbox`，仅用于宿主机无法提供 Chromium sandbox 的隔离 Runtime。
   默认不关闭 sandbox；该值写入配置后持久化，恢复 sandbox 需将 `browser.noSandbox` 改回 false。
-- 显示环境固定 `DISPLAY=:99`、1440×900；Gateway 与 Chromium 继承该环境。
-- 保留用户明确配置的 executablePath、headless、attachOnly、默认 profile 和禁用状态。
-  若已有 headless/remote 配置，预览可能为空；预览启动按钮固定启动本地 `openclaw` profile。
+- 显示环境固定 `DISPLAY=:99`、1440×900；Gateway 的首次启动和每次重启都强制继承该环境，同时设置 `OPENCLAW_BROWSER_HEADLESS=0`。
+- 受管浏览器强制 `headless:false`，清除冲突的无头/display 启动参数；Browser Use 默认 profile 固定为 `openclaw`。保留浏览器禁用状态及其他无关设置。
+  若用户把该 profile 配成 remote/attachOnly，仍需修正配置才能使用本地桌面预览。
 - 在 coding profile 中补充 browser 工具；明确的工具 allow/deny 与插件禁用保留优先级。
 - 固定 OpenClaw 2026.7.1-2 将托管 profile 写入 `${OPENCLAW_STATE_DIR}/browser/openclaw/user-data`，因此现有 `/data/.openclaw` 卷即可持久化 Cookie 等状态。
 - 浏览器空闲时不由 Wrapper 主动启动；显示服务随 Wrapper 启动，失败后有限退避重试，不修改 Gateway 配置或重启 Gateway。

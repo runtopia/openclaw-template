@@ -1,3 +1,4 @@
+import { BROWSER_DISPLAY, browserGatewayEnv } from "../config/browser.js";
 import { spawn, execFile } from "node:child_process";
 import net from "node:net";
 import fs from "node:fs";
@@ -43,11 +44,11 @@ export function tcpReady(port) {
 // Own only display/preview processes. OpenClaw owns Chromium and its profile.
 export function createBrowserDesktop({ env = process.env, log = console.log } = {}) {
   const enabled = env.ONECLAW_BROWSER_ENABLED === "1";
-  const display = ":99";
+  const display = BROWSER_DISPLAY;
   const children = new Set();
   let stopped = false, ready = false, pending, retryTimer, failures = 0, error = null;
   let controlChild = null;
-  if (enabled) env.DISPLAY = display;
+  if (enabled) Object.assign(env, browserGatewayEnv(env));
   function killChildren() {
     for (const child of children) {
       child.kill("SIGTERM");

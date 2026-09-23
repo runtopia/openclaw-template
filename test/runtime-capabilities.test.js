@@ -32,3 +32,8 @@ test("standard browser image advertises automation and live preview", () => {
   assert.ok(manifest.capabilities.includes("browser-automation"));
   assert.ok(manifest.capabilities.includes("browser-live-preview"));
 });
+
+test("Browser Use enabled images advertise the plugin-bundled skill", () => {
+  const manifest = buildRuntimeCapabilities("standard", { ONECLAW_BROWSER_ENABLED: "1", ONECLAW_BROWSER_USE_ENABLED: "1" });
+  assert.ok(manifest.supported_skills.includes("browser-use"));
+});

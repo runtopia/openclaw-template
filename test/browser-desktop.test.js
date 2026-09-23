@@ -10,7 +10,7 @@ import path from "node:path";
 import { createBrowserDesktop, cleanupStaleBrowserLocks } from "../src/browser/desktop.js";
 import { createBrowserRoutes, startManagedBrowser } from "../src/browser/routes.js";
 
-test("headed browser defaults are opt-in, idempotent and preserve user choices", () => {
+test("headed browser defaults enforce visible mode while preserving unrelated choices", () => {
   const cfg = { tools: { profile: "coding", alsoAllow: ["other"] } };
   assert.equal(applyBrowserDefaults(cfg, {}), false);
   assert.equal(applyBrowserDefaults(cfg, { ONECLAW_BROWSER_ENABLED: "1" }), true);
@@ -21,7 +21,7 @@ test("headed browser defaults are opt-in, idempotent and preserve user choices",
   cfg.browser.headless = true;
   cfg.browser.executablePath = "/custom/chrome";
   applyBrowserDefaults(cfg, { ONECLAW_BROWSER_ENABLED: "1" });
-  assert.equal(cfg.browser.headless, true);
+  assert.equal(cfg.browser.headless, false);
   assert.equal(cfg.browser.executablePath, "/custom/chrome");
   const disabled = { browser: { enabled: false } };
   assert.equal(applyBrowserDefaults(disabled, { ONECLAW_BROWSER_ENABLED: "1" }), false);
@@ -156,4 +156,17 @@ test("Browser Use resolves the locked package path instead of the prototype moun
   const custom = {};
   applyBrowserDefaults(custom, { ...env, OPENCLAW_PLUGINS_DIR: "/tmp/bundle" });
   assert.equal(custom.plugins.load.paths[0], "/tmp/bundle/node_modules/@oneclaw-plugins/browser-use");
+});
+
+
+test("headed mode removes launch overrides from persisted config", () => {
+  const cfg = { browser: { headless: true, extraArgs: ["--headless=new", "--display=:7", "--lang=zh-CN", "--ozone-platform", "headless"], profiles: { openclaw: { headless: true, cdpPort: 18800, color: "#FF4500" }, work: { headless: true } } } };
+  const env = { ONECLAW_BROWSER_ENABLED: "1" };
+  applyBrowserDefaults(cfg, env);
+  assert.equal(cfg.browser.headless, false);
+  assert.equal(cfg.browser.profiles.openclaw.headless, false);
+  assert.deepEqual(cfg.browser.extraArgs, ["--lang=zh-CN"]);
+  assert.equal(cfg.browser.profiles.openclaw.cdpPort, 18800);
+  assert.equal(cfg.browser.profiles.work.headless, true);
+  assert.equal(applyBrowserDefaults(cfg, env), false);
 });

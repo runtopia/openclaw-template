@@ -247,3 +247,29 @@ test("gateway graceful service restart recovers without crash backoff", async (t
   assert.equal(procs.length, 2);
   assert.equal(gateway.isGatewayReady(), true);
 });
+
+test("every Gateway spawn inherits Xvfb :99 and headed mode despite conflicting environment", async (t) => {
+  const originalSpawn = childProcess.spawn;
+  const originalFetch = globalThis.fetch;
+  const names = ['ONECLAW_BROWSER_ENABLED', 'DISPLAY', 'OPENCLAW_BROWSER_HEADLESS'];
+  const old = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  Object.assign(process.env, { ONECLAW_BROWSER_ENABLED: '1', DISPLAY: ':7', OPENCLAW_BROWSER_HEADLESS: '1' });
+  const envs = [];
+  childProcess.spawn = (_command, _args, options) => { envs.push(options.env); return new FakeProc(envs.length); };
+  globalThis.fetch = async () => new Response('ok', { status: 200 });
+  t.after(() => {
+    childProcess.spawn = originalSpawn; globalThis.fetch = originalFetch;
+    for (const name of names) { if (old[name] === undefined) delete process.env[name]; else process.env[name] = old[name]; }
+  });
+  const gateway = createGatewayManager({
+    OPENCLAW_NODE: 'node', clawArgs: (args) => ['entry.js', ...args],
+    stateDir: '/tmp/browser-display-test', workspaceDir: '/tmp/browser-display-test/workspace',
+    internalGatewayPort: 18789, internalGatewayHost: '127.0.0.1', gatewayToken: 'test-token', isConfigured: () => true,
+    gatewayEnv: { DISPLAY: ':8', OPENCLAW_BROWSER_HEADLESS: '1' },
+  });
+  t.after(() => gateway.stopGateway());
+  await gateway.ensureGatewayRunning();
+  await gateway.restartGateway();
+  assert.equal(envs.length, 2);
+  for (const env of envs) { assert.equal(env.DISPLAY, ':99'); assert.equal(env.OPENCLAW_BROWSER_HEADLESS, '0'); }
+});

@@ -42,3 +42,9 @@
 更新测试包：先将插件源代码合入并推送插件仓库 develop，再执行 `npm run update:local-browser-use`。脚本要求插件仓库干净且与 origin/develop 同步；生成的归档包含完整 SHA-256，不覆盖同名包内容。
 
 如需彻底关闭接管，除 `ONECLAW_BROWSER_USE_ENABLED=0` 外，也应将已有配置中的 `plugins.entries.oneclaw-browser-use.enabled` 设为 false，避免旧插件设置继续生效。
+
+## Agent 使用指南
+
+插件内置 `skills/browser-use/SKILL.md` 并通过 manifest 声明发现路径；指南随本地 tar 包一起更新。每轮短提示指明原生 browser、openclaw/host、有界面与 :99 约定。工具钩子补齐缺省 profile/target，并拒绝无头启动及其他控制面。Gateway spawn 环境强制 DISPLAY=:99、OPENCLAW_BROWSER_HEADLESS=0。任意 exec 脚本仍不属于完整隔离边界。
+
+正常情况下复用一个 Chromium 进程，可开多个标签页。断开 VNC 不会停止浏览器；人工接管连接断开会保持控制权暂停。OpenClaw 的任务标签页清理、主动 stop、进程退出或容器重启可能关闭页面。持久化 profile 保留站点数据，不等于保证恢复所有历史标签页。

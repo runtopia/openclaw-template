@@ -1,3 +1,4 @@
+import { browserGatewayEnv } from "../config/browser.js";
 // Gateway lifecycle management.
 
 import childProcess from "node:child_process";
@@ -98,6 +99,7 @@ export function createGatewayManager({ OPENCLAW_NODE, clawArgs, gatewayArgs = cl
       env: {
         ...process.env,
         ...gatewayEnv,
+        ...browserGatewayEnv(process.env),
         OPENCLAW_STATE_DIR: stateDir,
         OPENCLAW_WORKSPACE_DIR: workspaceDir,
       },

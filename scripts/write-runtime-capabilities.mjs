@@ -88,7 +88,9 @@ export function buildRuntimeCapabilities(profile, env = process.env) {
     image_version: String(env.IMAGE_VERSION || "unknown"),
     openclaw_version: String(env.OPENCLAW_VERSION || "unknown"),
     capabilities,
-    supported_skills: [...STANDARD_SKILLS, ...(full ? FULL_SKILLS : [])].sort(),
+    supported_skills: [...STANDARD_SKILLS, ...(full ? FULL_SKILLS : []),
+      ...(env.ONECLAW_BROWSER_ENABLED === "1" && env.ONECLAW_BROWSER_USE_ENABLED === "1" ? ["browser-use"] : []),
+    ].sort(),
   };
   return { ...manifest, capability_digest: stableDigest(manifest) };
 }

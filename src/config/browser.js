@@ -1,7 +1,29 @@
 import path from "node:path";
 
+export const BROWSER_DISPLAY = ":99";
+
+export function browserGatewayEnv(env = process.env) {
+  return env.ONECLAW_BROWSER_ENABLED === "1"
+    ? { DISPLAY: BROWSER_DISPLAY, OPENCLAW_BROWSER_HEADLESS: "0" } : {};
+}
+
+function headedArgs(args) {
+  if (!Array.isArray(args)) return args;
+  const result = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (typeof arg !== "string") { result.push(arg); continue; }
+    if (/^--headless(?:=|$)/i.test(arg) || /^--ozone-platform=headless$/i.test(arg)) continue;
+    if (/^--display=/i.test(arg)) continue;
+    if (arg === "--display") { i++; continue; }
+    if (arg === "--ozone-platform" && args[i + 1] === "headless") { i++; continue; }
+    result.push(arg);
+  }
+  return result;
+}
+
 // Only opt into the image's headed browser defaults when its desktop is enabled.
-// Explicit user settings and tool deny lists retain precedence.
+// Headed display is a managed invariant; unrelated settings and tool deny lists retain precedence.
 export function applyBrowserDefaults(cfg, env = process.env) {
   if (env.ONECLAW_BROWSER_ENABLED !== "1") return false;
   const before = JSON.stringify(cfg);
@@ -10,9 +32,10 @@ export function applyBrowserDefaults(cfg, env = process.env) {
   cfg.browser.enabled ??= true;
   cfg.browser.defaultProfile ??= "openclaw";
   cfg.browser.executablePath ??= "/usr/bin/chromium";
-  cfg.browser.headless ??= false;
+  cfg.browser.headless = false;
+  if (cfg.browser.profiles?.openclaw) cfg.browser.profiles.openclaw.headless = false;
   cfg.browser.attachOnly ??= false;
-  cfg.browser.extraArgs ??= ["--start-maximized", "--noerrdialogs"];
+  cfg.browser.extraArgs = headedArgs(cfg.browser.extraArgs ?? ["--start-maximized", "--noerrdialogs"]);
   if (env.ONECLAW_BROWSER_NO_SANDBOX === "1") cfg.browser.noSandbox = true;
   // The pinned host may include browser in core rather than a standalone plugin.
   // A root browser block is sufficient; do not invent plugin registrations.
@@ -24,6 +47,7 @@ export function applyBrowserDefaults(cfg, env = process.env) {
     }
   }
   if (env.ONECLAW_BROWSER_USE_ENABLED === "1") {
+    cfg.browser.defaultProfile = "openclaw";
     cfg.plugins ??= {};
     cfg.plugins.entries ??= {};
     cfg.plugins.entries["oneclaw-browser-use"] ??= { enabled: true };

@@ -55,7 +55,13 @@
 
 入口表示该 Workspace 当前共享浏览器，不是历史 Session 页面快照。Web 点击入口后，复用 Firebase 鉴权的 `POST /api/v1/workspace/runtime-sessions`，传 `workspace_id` 和 `next:"/browser/"`；Go API 校验所有权后即时获取 Runtime 一次性票据。没有新增匿名访问能力。
 
-- Runtime：`ONECLAW_BROWSER_USE_WEB_URL` 设置为 Web 站点 origin，默认 `https://www.oneclaw.net`。
+- Runtime：优先复用已鉴权 API 返回的 `app_url`（平台已有 `NEXT_PUBLIC_APP_URL` / `External.app_url`）；`ONECLAW_BROWSER_USE_WEB_URL` 仅作显式覆盖。测试 API 缺少 Web 地址时明确报错，不猜测生产域名。
 - Web v2：`NEXT_PUBLIC_APP_URL` 设置为相同的公开 origin，以识别测试/自定义域名的卡片。生产域名 `https://www.oneclaw.net` 和 `https://oneclaw.net` 默认受支持。
 - 地址必须是完整稳定 URL。客户端严格校验 origin 和 `/browser-use/<workspaceId>` 路径，无凭据、查询参数或 fragment 的普通入口才渲染卡片；其他链接保持普通超链接。
 - 无平台 Runtime 凭据、无可信会话或身份查询失败时，工具返回错误，不能编造地址。
+
+### 18081 故障修正
+
+Channel/Integrations 会移除 process.env 中的实例密钥。分享工具应使用进程内共享凭据闭包，并兼容 ONECLAW_RUNTIME_ID，不能因为环境变量被清理就判断为非托管环境。平台 API 更新后会在 personality 中返回 app_url。
+
+101 的无特权 Docker 容器无法创建 Chromium namespace sandbox；已为 18081 持久化 browser.noSandbox=true，仍保持 DISPLAY=:99 和 headless=false。同类新实例需显式配置 ONECLAW_BROWSER_NO_SANDBOX=1；不因此关闭 SSRF/导航保护。

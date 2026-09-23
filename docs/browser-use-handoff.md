@@ -48,3 +48,14 @@
 插件内置 `skills/browser-use/SKILL.md` 并通过 manifest 声明发现路径；指南随本地 tar 包一起更新。每轮短提示指明原生 browser、openclaw/host、有界面与 :99 约定。工具钩子补齐缺省 profile/target，并拒绝无头启动及其他控制面。Gateway spawn 环境强制 DISPLAY=:99、OPENCLAW_BROWSER_HEADLESS=0。任意 exec 脚本仍不属于完整隔离边界。
 
 正常情况下复用一个 Chromium 进程，可开多个标签页。断开 VNC 不会停止浏览器；人工接管连接断开会保持控制权暂停。OpenClaw 的任务标签页清理、主动 stop、进程退出或容器重启可能关闭页面。持久化 profile 保留站点数据，不等于保证恢复所有历史标签页。
+
+## 分享稳定入口
+
+模型调用插件工具 `browser_use`，参数 `{"action":"share"}`，工具通过 Runtime 凭据向现有 `/runtime/personality` 查询可信的 Workspace 公共 ID，返回 `https://<平台域名>/browser-use/<workspaceId>`。工具不接受模型指定 Workspace/Runtime，不发送消息，不签发登录票据。模型原样发送链接，普通聊天文本仍通过现有 Channel 交付。
+
+入口表示该 Workspace 当前共享浏览器，不是历史 Session 页面快照。Web 点击入口后，复用 Firebase 鉴权的 `POST /api/v1/workspace/runtime-sessions`，传 `workspace_id` 和 `next:"/browser/"`；Go API 校验所有权后即时获取 Runtime 一次性票据。没有新增匿名访问能力。
+
+- Runtime：`ONECLAW_BROWSER_USE_WEB_URL` 设置为 Web 站点 origin，默认 `https://www.oneclaw.net`。
+- Web v2：`NEXT_PUBLIC_APP_URL` 设置为相同的公开 origin，以识别测试/自定义域名的卡片。生产域名 `https://www.oneclaw.net` 和 `https://oneclaw.net` 默认受支持。
+- 地址必须是完整稳定 URL。客户端严格校验 origin 和 `/browser-use/<workspaceId>` 路径，无凭据、查询参数或 fragment 的普通入口才渲染卡片；其他链接保持普通超链接。
+- 无平台 Runtime 凭据、无可信会话或身份查询失败时，工具返回错误，不能编造地址。

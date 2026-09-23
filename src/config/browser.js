@@ -44,6 +44,7 @@ export function applyBrowserDefaults(cfg, env = process.env) {
     if (tools.profile === "coding" && !tools.deny?.includes("browser") && !Array.isArray(tools.allow)) {
       tools.alsoAllow ??= [];
       if (!tools.alsoAllow.includes("browser")) tools.alsoAllow.push("browser");
+      if (env.ONECLAW_BROWSER_USE_ENABLED === "1" && !tools.deny?.includes("browser_use") && !tools.alsoAllow.includes("browser_use")) tools.alsoAllow.push("browser_use");
     }
   }
   if (env.ONECLAW_BROWSER_USE_ENABLED === "1") {

@@ -62,13 +62,13 @@ async function refreshControl() {
     release.disabled = busy || inFlight > 0;
     recover.hidden = !available || mode !== "paused" || mine;
     recover.disabled = busy || inFlight > 0;
-    takeover.disabled = busy;
+    takeover.disabled = busy || (mode === "paused" && inFlight > 0);
     if (available) start.disabled = mode !== "ai";
     controlStatus.textContent = !available ? "实时只读预览 · Browser Use 接管插件未启用" : {
       ai: "AI 可操作浏览器 · 你正在观看",
       waiting: `等待 ${inFlight} 个在途操作结束，期间已阻止新的受管操作`,
       human: mine ? "你已接管 · AI 的受管浏览器操作已阻止" : "其他页面正在接管 · 你仍可观看",
-      paused: "控制已暂停 · 断线不会自动交还 AI；可继续接管或明确交还",
+      paused: inFlight > 0 ? `控制已暂停 · 正在确认 ${inFlight} 个在途操作，暂不能输入或交还` : "控制已暂停 · 断线不会自动交还 AI；可继续接管或明确交还",
     }[mode];
     const desired = available && mode === "human" && mine ? "human" : "view";
     if (connectionMode !== desired) await connect(desired);

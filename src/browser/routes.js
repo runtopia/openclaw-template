@@ -6,10 +6,21 @@ import { fileURLToPath } from "node:url";
 
 export async function startManagedBrowser(gatewayRpc) {
   await gatewayRpc.waitUntilConnected(5000);
-  const frame = await gatewayRpc.rpcGateway("browser.request", {
-    method: "POST", path: "/start", query: { profile: "openclaw" }, body: { headless: false }, timeoutMs: 40000,
-  }, 45000);
-  if (!frame.ok) throw new Error(frame.error?.message || "Browser start failed");
+  let frame;
+  try {
+    frame = await gatewayRpc.rpcGateway("browser.request", {
+      method: "POST", path: "/start", query: { profile: "openclaw" }, body: { headless: false }, timeoutMs: 40000,
+    }, 45000);
+  } catch (error) {
+    // A timeout does not prove the server-side operation was canceled.
+    error.browserOperationUncertain = /timeout|timed out/i.test(error.message);
+    throw error;
+  }
+  if (!frame.ok) {
+    const error = new Error(frame.error?.message || "Browser start failed");
+    error.browserOperationUncertain = frame.error?.code === "disconnected" || /timeout|timed out/i.test(error.message);
+    throw error;
+  }
   return frame.payload;
 }
 

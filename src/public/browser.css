@@ -5,7 +5,9 @@ header strong { font-size: 17px; } #status { flex: 1; }
 button { font: inherit; padding: 8px 14px; border: 1px solid #60666d; border-radius: 6px; color: inherit; background: #292d32; cursor: pointer; }
 button:disabled { opacity: .5; cursor: default; } button:focus-visible { outline: 2px solid #95c9ff; outline-offset: 2px; }
 p { margin: 10px 20px; color: #aeb6bf; font-size: 12px; }
-#screen { flex: 1; min-height: 0; overflow: hidden; background: #080909; }
+#stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #080909; }
+#screen, #input-screen { position: absolute; inset: 0; overflow: hidden; }
+#input-screen { opacity: 0; pointer-events: none; }
 @media (max-width: 600px) {
   header { gap: 8px; padding: 10px 12px; }
   header strong { font-size: 14px; }

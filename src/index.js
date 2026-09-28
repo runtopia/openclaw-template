@@ -427,13 +427,15 @@ app.use("/skills", jsonParser);
 app.use("/skills", createSkillsRouter());
 
 const browserHandoff = process.env.ONECLAW_BROWSER_USE_ENABLED === "1"
-  ? createBrowserHandoff({ rpc: gatewayRpc, desktop: browserDesktop }) : null;
+  ? createBrowserHandoff({ rpc: gatewayRpc, desktop: browserDesktop,
+    idleMs: (() => { const ms = Number(process.env.ONECLAW_BROWSER_IDLE_MS ?? 1800000); return ms === 0 || (Number.isFinite(ms) && ms >= 60000 && ms <= 86400000) ? ms : 1800000; })() }) : null;
 const browserPreview = createBrowserRoutes({
   handoff: browserHandoff,
   desktop: browserDesktop,
   isAuthed,
   credentialsConfigured: Boolean(SETUP_PASSWORD || ONECLAW_INSTANCE_SECRET),
   startBrowser: () => startManagedBrowser(gatewayRpc),
+  requireInstanceSecretApi,
   frameOrigin: process.env.ONECLAW_BROWSER_USE_WEB_URL || "https://www.oneclaw.net",
 });
 app.use("/browser", browserPreview.router);

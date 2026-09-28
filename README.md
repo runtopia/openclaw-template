@@ -302,7 +302,8 @@ Browser Use takeover is also enabled by default in the current develop image. It
 
 `ONECLAW_BROWSER_ALLOW_FAKE_IP=1` opts the headed browser into OpenClaw's
 `browser.ssrfPolicy.allowRfc2544BenchmarkRange` for a trusted proxy mapping
-`198.18.0.0/15`. It is off unless explicitly configured; use `0` to revoke it.
+`198.18.0.0/15`. It defaults to enabled for headed browsers; use `0` or an explicit false
+configuration value to revoke it. Other private-network access remains blocked.
 Do not enable `dangerouslyAllowPrivateNetwork` to work around fake-IP DNS.
 Loopback, RFC1918, link-local/metadata and IPv6 ULA restrictions stay in place.
 The pinned OpenClaw browser configuration is patched to pass this narrow option

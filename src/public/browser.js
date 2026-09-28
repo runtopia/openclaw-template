@@ -11,11 +11,48 @@ let busy = false;
 let statusRequestId = 0;
 let reconnectTimer, retries = 0;
 let allowHumanConnection = false;
+let viewConnected = false, inputConnected = false, zoomed = false, panMode = false;
+let displaySize = { width: 2560, height: 1600, scaleFactor: 2 };
+let lastBridgeState = '';
+const stage = document.querySelector('#stage');
+const surface = document.querySelector('#surface');
+const pan = document.querySelector('#pan');
+const keyboard = document.querySelector('#keyboard');
+const keyboardInput = document.querySelector('#keyboard-input');
+const embedded = Boolean(window.ReactNativeWebView || window.webkit?.messageHandlers?.browserUse);
+if (embedded) document.body?.classList.add("embedded");
 const takeover = document.querySelector("#takeover");
 const release = document.querySelector("#release");
 const recover = document.querySelector("#recover");
 const controlStatus = document.querySelector("#control-status");
 const controlHeaders = () => controller ? { "X-Browser-Controller": controller } : {};
+
+function postNative(payload) {
+  const message = JSON.stringify(payload);
+  window.ReactNativeWebView?.postMessage(message);
+  window.webkit?.messageHandlers?.browserUse?.postMessage(message);
+}
+function publishState() {
+  const payload = { schemaVersion: 1, type: 'browser.viewer.state', connected: viewConnected,
+    mode: controlState?.mode || 'unknown', mine: controlState?.mine === true,
+    epoch: controlState?.epoch || 0, inFlight: controlState?.inFlight || 0, busy };
+  const serialized = JSON.stringify(payload);
+  if (serialized !== lastBridgeState) { lastBridgeState = serialized; postNative(payload); }
+}
+function updateViewport() {
+  // Let noVNC perform scaling inside equal-sized surfaces. External CSS
+  // transforms would desynchronize its remote pointer coordinates.
+  surface.style.width = zoomed ? `${Math.max(stage.clientWidth, displaySize.width / displaySize.scaleFactor)}px` : '100%';
+  surface.style.height = zoomed ? `${Math.max(stage.clientHeight, displaySize.height / displaySize.scaleFactor)}px` : '100%';
+  document.querySelector('#zoom').textContent = zoomed ? '适合屏幕' : '放大阅读';
+  document.querySelector('#zoom').setAttribute('aria-pressed', String(zoomed));
+  pan.hidden = !zoomed || !inputConnected;
+  pan.textContent = panMode ? '操作网页' : '移动画面';
+  pan.setAttribute('aria-pressed', String(panMode));
+  keyboard.hidden = !inputConnected;
+  inputScreen.style.pointerEvents = inputConnected && !panMode ? 'auto' : 'none';
+}
+if (typeof ResizeObserver !== 'undefined') new ResizeObserver(updateViewport).observe(stage);
 
 async function connect(mode = "view") {
   if (mode === 'human') return connectInput();
@@ -28,6 +65,8 @@ async function connect(mode = "view") {
     const response = await fetch("/browser/status");
     if (!response.ok || response.redirected) throw new Error("暂时无法打开画面，请重新登录后再试");
     const state = await response.json();
+    if (state.width && state.height && state.scaleFactor) displaySize = state;
+    updateViewport();
     start.disabled = !state.ready || (controlState?.available && controlState.mode !== "ai");
     if (!state.ready) throw new Error("画面还没准备好，请稍后重新连接");
     const url = new URL(mode === "human" ? "/browser/control/ws" : "/browser/ws", location.href);
@@ -39,14 +78,16 @@ async function connect(mode = "view") {
     client.scaleViewport = true;
     client.qualityLevel = 9;
     client.compressionLevel = 2;
-    client.addEventListener("connect", () => { if (rfb === client) { retries = 0; status.textContent = mode === "human" ? "已连接 · 现在由你操作" : "已连接 · 你正在观看"; } });
-    client.addEventListener("disconnect", () => { if (rfb === client) { disconnectInput(); allowHumanConnection = false; connectionMode = 'view'; status.textContent = '画面断开，正在恢复…'; retryView(); } });
+    client.addEventListener("connect", () => { if (rfb === client) { viewConnected = true; retries = 0; status.textContent = '画面实时同步'; publishState(); } });
+    client.addEventListener("disconnect", () => { if (rfb === client) { viewConnected = false; disconnectInput(); allowHumanConnection = false; connectionMode = 'view'; status.textContent = '画面断开，正在恢复…'; publishState(); retryView(); } });
     client.addEventListener("securityfailure", () => { if (rfb === client) status.textContent = "无法验证访问权限，请重新登录"; });
   } catch (err) { status.textContent = err.message; retryView(); }
 }
 function disconnectInput() {
+  inputConnected = false;
   inputScreen.style.pointerEvents = 'none';
   const old = inputRfb; inputRfb = null; old?.disconnect();
+  keyboardInput.blur(); updateViewport();
 }
 async function connectInput() {
   if (inputRfb || !rfb || !controller) return;
@@ -58,8 +99,8 @@ async function connectInput() {
   const client = new RFB(inputScreen, url.href); inputRfb = client;
   client.viewOnly = false; client.scaleViewport = rfb.scaleViewport; client.focusOnClick = true;
   client.qualityLevel = 9; client.compressionLevel = 2;
-  client.addEventListener('connect', () => { if (inputRfb === client) { inputScreen.style.pointerEvents = 'auto'; status.textContent = '已连接 · 现在由你操作'; } });
-  client.addEventListener('disconnect', () => { if (inputRfb === client) { inputRfb = null; inputScreen.style.pointerEvents = 'none'; allowHumanConnection = false; connectionMode = 'view'; if (!busy) status.textContent = '操作连接断开，画面仍可观看。请继续操作或交还。'; } });
+  client.addEventListener('connect', () => { if (inputRfb === client) { inputConnected = true; panMode = false; updateViewport(); status.textContent = '点按操作网页 · 输入时可打开键盘'; } });
+  client.addEventListener('disconnect', () => { if (inputRfb === client) { inputRfb = null; inputConnected = false; updateViewport(); keyboardInput.blur(); allowHumanConnection = false; connectionMode = 'view'; if (!busy) status.textContent = '操作连接断开，画面仍可观看。请继续操作或交还。'; } });
   client.addEventListener('securityfailure', () => { if (inputRfb === client) { disconnectInput(); allowHumanConnection = false; connectionMode = 'view'; status.textContent = '无法连接操作，请继续操作或交还。'; } });
 }
 function retryView() {
@@ -79,12 +120,23 @@ start.addEventListener("click", async () => {
   finally { start.disabled = false; }
 });
 document.querySelector("#reconnect").addEventListener("click", () => { retries = 0; connect('view'); });
-document.querySelector('#zoom').addEventListener('click', (event) => {
-  if (!rfb) return;
-  rfb.scaleViewport = !rfb.scaleViewport;
-  if (inputRfb) inputRfb.scaleViewport = rfb.scaleViewport;
-  event.target.textContent = rfb.scaleViewport ? '放大画面' : '适合屏幕';
-});
+document.querySelector('#zoom').addEventListener('click', () => { zoomed = !zoomed; panMode = zoomed; updateViewport(); });
+pan.addEventListener('click', () => { panMode = !panMode; updateViewport(); });
+let composing = false;
+const sentinel = '\u200b';
+const canType = () => inputConnected && inputRfb && controlState?.mode === 'human' && controlState.mine;
+keyboard.addEventListener('click', () => { if (!canType()) return; panMode = false; updateViewport(); keyboardInput.value = sentinel; keyboardInput.focus(); keyboardInput.setSelectionRange(1, 1); });
+function sendTypedText() {
+  if (composing || !canType()) return;
+  const value = keyboardInput.value;
+  if (!value) inputRfb.sendKey(0xff08);
+  else for (const char of value.replace(/^\u200b/, '')) { const point = char.codePointAt(0); inputRfb.sendKey(point <= 255 ? point : 0x01000000 | point); }
+  keyboardInput.value = sentinel;
+}
+keyboardInput.addEventListener('compositionstart', () => { composing = true; });
+keyboardInput.addEventListener('compositionend', () => { composing = false; sendTypedText(); });
+keyboardInput.addEventListener('input', sendTypedText);
+keyboardInput.addEventListener('keydown', event => { if (!composing && canType() && ['Enter', 'Tab'].includes(event.key)) { event.preventDefault(); inputRfb.sendKey(event.key === 'Enter' ? 0xff0d : 0xff09); } });
 async function refreshControl() {
   const requestId = ++statusRequestId;
   try {
@@ -97,7 +149,7 @@ async function refreshControl() {
     takeover.hidden = !available || !(mode === "ai" || (mode === "paused" && mine));
     takeover.textContent = mode === "paused" ? "继续操作" : "我来操作";
     release.hidden = !available || !mine || mode === "ai";
-    release.textContent = controlState.browser?.needsContinuation === false ? '交还 AI' : '让助手继续';
+    release.textContent = embedded ? '完成并返回聊天' : controlState.browser?.needsContinuation === false ? '交还 AI' : '让助手继续';
     release.disabled = busy || inFlight > 0;
     recover.hidden = !available || mode !== "paused" || mine;
     recover.disabled = busy || inFlight > 0;
@@ -116,16 +168,19 @@ async function refreshControl() {
       if (desired === 'human') await connectInput();
       else { disconnectInput(); connectionMode = 'view'; status.textContent = '已连接 · 你正在观看'; }
     }
+    publishState();
   } catch (err) {
     if (requestId !== statusRequestId) return;
     controlState = { available: false };
     controlStatus.textContent = err.message;
     if (connectionMode === "human") { disconnectInput(); connectionMode = 'view'; }
     takeover.hidden = release.hidden = recover.hidden = true;
+    publishState();
   }
 }
 async function controlAction(action) {
-  busy = true; takeover.disabled = release.disabled = recover.disabled = true;
+  if (busy) return;
+  busy = true; publishState(); takeover.disabled = release.disabled = recover.disabled = true;
   try {
     const response = await fetch(`/browser/control/${action}`, { method: "POST", headers: controlHeaders() });
     const result = await response.json();
@@ -135,18 +190,22 @@ async function controlAction(action) {
     if (action === "release" || action === "recover") { allowHumanConnection = false; controller = null; sessionStorage.removeItem("browser-use-controller"); }
     if (action === 'release' || action === 'recover') {
       status.textContent = result.resumedWaitingTasks > 0 ? '控制已交还，助手正在继续任务' : '控制已交还';
-      const message = JSON.stringify({ schemaVersion: 1, type: 'browser.control.returned', epoch: result.epoch, browser: result.browser, resumedWaitingTasks: result.resumedWaitingTasks });
+      const message = { schemaVersion: 1, type: 'browser.control.returned', epoch: result.epoch, browser: result.browser, resumedWaitingTasks: result.resumedWaitingTasks };
       if (result.schemaVersion === 1) {
-        window.ReactNativeWebView?.postMessage(message);
-        window.webkit?.messageHandlers?.browserUse?.postMessage(message);
+        postNative(message);
       }
     }
-  } catch { status.textContent = "暂时没能切换操作人，请稍后重试"; }
+  } catch { status.textContent = "暂时没能切换操作人，请稍后重试"; postNative({ schemaVersion: 1, type: 'browser.viewer.error' }); }
   finally { busy = false; await refreshControl(); }
 }
 takeover.addEventListener("click", () => controlAction(controlState?.mode === "paused" ? "resume" : "request"));
 release.addEventListener("click", () => controlAction("release"));
 recover.addEventListener("click", () => controlAction("recover"));
+window.addEventListener('oneclaw:browser-command', event => {
+  if (event.detail?.action !== 'release') return;
+  if (!busy && controlState?.mine && controlState.inFlight === 0) void controlAction('release');
+  else postNative({ schemaVersion: 1, type: 'browser.viewer.error' });
+});
 await connect();
 await refreshControl();
 setInterval(() => { if (!busy && !document.hidden) refreshControl(); }, 2000);

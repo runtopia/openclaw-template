@@ -2,8 +2,9 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>助手的工作画面</title><link rel="stylesheet" href="/browser/viewer.css"></head>
 <body>
-<header><strong>工作画面</strong><span id="status" role="status">正在连接画面…</span><button id="start" disabled>打开浏览器</button><button id="takeover" hidden>我来操作</button><button id="release" hidden>让助手继续</button><button id="recover" hidden>让助手继续</button><button id="reconnect">重新连接画面</button><button id="zoom">放大画面</button></header>
-<p id="control-status" role="status">正在查看谁在操作…</p><p>需要登录或亲自操作时，你可以接手。完成后点击“让助手继续”；如果助手已经结束回复，在聊天里发“继续”即可。</p>
-<main id="stage" aria-label="助手正在使用的浏览器"><div id="screen"></div><div id="input-screen"></div></main>
+<header><div class="heading"><strong>工作画面</strong><span id="control-status" role="status">正在确认操作状态…</span></div><button id="start" disabled>打开浏览器</button><button id="takeover" class="primary" hidden>我来操作</button><button id="release" class="primary" hidden>让助手继续</button><button id="recover" class="primary" hidden>恢复 AI</button><details><summary aria-label="更多画面选项">•••</summary><div class="menu"><button id="reconnect">重新连接画面</button><p>先观看，需要时再接手。交还控制后，助手才能继续操作。</p></div></details></header>
+<main id="stage" aria-label="助手正在使用的浏览器"><div id="surface"><div id="screen"></div><div id="input-screen"></div></div></main>
+<footer><span id="status" role="status">正在连接画面…</span><button id="zoom" aria-pressed="false">放大阅读</button><button id="pan" hidden aria-pressed="false">移动画面</button><button id="keyboard" hidden title="先点网页输入框，再打开键盘">键盘</button></footer>
+<textarea id="keyboard-input" aria-label="输入到远端网页" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
 <script type="module" src="/browser/viewer.js"></script>
 </body></html>

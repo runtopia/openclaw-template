@@ -52,6 +52,10 @@ export function applyBrowserDefaults(cfg, env = process.env) {
   cfg.browser.extraArgs = [...headedArgs(cfg.browser.extraArgs ?? ["--start-maximized", "--noerrdialogs"]), `--force-device-scale-factor=${browserDisplaySettings(env).scaleFactor}`];
   if (env.ONECLAW_BROWSER_NO_SANDBOX === "1") cfg.browser.noSandbox = true;
   if (env.ONECLAW_BROWSER_NO_SANDBOX === "0") cfg.browser.noSandbox = false;
+  if (env.ONECLAW_BROWSER_ALLOW_FAKE_IP === "1" || env.ONECLAW_BROWSER_ALLOW_FAKE_IP === "0") {
+    cfg.browser.ssrfPolicy ??= {};
+    cfg.browser.ssrfPolicy.allowRfc2544BenchmarkRange = env.ONECLAW_BROWSER_ALLOW_FAKE_IP === "1";
+  }
   // The pinned host may include browser in core rather than a standalone plugin.
   // A root browser block is sufficient; do not invent plugin registrations.
   cfg.tools ??= {};

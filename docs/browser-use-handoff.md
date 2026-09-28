@@ -1,5 +1,13 @@
 # Browser Use：人工接管与交还（develop 测试版）
 
+## 跨端优化源码（2026-09-28）
+
+当前开发改动增加浏览器/CDP 健康状态、观看断线重连、移动布局和画面缩放，以及 `schemaVersion:1` 的 `browser.control.returned` 原生回调。回调仅在明确交还成功后发送，携带原任务 session/run/target/epoch 和已恢复等待数量，不含凭据。后台或人工断线仍保持暂停，不自动重连可写输入。
+
+配套 Browser Use 插件增加显式任务 target、操作前聚焦、标签级 snapshot 门槛和可取消的 `browser_use action=wait`。等待中的任务在交还后继续；已结束任务由新版 Web/iOS/Android 通过原有聊天发送链路提交一次续跑，须核对原会话及取消状态。
+
+该段描述的是待集成源码，锁定 tgz 尚未替换。遵循下文更新测试包流程，先合入并同步插件 develop，再在 Template develop 执行更新脚本；仅构建当前 Template 源码不会自动包含新版插件。
+
 基于已提交的只读浏览器版本。独立 OpenClaw 插件 `oneclaw-browser-use` 位于 oneclaw-plugins 仓库；不修改 OpenClaw 核心，也不依赖聊天客户端或 OneClaw Channel 在线。
 
 ## 开启方式

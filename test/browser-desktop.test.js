@@ -71,6 +71,20 @@ async function fixture(t, options = {}) {
   return { base: `http://127.0.0.1:${server.address().port}`, starts: () => starts };
 }
 
+test('internal focus refuses browser cookies and validates lease identity before dispatch', async (t) => {
+  const calls = [];
+  const { base } = await fixture(t, {
+    requireInstanceSecretApi: (req, res, next) => req.headers.authorization === 'Bearer instance' ? next() : res.sendStatus(401),
+    handoff: { focusTask: async (fields) => { calls.push(fields); return { ok: true }; }, close() {} },
+  });
+  const fields = { runId: 'run1', toolCallId: 'tool1', sessionKey: 'session1', targetId: 'tab1' };
+  const post = (headers, body = fields) => fetch(`${base}/browser/internal/focus`, { method: 'POST', headers: { cookie: 'valid=1', 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  assert.equal((await post({})).status, 401);
+  assert.equal((await post({ Authorization: 'Bearer instance' }, { ...fields, targetId: '../invalid' })).status, 409);
+  assert.equal((await post({ Authorization: 'Bearer instance' })).status, 200);
+  assert.deepEqual(calls, [fields]);
+});
+
 test("preview requires configured credentials and login; start requires same origin", async (t) => {
   const { base, starts } = await fixture(t);
   const unauth = await fetch(`${base}/browser/`, { redirect: "manual" });
@@ -163,6 +177,7 @@ test("Browser Use resolves the locked package path instead of the prototype moun
   const env = { ONECLAW_BROWSER_ENABLED: "1", ONECLAW_BROWSER_USE_ENABLED: "1" };
   applyBrowserDefaults(cfg, env);
   assert.equal(cfg.plugins.entries["oneclaw-browser-use"].enabled, true);
+  assert.equal(cfg.plugins.entries["oneclaw-browser-use"].hooks.allowConversationAccess, true);
   assert.deepEqual(cfg.plugins.load.paths, ["/opt/openclaw-plugins/node_modules/@oneclaw-plugins/browser-use"]);
   assert.equal(applyBrowserDefaults(cfg, env), false);
   const custom = {};

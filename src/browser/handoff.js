@@ -2,12 +2,13 @@ import crypto from "node:crypto";
 
 // Wrapper owns input transport; the Gateway plugin owns AI admission. Never
 // release AI until writable transport has exited. All transitions serialize.
-export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs = 45000 }) {
+export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs = 45000, idleMs = 1800000 }) {
   let owner = null, lastSeen = 0, client = null, stopped = false, chain = Promise.resolve();
   const liveStarts = new Set();
   const pendingEnds = new Map();
   let sawConnection = false;
   let browserHealth = { browserReady: false, browserStatusAvailable: false }, healthAt = -Infinity;
+  let lastViewedAt = now(), lastIdleCheck = -Infinity;
   const serial = (fn) => {
     const result = chain.then(fn);
     chain = result.catch(() => {});
@@ -71,6 +72,7 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
   }
   function status(token) {
     return serial(async () => {
+      lastViewedAt = now();
       if (matches(token)) lastSeen = now();
       const state = await inspect();
       if (now() - healthAt >= 5000) {
@@ -132,6 +134,48 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
       await serial(() => settleStarts()).catch(() => {});
     }
   }
+  function focusTask(fields) {
+    return serial(async () => {
+      await command('validate-focus', null, fields);
+      let frame;
+      try {
+        frame = await rpc.rpcGateway('browser.request', {
+          method: 'POST', path: '/tabs/focus', query: { profile: 'openclaw' }, body: { targetId: fields.targetId }, timeoutMs: 5000,
+        }, 6000);
+      } catch (error) {
+        error.browserOperationUncertain = true;
+        throw error;
+      }
+      if (!frame.ok) {
+        const error = new Error('Task tab focus failed');
+        error.browserOperationUncertain = frame.error?.code === 'disconnected' || /timeout|timed out/i.test(frame.error?.message || '');
+        throw error;
+      }
+      return { ok: true };
+    });
+  }
+  async function suspendIdleBrowser() {
+    if (idleMs <= 0 || now() - lastViewedAt < idleMs || now() - lastIdleCheck < 30000) return;
+    lastIdleCheck = now();
+    const { candidate } = await command('idle-candidate');
+    if (!candidate || !Array.isArray(candidate.targetIds)) return;
+    const tabs = await rpc.rpcGateway('browser.request', { method: 'GET', path: '/tabs', query: { profile: 'openclaw' } }, 5000);
+    if (!tabs.ok || tabs.payload?.running !== true || !Array.isArray(tabs.payload?.tabs)) return;
+    // Never close manually created or unrecognized pages. A fresh browser's
+    // default empty page has no task data; all meaningful pages must be owned.
+    if (tabs.payload.tabs.some(tab => tab.type === 'page' && !candidate.targetIds.includes(tab.targetId)
+        && !['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/'].includes(tab.url))) return;
+    const callId = crypto.randomUUID();
+    await command('idle-begin', null, { callId, revision: candidate.revision });
+    let uncertain = false, stoppedBrowser = false;
+    try {
+      const frame = await rpc.rpcGateway('browser.request', { method: 'POST', path: '/stop', query: { profile: 'openclaw' }, timeoutMs: 5000 }, 6000);
+      uncertain = !frame.ok && (frame.error?.code === 'disconnected' || /timeout|timed out/i.test(frame.error?.message || ''));
+      stoppedBrowser = frame.ok === true;
+    } catch { uncertain = true; }
+    await command(uncertain ? 'idle-uncertain' : 'idle-end', null, { callId, stopped: stoppedBrowser });
+    if (stoppedBrowser) { browserHealth = { browserReady: false, browserStatusAvailable: true }; healthAt = now(); }
+  }
   function recover() {
     return serial(async () => {
       const state = await command("status");
@@ -164,7 +208,7 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
       try {
         await settleStarts(connected && !sawConnection);
         sawConnection = connected;
-        if (!owner) return;
+        if (!owner) { await suspendIdleBrowser(); return; }
         if (now() - lastSeen > heartbeatMs || !rpc.isGatewayConnected()) {
           await pause();
           return;
@@ -180,5 +224,5 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
   const timer = setInterval(tick, 1000);
   timer.unref();
   function close() { stopped = true; clearInterval(timer); return serial(pause).catch(() => {}); }
-  return { status, request, release, resume, recover, runNative, connect, close, tick };
+  return { status, request, release, resume, recover, runNative, focusTask, connect, close, tick };
 }

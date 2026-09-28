@@ -2,6 +2,8 @@ import RFB from "/browser/novnc/core/rfb.js";
 const status = document.querySelector("#status");
 const start = document.querySelector("#start");
 let rfb;
+let inputRfb;
+const inputScreen = document.querySelector('#input-screen');
 let controller = sessionStorage.getItem("browser-use-controller");
 let controlState = null;
 let connectionMode = "view";
@@ -16,6 +18,8 @@ const controlStatus = document.querySelector("#control-status");
 const controlHeaders = () => controller ? { "X-Browser-Controller": controller } : {};
 
 async function connect(mode = "view") {
+  if (mode === 'human') return connectInput();
+  disconnectInput();
   clearTimeout(reconnectTimer);
   connectionMode = mode;
   const previous = rfb; rfb = null; previous?.disconnect();
@@ -34,12 +38,29 @@ async function connect(mode = "view") {
     client.viewOnly = mode !== "human";
     client.scaleViewport = true;
     client.addEventListener("connect", () => { if (rfb === client) { retries = 0; status.textContent = mode === "human" ? "已连接 · 现在由你操作" : "已连接 · 你正在观看"; } });
-    client.addEventListener("disconnect", () => { if (rfb === client) { status.textContent = mode === 'human' ? '操作连接断开，请明确继续操作或交还' : '画面断开，正在恢复…'; retryView(); } });
+    client.addEventListener("disconnect", () => { if (rfb === client) { disconnectInput(); allowHumanConnection = false; connectionMode = 'view'; status.textContent = '画面断开，正在恢复…'; retryView(); } });
     client.addEventListener("securityfailure", () => { if (rfb === client) status.textContent = "无法验证访问权限，请重新登录"; });
   } catch (err) { status.textContent = err.message; retryView(); }
 }
+function disconnectInput() {
+  inputScreen.style.pointerEvents = 'none';
+  const old = inputRfb; inputRfb = null; old?.disconnect();
+}
+async function connectInput() {
+  if (inputRfb || !rfb || !controller) return;
+  connectionMode = 'human';
+  status.textContent = '正在建立操作连接 · 画面持续观看';
+  const url = new URL('/browser/control/ws', location.href);
+  url.searchParams.set('controller', controller);
+  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const client = new RFB(inputScreen, url.href); inputRfb = client;
+  client.viewOnly = false; client.scaleViewport = rfb.scaleViewport; client.focusOnClick = true;
+  client.addEventListener('connect', () => { if (inputRfb === client) { inputScreen.style.pointerEvents = 'auto'; status.textContent = '已连接 · 现在由你操作'; } });
+  client.addEventListener('disconnect', () => { if (inputRfb === client) { inputRfb = null; inputScreen.style.pointerEvents = 'none'; allowHumanConnection = false; connectionMode = 'view'; if (!busy) status.textContent = '操作连接断开，画面仍可观看。请继续操作或交还。'; } });
+  client.addEventListener('securityfailure', () => { if (inputRfb === client) { disconnectInput(); allowHumanConnection = false; connectionMode = 'view'; status.textContent = '无法连接操作，请继续操作或交还。'; } });
+}
 function retryView() {
-  if (connectionMode === 'human' || document.hidden || retries >= 5) return;
+  if (document.hidden || retries >= 5) return;
   clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => connect('view'), Math.min(1000 * 2 ** retries++, 15000));
 }
@@ -58,6 +79,7 @@ document.querySelector("#reconnect").addEventListener("click", () => { retries =
 document.querySelector('#zoom').addEventListener('click', (event) => {
   if (!rfb) return;
   rfb.scaleViewport = !rfb.scaleViewport;
+  if (inputRfb) inputRfb.scaleViewport = rfb.scaleViewport;
   event.target.textContent = rfb.scaleViewport ? '放大画面' : '适合屏幕';
 });
 async function refreshControl() {
@@ -80,18 +102,21 @@ async function refreshControl() {
     if (available) start.disabled = mode !== "ai";
     start.hidden = controlState.browserReady === true;
     controlStatus.textContent = !available ? "你正在观看助手操作" : {
-      ai: controlState.browserStatusAvailable === false ? '正在确认浏览器状态' : controlState.browserReady === false ? '浏览器尚未打开' : controlState.browser?.phase === 'failed' ? '上一步网页操作失败' : `你正在观看 · ${controlState.browser?.displayUrl || '助手的浏览器'}`,
+      ai: controlState.browserStatusAvailable === false ? '正在确认浏览器状态' : controlState.browser?.phase === 'expired' ? '上次任务画面已释放 · 让助手重新打开页面' : controlState.browserReady === false ? '浏览器尚未打开' : controlState.browser?.phase === 'failed' ? '上一步网页操作失败' : `${controlState.browser?.phase === 'completed' ? '任务已完成' : '你正在观看'} · ${controlState.browser?.displayUrl || '助手的浏览器'}`,
       waiting: "等助手完成当前操作，你就可以接手",
       human: mine ? "现在由你操作 · 助手正在等你" : "另一个页面正在操作 · 你仍可观看",
-      paused: inFlight > 0 ? "操作已暂停 · 正在确认上一步是否完成，暂时不能接手或交还" : "操作已暂停 · 你可以继续操作，或让助手继续",
+      paused: inFlight > 0 ? "AI 控制已暂停 · 有未确认结束的操作，需要维护恢复" : "操作已暂停 · 你可以继续操作，或让助手继续",
     }[mode];
     const desired = available && mode === "human" && mine && allowHumanConnection ? "human" : "view";
-    if (connectionMode !== desired) await connect(desired);
+    if (connectionMode !== desired) {
+      if (desired === 'human') await connectInput();
+      else { disconnectInput(); connectionMode = 'view'; status.textContent = '已连接 · 你正在观看'; }
+    }
   } catch (err) {
     if (requestId !== statusRequestId) return;
     controlState = { available: false };
     controlStatus.textContent = err.message;
-    if (connectionMode === "human") await connect("view");
+    if (connectionMode === "human") { disconnectInput(); connectionMode = 'view'; }
     takeover.hidden = release.hidden = recover.hidden = true;
   }
 }
@@ -120,9 +145,9 @@ release.addEventListener("click", () => controlAction("release"));
 recover.addEventListener("click", () => controlAction("recover"));
 await connect();
 await refreshControl();
-setInterval(() => { if (!busy) refreshControl(); }, 2000);
+setInterval(() => { if (!busy && !document.hidden) refreshControl(); }, 2000);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { allowHumanConnection = false; clearTimeout(reconnectTimer); const old = rfb; rfb = null; old?.disconnect(); }
+  if (document.hidden) { allowHumanConnection = false; disconnectInput(); clearTimeout(reconnectTimer); const old = rfb; rfb = null; old?.disconnect(); }
   else { retries = 0; connectionMode = 'view'; connect('view'); refreshControl(); }
 });
-window.addEventListener('pagehide', () => { clearTimeout(reconnectTimer); const old = rfb; rfb = null; old?.disconnect(); });
+window.addEventListener('pagehide', () => { disconnectInput(); clearTimeout(reconnectTimer); const old = rfb; rfb = null; old?.disconnect(); });

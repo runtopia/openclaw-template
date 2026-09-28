@@ -94,6 +94,7 @@ async function refreshControl() {
     takeover.hidden = !available || !(mode === "ai" || (mode === "paused" && mine));
     takeover.textContent = mode === "paused" ? "继续操作" : "我来操作";
     release.hidden = !available || !mine || mode === "ai";
+    release.textContent = controlState.browser?.needsContinuation === false ? '交还 AI' : '让助手继续';
     release.disabled = busy || inFlight > 0;
     recover.hidden = !available || mode !== "paused" || mine;
     recover.disabled = busy || inFlight > 0;

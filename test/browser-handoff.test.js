@@ -31,8 +31,18 @@ function setup(t) {
   };
   const h = createBrowserHandoff({ rpc, desktop, now: () => time, heartbeatMs: 100 });
   t.after(() => h.close());
-  return { h, history, desktop, reconnect: () => { connected = true; }, browserReady: () => { browserReady = true; }, paused: () => { mode = 'paused'; }, seedStart: (id) => { starts.add(id); inFlight++; }, setActive: (n) => { inFlight = n; }, disconnect: () => { connected = false; }, expire: () => { time = 101; } };
+  return { h, history, desktop, advance: (ms) => { time += ms; }, reconnect: () => { connected = true; }, browserReady: () => { browserReady = true; }, paused: () => { mode = 'paused'; }, seedStart: (id) => { starts.add(id); inFlight++; }, setActive: (n) => { inFlight = n; }, disconnect: () => { connected = false; }, expire: () => { time = 101; } };
 }
+
+test('desktop availability and browser CDP readiness are separate cached states', async (t) => {
+  const x = setup(t);
+  assert.equal(x.desktop.status().ready, true);
+  assert.equal((await x.h.status()).browserReady, false);
+  x.browserReady(); x.advance(5001);
+  const state = await x.h.status();
+  assert.equal(state.browserStatusAvailable, true);
+  assert.equal(state.browserReady, true);
+});
 
 test('waits for drain before enabling input, refuses second controller, revokes before handback', async (t) => {
   const x = setup(t);

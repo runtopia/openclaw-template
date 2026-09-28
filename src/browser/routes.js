@@ -45,7 +45,7 @@ export function browserFrameAncestors(webUrl) {
 }
 
 export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser, handoff,
-  frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
+  requireInstanceSecretApi, capturePreview, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
   const router = express.Router();
   const controlWs = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const proxy = httpProxy.createProxyServer({ target, ws: true });
@@ -67,6 +67,23 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     next();
   });
   router.get("/status", (_req, res) => res.json(desktop.status()));
+  router.post('/internal/preview', (req, res, next) => {
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi || !capturePreview) return res.sendStatus(403);
+    requireInstanceSecretApi(req, res, next);
+  }, express.json({ limit: '1kb' }), async (req, res) => {
+    try { res.json(await capturePreview(req.body?.targetId)); }
+    catch { res.status(503).json({ errorCode: 'browser_preview_unavailable' }); }
+  });
+  router.post('/internal/focus', (req, res, next) => {
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi) return res.sendStatus(403);
+    requireInstanceSecretApi(req, res, next);
+  }, express.json({ limit: '4kb' }), async (req, res) => {
+    const fields = req.body || {};
+    if (!handoff || typeof fields.targetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(fields.targetId)
+        || ['runId', 'toolCallId', 'sessionKey'].some(key => typeof fields[key] !== 'string' || !fields[key] || fields[key].length > 512)) return res.status(409).json({ errorCode: 'browser_control_conflict' });
+    try { res.json(await handoff.focusTask(fields)); }
+    catch (error) { res.status(409).json({ errorCode: error.browserOperationUncertain ? 'browser_operation_uncertain' : 'browser_focus_failed' }); }
+  });
   const controllerToken = (req) => req.headers["x-browser-controller"];
   router.get("/control/status", async (req, res) => {
     if (!handoff) return res.json({ available: false });
@@ -79,7 +96,7 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     const action = req.params.action;
     if (!["request", "release", "resume", "recover"].includes(action)) return res.sendStatus(404);
     try { res.json(await handoff[action](controllerToken(req))); }
-    catch (err) { res.status(409).json({ error: err.message }); }
+    catch (err) { res.status(409).json({ error: err.message, errorCode: 'browser_control_conflict' }); }
   });
   let starting;
   router.post("/start", async (req, res) => {

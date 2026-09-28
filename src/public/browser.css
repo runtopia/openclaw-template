@@ -1,8 +1,40 @@
 :root { color-scheme: dark; font: 14px system-ui, sans-serif; background: #151719; color: #e8e9eb; }
 body { margin: 0; display: flex; flex-direction: column; height: 100dvh; }
-header { display: flex; align-items: center; gap: 16px; padding: 14px 20px; border-bottom: 1px solid #34383d; flex-wrap: wrap; }
-header strong { font-size: 17px; } #status { flex: 1; }
-button { font: inherit; padding: 8px 14px; border: 1px solid #60666d; border-radius: 6px; color: inherit; background: #292d32; cursor: pointer; }
+header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #34383d; flex-shrink: 0; }
+.heading { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+header strong { font-size: 14px; } #control-status { color: #aeb6bf; font-size: 11px; line-height: 1.4; }
+#status { flex: 1; min-width: 0; font-size: 11px; color: #aeb6bf; }
+button { font: inherit; min-height: 40px; padding: 8px 12px; border: 1px solid #454951; border-radius: 10px; color: inherit; background: #24272c; cursor: pointer; }
+.primary { background: #6d4aff; border-color: #9276ff; color: white; font-weight: 600; }
 button:disabled { opacity: .5; cursor: default; } button:focus-visible { outline: 2px solid #95c9ff; outline-offset: 2px; }
 p { margin: 10px 20px; color: #aeb6bf; font-size: 12px; }
-#screen { flex: 1; min-height: 0; overflow: hidden; background: #080909; }
+#stage { position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; background: #080909; touch-action: pan-x pan-y; }
+#surface { position: relative; width: 100%; height: 100%; }
+#screen, #input-screen { position: absolute; inset: 0; overflow: hidden; }
+#screen { pointer-events: none; }
+#input-screen { opacity: 0; pointer-events: none; }
+footer { display: flex; flex-shrink: 0; align-items: center; gap: 6px; padding: 8px 12px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid #34383d; }
+footer button { font-size: 12px; }
+button[aria-pressed="true"] { border-color: #a58bff; color: #cabbff; background: #372853; }
+details { position: relative; }
+summary { cursor: pointer; list-style: none; padding: 10px; border-radius: 10px; }
+summary::-webkit-details-marker { display: none; }
+.menu { position: absolute; z-index: 5; top: 42px; right: 0; width: 220px; border: 1px solid #454951; border-radius: 12px; background: #202328; padding: 10px; box-shadow: 0 8px 30px #0008; }
+.menu button { width: 100%; }
+.menu p { margin: 10px 2px 2px; line-height: 1.6; }
+#keyboard-input { position: fixed; bottom: 0; left: 0; width: 1px; height: 1px; opacity: 0; font-size: 16px; border: 0; padding: 0; }
+@media (max-width: 600px) {
+  header { gap: 8px; padding: 10px 12px; }
+  header strong { font-size: 14px; }
+  #status { font-size: 10px; }
+  button { padding: 8px 10px; min-height: 40px; font-size: 12px; }
+  p { margin: 8px 12px; }
+}
+@media (max-height: 480px) { header { padding-block: 4px; } footer { padding-block: 4px; } header strong { display: none; } }
+
+/* Native navigation already names the screen; keep only control status here. */
+.embedded header strong { display: none; }
+.embedded header { padding-block: 6px; }
+.embedded footer { padding-block: 6px; }
+.embedded #status { display: none; }
+.embedded footer button { flex: 1; min-height: 44px; }

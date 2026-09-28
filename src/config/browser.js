@@ -2,6 +2,18 @@ import path from "node:path";
 
 export const BROWSER_DISPLAY = ":99";
 
+export function browserDisplaySettings(env = process.env) {
+  const integer = (raw, fallback, min, max) => {
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
+  };
+  return {
+    width: integer(env.ONECLAW_BROWSER_WIDTH, 2560, 1280, 3840),
+    height: integer(env.ONECLAW_BROWSER_HEIGHT, 1600, 800, 2160),
+    scaleFactor: integer(env.ONECLAW_BROWSER_SCALE_FACTOR, 2, 1, 2),
+  };
+}
+
 export function browserGatewayEnv(env = process.env) {
   return env.ONECLAW_BROWSER_ENABLED === "1"
     ? { DISPLAY: BROWSER_DISPLAY, OPENCLAW_BROWSER_HEADLESS: "0" } : {};
@@ -16,6 +28,8 @@ function headedArgs(args) {
     if (/^--headless(?:=|$)/i.test(arg) || /^--ozone-platform=headless$/i.test(arg)) continue;
     if (/^--display=/i.test(arg)) continue;
     if (arg === "--display") { i++; continue; }
+    if (/^--force-device-scale-factor=/.test(arg)) continue;
+    if (arg === "--force-device-scale-factor") { i++; continue; }
     if (arg === "--ozone-platform" && args[i + 1] === "headless") { i++; continue; }
     result.push(arg);
   }
@@ -35,8 +49,13 @@ export function applyBrowserDefaults(cfg, env = process.env) {
   cfg.browser.headless = false;
   if (cfg.browser.profiles?.openclaw) cfg.browser.profiles.openclaw.headless = false;
   cfg.browser.attachOnly ??= false;
-  cfg.browser.extraArgs = headedArgs(cfg.browser.extraArgs ?? ["--start-maximized", "--noerrdialogs"]);
+  cfg.browser.extraArgs = [...headedArgs(cfg.browser.extraArgs ?? ["--start-maximized", "--noerrdialogs"]), `--force-device-scale-factor=${browserDisplaySettings(env).scaleFactor}`];
   if (env.ONECLAW_BROWSER_NO_SANDBOX === "1") cfg.browser.noSandbox = true;
+  if (env.ONECLAW_BROWSER_NO_SANDBOX === "0") cfg.browser.noSandbox = false;
+  cfg.browser.ssrfPolicy ??= {};
+  if (env.ONECLAW_BROWSER_ALLOW_FAKE_IP === "0") cfg.browser.ssrfPolicy.allowRfc2544BenchmarkRange = false;
+  else if (env.ONECLAW_BROWSER_ALLOW_FAKE_IP === "1") cfg.browser.ssrfPolicy.allowRfc2544BenchmarkRange = true;
+  else cfg.browser.ssrfPolicy.allowRfc2544BenchmarkRange ??= true;
   // The pinned host may include browser in core rather than a standalone plugin.
   // A root browser block is sufficient; do not invent plugin registrations.
   cfg.tools ??= {};
@@ -52,6 +71,8 @@ export function applyBrowserDefaults(cfg, env = process.env) {
     cfg.plugins ??= {};
     cfg.plugins.entries ??= {};
     cfg.plugins.entries["oneclaw-browser-use"] ??= { enabled: true };
+    cfg.plugins.entries["oneclaw-browser-use"].hooks ??= {};
+    cfg.plugins.entries["oneclaw-browser-use"].hooks.allowConversationAccess ??= true;
     cfg.plugins.load ??= {};
     cfg.plugins.load.paths ??= [];
     const pluginDir = env.ONECLAW_BROWSER_USE_PLUGIN_DIR || path.join(env.OPENCLAW_PLUGINS_DIR || "/opt/openclaw-plugins", "node_modules/@oneclaw-plugins/browser-use");

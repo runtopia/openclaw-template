@@ -1,4 +1,4 @@
-import { BROWSER_DISPLAY, browserGatewayEnv } from "../config/browser.js";
+import { BROWSER_DISPLAY, browserGatewayEnv, browserDisplaySettings } from "../config/browser.js";
 import { spawn, execFile } from "node:child_process";
 import net from "node:net";
 import fs from "node:fs";
@@ -45,6 +45,8 @@ export function tcpReady(port) {
 export function createBrowserDesktop({ env = process.env, log = console.log } = {}) {
   const enabled = env.ONECLAW_BROWSER_ENABLED === "1";
   const display = BROWSER_DISPLAY;
+  const displaySettings = browserDisplaySettings(env);
+  const resolution = `${displaySettings.width}x${displaySettings.height}`;
   const children = new Set();
   let stopped = false, ready = false, pending, retryTimer, failures = 0, error = null;
   let controlChild = null;
@@ -97,7 +99,7 @@ export function createBrowserDesktop({ env = process.env, log = console.log } = 
       if (cleanupStaleBrowserLocks(env.OPENCLAW_STATE_DIR || path.join(os.homedir(), ".openclaw"))) {
         log("[browser-desktop] removed stale Chromium singleton links from previous container");
       }
-      launch("Xvfb", [display, "-screen", "0", "1440x900x24", "-nolisten", "tcp", "-noreset"]);
+      launch("Xvfb", [display, "-screen", "0", `${resolution}x24`, "-nolisten", "tcp", "-noreset"]);
       await waitFor(() => new Promise((resolve) => {
         execFile("xdpyinfo", ["-display", display], { env, timeout: 500 }, (err) => resolve(!err));
       }));
@@ -108,7 +110,7 @@ export function createBrowserDesktop({ env = process.env, log = console.log } = 
       launch("/usr/bin/websockify", ["127.0.0.1:6080", "127.0.0.1:5900"]);
       await waitFor(() => tcpReady(6080));
       ready = true;
-      log("[browser-desktop] ready (read-only, 1440x900)");
+      log(`[browser-desktop] ready (read-only, ${resolution}, scale ${displaySettings.scaleFactor})`);
     })().catch((err) => { failed(err.message); throw err; });
     return pending;
   }
@@ -148,5 +150,5 @@ export function createBrowserDesktop({ env = process.env, log = console.log } = 
     controlChild?.kill("SIGTERM");
     killChildren();
   }
-  return { start, stop, startControl, stopControl, controlReady: () => Boolean(controlChild), status: () => ({ enabled, ready, error, viewOnly: true }) };
+  return { start, stop, startControl, stopControl, controlReady: () => Boolean(controlChild), status: () => ({ enabled, ready, error, viewOnly: true, ...displaySettings }) };
 }

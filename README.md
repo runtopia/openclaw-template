@@ -297,3 +297,20 @@ Need help? [Request support on Railway Station](https://station.railway.com/all-
 The standard image includes a headed Chromium browser controlled by OpenClaw, with a read-only live desktop at `/browser/`. Sign in through `/login`, then start the browser from the preview page or the native browser tool. Browser profiles persist on the existing `/data` volume. See [browser runtime setup and boundaries](docs/browser-runtime.md) for configuration, authentication, and verification.
 
 Browser Use takeover is also enabled by default in the current develop image. Its plugin ships as a SHA-256-addressed local archive in the locked plugin bundle; no npm publication or source-directory mount is required. See [handoff setup and boundaries](docs/browser-use-handoff.md).
+
+### Test networks with fake-IP DNS
+
+`ONECLAW_BROWSER_ALLOW_FAKE_IP=1` opts the headed browser into OpenClaw's
+`browser.ssrfPolicy.allowRfc2544BenchmarkRange` for a trusted proxy mapping
+`198.18.0.0/15`. It defaults to enabled for headed browsers; use `0` or an explicit false
+configuration value to revoke it. Other private-network access remains blocked.
+Do not enable `dangerouslyAllowPrivateNetwork` to work around fake-IP DNS.
+Loopback, RFC1918, link-local/metadata and IPv6 ULA restrictions stay in place.
+The pinned OpenClaw browser configuration is patched to pass this narrow option
+to its existing SSRF implementation. Production networks resolving real public
+addresses do not need this opt-in.
+
+The embedded browser viewer offers a keyboard after taking control, committed
+IME/Unicode input, fit/readable zoom, and a pan mode. Its versioned native bridge
+reports control ownership and supports returning control before closing. It never
+sends launch tickets or controller credentials to native message handlers.

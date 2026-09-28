@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { once } from "node:events";
-import { applyBrowserDefaults } from "../src/config/browser.js";
+import { applyBrowserDefaults, browserDisplaySettings } from "../src/config/browser.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,7 +27,7 @@ test("headed browser defaults enforce visible mode while preserving unrelated ch
   assert.equal(applyBrowserDefaults(cfg, {}), false);
   assert.equal(applyBrowserDefaults(cfg, { ONECLAW_BROWSER_ENABLED: "1" }), true);
   assert.equal(cfg.browser.headless, false);
-  assert.deepEqual(cfg.browser.extraArgs, ["--start-maximized", "--noerrdialogs"]);
+  assert.deepEqual(cfg.browser.extraArgs, ["--start-maximized", "--noerrdialogs", "--force-device-scale-factor=2"]);
   assert.deepEqual(cfg.tools.alsoAllow, ["other", "browser"]);
   assert.equal(applyBrowserDefaults(cfg, { ONECLAW_BROWSER_ENABLED: "1" }), false);
   cfg.browser.headless = true;
@@ -51,6 +51,20 @@ test("disabled desktop does not start processes or modify DISPLAY", async () => 
   desktop.stop();
 });
 
+test('desktop pixels and browser scale remain aligned across configuration updates', () => {
+  assert.deepEqual(browserDisplaySettings({}), { width: 2560, height: 1600, scaleFactor: 2 });
+  assert.deepEqual(browserDisplaySettings({ ONECLAW_BROWSER_WIDTH: '99999', ONECLAW_BROWSER_HEIGHT: 'bad', ONECLAW_BROWSER_SCALE_FACTOR: '0' }), { width: 2560, height: 1600, scaleFactor: 2 });
+  const env = { ONECLAW_BROWSER_ENABLED: '1', ONECLAW_BROWSER_WIDTH: '1920', ONECLAW_BROWSER_HEIGHT: '1080', ONECLAW_BROWSER_SCALE_FACTOR: '1', ONECLAW_BROWSER_NO_SANDBOX: '0' };
+  const cfg = { browser: { noSandbox: true, extraArgs: ['--lang=zh-CN', '--force-device-scale-factor=2'] } };
+  applyBrowserDefaults(cfg, env);
+  assert.deepEqual(cfg.browser.extraArgs, ['--lang=zh-CN', '--force-device-scale-factor=1']);
+  assert.equal(cfg.browser.noSandbox, false);
+  assert.equal(applyBrowserDefaults(cfg, env), false);
+  const desktop = createBrowserDesktop({ env });
+  assert.deepEqual([desktop.status().width, desktop.status().height, desktop.status().scaleFactor], [1920, 1080, 1]);
+  desktop.stop();
+});
+
 async function fixture(t, options = {}) {
   const app = express();
   let starts = 0;
@@ -70,6 +84,20 @@ async function fixture(t, options = {}) {
   t.after(() => { preview.close(); server.closeAllConnections(); server.close(); });
   return { base: `http://127.0.0.1:${server.address().port}`, starts: () => starts };
 }
+
+test('internal focus refuses browser cookies and validates lease identity before dispatch', async (t) => {
+  const calls = [];
+  const { base } = await fixture(t, {
+    requireInstanceSecretApi: (req, res, next) => req.headers.authorization === 'Bearer instance' ? next() : res.sendStatus(401),
+    handoff: { focusTask: async (fields) => { calls.push(fields); return { ok: true }; }, close() {} },
+  });
+  const fields = { runId: 'run1', toolCallId: 'tool1', sessionKey: 'session1', targetId: 'tab1' };
+  const post = (headers, body = fields) => fetch(`${base}/browser/internal/focus`, { method: 'POST', headers: { cookie: 'valid=1', 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  assert.equal((await post({})).status, 401);
+  assert.equal((await post({ Authorization: 'Bearer instance' }, { ...fields, targetId: '../invalid' })).status, 409);
+  assert.equal((await post({ Authorization: 'Bearer instance' })).status, 200);
+  assert.deepEqual(calls, [fields]);
+});
 
 test("preview requires configured credentials and login; start requires same origin", async (t) => {
   const { base, starts } = await fixture(t);
@@ -163,6 +191,7 @@ test("Browser Use resolves the locked package path instead of the prototype moun
   const env = { ONECLAW_BROWSER_ENABLED: "1", ONECLAW_BROWSER_USE_ENABLED: "1" };
   applyBrowserDefaults(cfg, env);
   assert.equal(cfg.plugins.entries["oneclaw-browser-use"].enabled, true);
+  assert.equal(cfg.plugins.entries["oneclaw-browser-use"].hooks.allowConversationAccess, true);
   assert.deepEqual(cfg.plugins.load.paths, ["/opt/openclaw-plugins/node_modules/@oneclaw-plugins/browser-use"]);
   assert.equal(applyBrowserDefaults(cfg, env), false);
   const custom = {};
@@ -177,7 +206,7 @@ test("headed mode removes launch overrides from persisted config", () => {
   applyBrowserDefaults(cfg, env);
   assert.equal(cfg.browser.headless, false);
   assert.equal(cfg.browser.profiles.openclaw.headless, false);
-  assert.deepEqual(cfg.browser.extraArgs, ["--lang=zh-CN"]);
+  assert.deepEqual(cfg.browser.extraArgs, ["--lang=zh-CN", "--force-device-scale-factor=2"]);
   assert.equal(cfg.browser.profiles.openclaw.cdpPort, 18800);
   assert.equal(cfg.browser.profiles.work.headless, true);
   assert.equal(applyBrowserDefaults(cfg, env), false);

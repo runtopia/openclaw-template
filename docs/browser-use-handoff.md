@@ -6,7 +6,7 @@
 
 配套 Browser Use 插件增加显式任务 target、操作前聚焦、标签级 snapshot 门槛和可取消的 `browser_use action=wait`。等待中的任务在交还后继续；已结束任务由新版 Web/iOS/Android 通过原有聊天发送链路提交一次续跑，须核对原会话及取消状态。
 
-该段描述的是待集成源码，锁定 tgz 尚未替换。遵循下文更新测试包流程，先合入并同步插件 develop，再在 Template develop 执行更新脚本；仅构建当前 Template 源码不会自动包含新版插件。
+配套插件已合入并同步 develop（`dba48b5`）。Template develop 使用官方更新脚本生成并锁定新版归档 `oneclaw-plugins-browser-use-0.1.0-6350d6e2f988ab5a2dc017b8537b035bb6c352429c86fdfe533abe845cbabc49.tgz`，包内文件与源码一致，插件测试及锁文件验证通过。后续改动继续遵循下文更新测试包流程，不能只改插件源码而遗漏镜像归档。
 
 基于已提交的只读浏览器版本。独立 OpenClaw 插件 `oneclaw-browser-use` 位于 oneclaw-plugins 仓库；不修改 OpenClaw 核心，也不依赖聊天客户端或 OneClaw Channel 在线。
 

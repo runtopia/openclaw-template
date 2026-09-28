@@ -6,7 +6,7 @@ test('native viewer emits a versioned handback only after release and omits cred
   const elements = new Map();
   const events = new Map();
   const element = (selector) => {
-    if (!elements.has(selector)) elements.set(selector, { addEventListener: (name, fn) => events.set(`${selector}:${name}`, fn) });
+    if (!elements.has(selector)) elements.set(selector, { style: {}, addEventListener: (name, fn) => events.set(`${selector}:${name}`, fn) });
     return elements.get(selector);
   };
   const document = { hidden: false, querySelector: element, addEventListener() {} };

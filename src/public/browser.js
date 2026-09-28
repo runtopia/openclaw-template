@@ -37,6 +37,8 @@ async function connect(mode = "view") {
     rfb = client;
     client.viewOnly = mode !== "human";
     client.scaleViewport = true;
+    client.qualityLevel = 9;
+    client.compressionLevel = 2;
     client.addEventListener("connect", () => { if (rfb === client) { retries = 0; status.textContent = mode === "human" ? "已连接 · 现在由你操作" : "已连接 · 你正在观看"; } });
     client.addEventListener("disconnect", () => { if (rfb === client) { disconnectInput(); allowHumanConnection = false; connectionMode = 'view'; status.textContent = '画面断开，正在恢复…'; retryView(); } });
     client.addEventListener("securityfailure", () => { if (rfb === client) status.textContent = "无法验证访问权限，请重新登录"; });
@@ -55,6 +57,7 @@ async function connectInput() {
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const client = new RFB(inputScreen, url.href); inputRfb = client;
   client.viewOnly = false; client.scaleViewport = rfb.scaleViewport; client.focusOnClick = true;
+  client.qualityLevel = 9; client.compressionLevel = 2;
   client.addEventListener('connect', () => { if (inputRfb === client) { inputScreen.style.pointerEvents = 'auto'; status.textContent = '已连接 · 现在由你操作'; } });
   client.addEventListener('disconnect', () => { if (inputRfb === client) { inputRfb = null; inputScreen.style.pointerEvents = 'none'; allowHumanConnection = false; connectionMode = 'view'; if (!busy) status.textContent = '操作连接断开，画面仍可观看。请继续操作或交还。'; } });
   client.addEventListener('securityfailure', () => { if (inputRfb === client) { disconnectInput(); allowHumanConnection = false; connectionMode = 'view'; status.textContent = '无法连接操作，请继续操作或交还。'; } });

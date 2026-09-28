@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { once } from "node:events";
-import { applyBrowserDefaults } from "../src/config/browser.js";
+import { applyBrowserDefaults, browserDisplaySettings } from "../src/config/browser.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,7 +27,7 @@ test("headed browser defaults enforce visible mode while preserving unrelated ch
   assert.equal(applyBrowserDefaults(cfg, {}), false);
   assert.equal(applyBrowserDefaults(cfg, { ONECLAW_BROWSER_ENABLED: "1" }), true);
   assert.equal(cfg.browser.headless, false);
-  assert.deepEqual(cfg.browser.extraArgs, ["--start-maximized", "--noerrdialogs"]);
+  assert.deepEqual(cfg.browser.extraArgs, ["--start-maximized", "--noerrdialogs", "--force-device-scale-factor=2"]);
   assert.deepEqual(cfg.tools.alsoAllow, ["other", "browser"]);
   assert.equal(applyBrowserDefaults(cfg, { ONECLAW_BROWSER_ENABLED: "1" }), false);
   cfg.browser.headless = true;
@@ -48,6 +48,20 @@ test("disabled desktop does not start processes or modify DISPLAY", async () => 
   await desktop.start();
   assert.equal(desktop.status().enabled, false);
   assert.equal(env.DISPLAY, ":7");
+  desktop.stop();
+});
+
+test('desktop pixels and browser scale remain aligned across configuration updates', () => {
+  assert.deepEqual(browserDisplaySettings({}), { width: 2560, height: 1600, scaleFactor: 2 });
+  assert.deepEqual(browserDisplaySettings({ ONECLAW_BROWSER_WIDTH: '99999', ONECLAW_BROWSER_HEIGHT: 'bad', ONECLAW_BROWSER_SCALE_FACTOR: '0' }), { width: 2560, height: 1600, scaleFactor: 2 });
+  const env = { ONECLAW_BROWSER_ENABLED: '1', ONECLAW_BROWSER_WIDTH: '1920', ONECLAW_BROWSER_HEIGHT: '1080', ONECLAW_BROWSER_SCALE_FACTOR: '1', ONECLAW_BROWSER_NO_SANDBOX: '0' };
+  const cfg = { browser: { noSandbox: true, extraArgs: ['--lang=zh-CN', '--force-device-scale-factor=2'] } };
+  applyBrowserDefaults(cfg, env);
+  assert.deepEqual(cfg.browser.extraArgs, ['--lang=zh-CN', '--force-device-scale-factor=1']);
+  assert.equal(cfg.browser.noSandbox, false);
+  assert.equal(applyBrowserDefaults(cfg, env), false);
+  const desktop = createBrowserDesktop({ env });
+  assert.deepEqual([desktop.status().width, desktop.status().height, desktop.status().scaleFactor], [1920, 1080, 1]);
   desktop.stop();
 });
 
@@ -192,7 +206,7 @@ test("headed mode removes launch overrides from persisted config", () => {
   applyBrowserDefaults(cfg, env);
   assert.equal(cfg.browser.headless, false);
   assert.equal(cfg.browser.profiles.openclaw.headless, false);
-  assert.deepEqual(cfg.browser.extraArgs, ["--lang=zh-CN"]);
+  assert.deepEqual(cfg.browser.extraArgs, ["--lang=zh-CN", "--force-device-scale-factor=2"]);
   assert.equal(cfg.browser.profiles.openclaw.cdpPort, 18800);
   assert.equal(cfg.browser.profiles.work.headless, true);
   assert.equal(applyBrowserDefaults(cfg, env), false);

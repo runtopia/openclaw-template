@@ -79,7 +79,7 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     const action = req.params.action;
     if (!["request", "release", "resume", "recover"].includes(action)) return res.sendStatus(404);
     try { res.json(await handoff[action](controllerToken(req))); }
-    catch (err) { res.status(409).json({ error: err.message }); }
+    catch (err) { res.status(409).json({ error: err.message, errorCode: 'browser_control_conflict' }); }
   });
   let starting;
   router.post("/start", async (req, res) => {

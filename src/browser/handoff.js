@@ -7,6 +7,7 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
   const liveStarts = new Set();
   const pendingEnds = new Map();
   let sawConnection = false;
+  let browserHealth = { browserReady: false, browserStatusAvailable: false }, healthAt = -Infinity;
   const serial = (fn) => {
     const result = chain.then(fn);
     chain = result.catch(() => {});
@@ -71,7 +72,15 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
   function status(token) {
     return serial(async () => {
       if (matches(token)) lastSeen = now();
-      return { ...await inspect(), mine: matches(token) };
+      const state = await inspect();
+      if (now() - healthAt >= 5000) {
+        healthAt = now();
+        try {
+          const frame = await rpc.rpcGateway('browser.request', { method: 'GET', path: '/', query: { profile: 'openclaw' } }, 3000);
+          browserHealth = { browserStatusAvailable: frame.ok === true, browserReady: frame.ok === true && frame.payload?.running === true && frame.payload?.cdpReady === true };
+        } catch { browserHealth = { browserReady: false, browserStatusAvailable: false }; }
+      }
+      return { ...state, ...browserHealth, mine: matches(token) };
     });
   }
   function request() {

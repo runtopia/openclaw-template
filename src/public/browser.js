@@ -7,6 +7,8 @@ let controlState = null;
 let connectionMode = "view";
 let busy = false;
 let statusRequestId = 0;
+let reconnectTimer, retries = 0;
+let allowHumanConnection = false;
 const takeover = document.querySelector("#takeover");
 const release = document.querySelector("#release");
 const recover = document.querySelector("#recover");
@@ -14,8 +16,9 @@ const controlStatus = document.querySelector("#control-status");
 const controlHeaders = () => controller ? { "X-Browser-Controller": controller } : {};
 
 async function connect(mode = "view") {
+  clearTimeout(reconnectTimer);
   connectionMode = mode;
-  if (rfb) { rfb.disconnect(); rfb = null; }
+  const previous = rfb; rfb = null; previous?.disconnect();
   status.textContent = "正在连接画面…";
   try {
     const response = await fetch("/browser/status");
@@ -30,10 +33,15 @@ async function connect(mode = "view") {
     rfb = client;
     client.viewOnly = mode !== "human";
     client.scaleViewport = true;
-    client.addEventListener("connect", () => { if (rfb === client) status.textContent = mode === "human" ? "已连接 · 现在由你操作" : "已连接 · 你正在观看"; });
-    client.addEventListener("disconnect", () => { if (rfb === client) status.textContent = "画面断开了，请重新连接"; });
+    client.addEventListener("connect", () => { if (rfb === client) { retries = 0; status.textContent = mode === "human" ? "已连接 · 现在由你操作" : "已连接 · 你正在观看"; } });
+    client.addEventListener("disconnect", () => { if (rfb === client) { status.textContent = mode === 'human' ? '操作连接断开，请明确继续操作或交还' : '画面断开，正在恢复…'; retryView(); } });
     client.addEventListener("securityfailure", () => { if (rfb === client) status.textContent = "无法验证访问权限，请重新登录"; });
-  } catch (err) { status.textContent = err.message; }
+  } catch (err) { status.textContent = err.message; retryView(); }
+}
+function retryView() {
+  if (connectionMode === 'human' || document.hidden || retries >= 5) return;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => connect('view'), Math.min(1000 * 2 ** retries++, 15000));
 }
 start.addEventListener("click", async () => {
   start.disabled = true;
@@ -46,7 +54,12 @@ start.addEventListener("click", async () => {
   } catch { status.textContent = "暂时没能打开浏览器，请稍后重试"; }
   finally { start.disabled = false; }
 });
-document.querySelector("#reconnect").addEventListener("click", () => connect(controlState?.mode === "human" && controlState?.mine ? "human" : "view"));
+document.querySelector("#reconnect").addEventListener("click", () => { retries = 0; connect('view'); });
+document.querySelector('#zoom').addEventListener('click', (event) => {
+  if (!rfb) return;
+  rfb.scaleViewport = !rfb.scaleViewport;
+  event.target.textContent = rfb.scaleViewport ? '放大画面' : '适合屏幕';
+});
 async function refreshControl() {
   const requestId = ++statusRequestId;
   try {
@@ -63,14 +76,16 @@ async function refreshControl() {
     recover.hidden = !available || mode !== "paused" || mine;
     recover.disabled = busy || inFlight > 0;
     takeover.disabled = busy || (mode === "paused" && inFlight > 0);
+    document.querySelector('#reconnect').disabled = busy || (mode === 'human' && mine);
     if (available) start.disabled = mode !== "ai";
+    start.hidden = controlState.browserReady === true;
     controlStatus.textContent = !available ? "你正在观看助手操作" : {
-      ai: "助手可以操作 · 你正在观看",
+      ai: controlState.browserStatusAvailable === false ? '正在确认浏览器状态' : controlState.browserReady === false ? '浏览器尚未打开' : controlState.browser?.phase === 'failed' ? '上一步网页操作失败' : `你正在观看 · ${controlState.browser?.displayUrl || '助手的浏览器'}`,
       waiting: "等助手完成当前操作，你就可以接手",
       human: mine ? "现在由你操作 · 助手正在等你" : "另一个页面正在操作 · 你仍可观看",
       paused: inFlight > 0 ? "操作已暂停 · 正在确认上一步是否完成，暂时不能接手或交还" : "操作已暂停 · 你可以继续操作，或让助手继续",
     }[mode];
-    const desired = available && mode === "human" && mine ? "human" : "view";
+    const desired = available && mode === "human" && mine && allowHumanConnection ? "human" : "view";
     if (connectionMode !== desired) await connect(desired);
   } catch (err) {
     if (requestId !== statusRequestId) return;
@@ -86,8 +101,17 @@ async function controlAction(action) {
     const response = await fetch(`/browser/control/${action}`, { method: "POST", headers: controlHeaders() });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "暂时没能切换操作人");
+    if (action === 'request' || action === 'resume') allowHumanConnection = true;
     if (result.token) { controller = result.token; sessionStorage.setItem("browser-use-controller", controller); }
-    if (action === "release" || action === "recover") { controller = null; sessionStorage.removeItem("browser-use-controller"); }
+    if (action === "release" || action === "recover") { allowHumanConnection = false; controller = null; sessionStorage.removeItem("browser-use-controller"); }
+    if (action === 'release' || action === 'recover') {
+      status.textContent = result.resumedWaitingTasks > 0 ? '控制已交还，助手正在继续任务' : '控制已交还';
+      const message = JSON.stringify({ schemaVersion: 1, type: 'browser.control.returned', epoch: result.epoch, browser: result.browser, resumedWaitingTasks: result.resumedWaitingTasks });
+      if (result.schemaVersion === 1) {
+        window.ReactNativeWebView?.postMessage(message);
+        window.webkit?.messageHandlers?.browserUse?.postMessage(message);
+      }
+    }
   } catch { status.textContent = "暂时没能切换操作人，请稍后重试"; }
   finally { busy = false; await refreshControl(); }
 }
@@ -97,3 +121,8 @@ recover.addEventListener("click", () => controlAction("recover"));
 await connect();
 await refreshControl();
 setInterval(() => { if (!busy) refreshControl(); }, 2000);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { allowHumanConnection = false; clearTimeout(reconnectTimer); const old = rfb; rfb = null; old?.disconnect(); }
+  else { retries = 0; connectionMode = 'view'; connect('view'); refreshControl(); }
+});
+window.addEventListener('pagehide', () => { clearTimeout(reconnectTimer); const old = rfb; rfb = null; old?.disconnect(); });

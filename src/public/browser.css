@@ -6,3 +6,10 @@ button { font: inherit; padding: 8px 14px; border: 1px solid #60666d; border-rad
 button:disabled { opacity: .5; cursor: default; } button:focus-visible { outline: 2px solid #95c9ff; outline-offset: 2px; }
 p { margin: 10px 20px; color: #aeb6bf; font-size: 12px; }
 #screen { flex: 1; min-height: 0; overflow: hidden; background: #080909; }
+@media (max-width: 600px) {
+  header { gap: 8px; padding: 10px 12px; }
+  header strong { font-size: 14px; }
+  #status { min-width: 160px; font-size: 12px; }
+  button { padding: 8px 10px; min-height: 40px; font-size: 12px; }
+  p { margin: 8px 12px; }
+}

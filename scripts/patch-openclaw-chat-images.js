@@ -7,12 +7,13 @@ const mediaPromiseAfter = "const inlineMediaFieldsPromise = parsedImages.length 
 const applyFieldsBefore = "applyChatSendManagedMediaFields(ctx, await pluginBoundMediaFieldsPromise);";
 const applyFieldsAfter = [
   "const inlineMediaFields = await inlineMediaFieldsPromise;",
-  "\t\t\t\tapplyChatSendManagedMediaFields(ctx, inlineMediaFields);",
-  "\t\t\t\tconst persistedInlineImageCount = Array.isArray(inlineMediaFields.MediaTypes) ? inlineMediaFields.MediaTypes.filter((type) => type.startsWith(\"image/\")).length : 0;",
-  "\t\t\t\tconst inlineImagesUseManagedPaths = parsedImages.length > 0 && persistedInlineImageCount >= parsedImages.length;",
+  "\t\t\t\tif (explicitOriginTargetsPlugin || !(replyOptionImages?.length > 0)) applyChatSendManagedMediaFields(ctx, inlineMediaFields);",
 ].join("\n");
+const legacyApplyFields = "const inlineMediaFields = await inlineMediaFieldsPromise;\n\t\t\t\tapplyChatSendManagedMediaFields(ctx, inlineMediaFields);";
 const replyImagesBefore = "images: replyOptionImages,";
-const replyImagesAfter = "images: inlineImagesUseManagedPaths ? void 0 : replyOptionImages,";
+const legacyReplyImages = "images: inlineImagesUseManagedPaths ? void 0 : replyOptionImages,";
+const legacyImageCount = "\t\t\t\tconst persistedInlineImageCount = Array.isArray(inlineMediaFields.MediaTypes) ? inlineMediaFields.MediaTypes.filter((type) => type.startsWith(\"image/\")).length : 0;\n";
+const legacyManagedFlag = "\t\t\t\tconst inlineImagesUseManagedPaths = parsedImages.length > 0 && persistedInlineImageCount >= parsedImages.length;\n";
 
 function replaceRequired(source, before, after, label) {
   if (source.includes(before)) return source.replace(before, after);
@@ -21,9 +22,18 @@ function replaceRequired(source, before, after, label) {
 }
 
 export function patchOpenClawChatSource(source) {
-  let patched = replaceRequired(source, mediaPromiseBefore, mediaPromiseAfter, "managed media promise");
+  // Persisted paths are useful metadata, but their existence does not prove
+  // media-understanding read them or described the correct image. Keep the
+  // original current-turn bytes available to the reply runner as its fallback.
+  // Legacy Web turns use those bytes directly: don't also hydrate the same
+  // managed paths as duplicate native images. Plugin-bound turns still need
+  // their managed paths, since the plugin owns its own dispatch pipeline.
+  const migrated = source.replace(legacyReplyImages, replyImagesBefore)
+    .replace(legacyImageCount, "").replace(legacyManagedFlag, "")
+    .replace(legacyApplyFields, applyFieldsAfter);
+  let patched = replaceRequired(migrated, mediaPromiseBefore, mediaPromiseAfter, "managed media promise");
   patched = replaceRequired(patched, applyFieldsBefore, applyFieldsAfter, "current-turn media fields");
-  patched = replaceRequired(patched, replyImagesBefore, replyImagesAfter, "inline image fallback");
+  if (!patched.includes(replyImagesBefore)) throw new Error("OpenClaw chat image patch target not found: inline image fallback");
   return patched;
 }
 

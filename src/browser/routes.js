@@ -4,6 +4,8 @@ import net from "node:net";
 import { WebSocketServer } from "ws";
 import { fileURLToPath } from "node:url";
 
+function validSelector(value) { return typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f]/.test(value); }
+
 export async function startManagedBrowser(gatewayRpc) {
   await gatewayRpc.waitUntilConnected(5000);
   let frame;
@@ -45,7 +47,7 @@ export function browserFrameAncestors(webUrl) {
 }
 
 export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser, handoff,
-  requireInstanceSecretApi, capturePreview, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
+  requireInstanceSecretApi, taskBroker, capturePreview, readTaskPreview, viewNativeTask, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
   const router = express.Router();
   const controlWs = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const proxy = httpProxy.createProxyServer({ target, ws: true });
@@ -67,21 +69,54 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     next();
   });
   router.get("/status", (_req, res) => res.json(desktop.status()));
+  router.get('/task-preview', async (req, res) => {
+    const sessionId = req.query.sessionId, after = Number(req.query.after), toolCallId = req.query.toolCallId, browserTaskId = req.query.browserTaskId;
+    if (!readTaskPreview || typeof sessionId !== 'string' || !/^session_[A-Za-z0-9_-]{1,128}$/.test(sessionId) || (!validSelector(toolCallId) && !validSelector(browserTaskId))) return res.sendStatus(400);
+    try { res.json(await readTaskPreview(sessionId, after, { toolCallId, browserTaskId, viewer: req.query.viewer === '1' })); }
+    catch { res.status(503).json({ errorCode: 'browser_preview_unavailable' }); }
+  });
+  router.post(['/task-view', '/task-resolve'], express.json({ limit: '1kb' }), async (req, res) => {
+    if (!sameOrigin(req)) return res.sendStatus(403);
+    if ((req.body?.toolCallId !== undefined && !validSelector(req.body.toolCallId)) || (req.body?.browserTaskId !== undefined && !validSelector(req.body.browserTaskId))) return res.sendStatus(400);
+    if (!viewNativeTask || !/^session_[A-Za-z0-9_-]{1,128}$/.test(req.body?.sessionId || '')) return res.sendStatus(400);
+    try { res.json(await viewNativeTask(req.body.sessionId, { toolCallId: req.body.toolCallId, browserTaskId: req.body.browserTaskId }, req.path.endsWith('task-resolve') ? 'status' : 'view')); }
+    catch { res.status(409).json({ errorCode: 'browser_task_view_unavailable' }); }
+  });
+  router.post('/task-manage', express.json({ limit: '2kb' }), async (req, res) => {
+    if (!sameOrigin(req)) return res.sendStatus(403);
+    const { sessionId, browserTaskId, action } = req.body || {};
+    if (!viewNativeTask || !/^session_[A-Za-z0-9_-]{1,128}$/.test(sessionId || '') || !validSelector(browserTaskId) || !['retain', 'unretain', 'close-task', 'status'].includes(action)) return res.sendStatus(400);
+    try { res.json(await viewNativeTask(sessionId, { browserTaskId }, action)); }
+    catch { res.status(409).json({ errorCode: 'browser_task_action_unavailable' }); }
+  });
+  router.post('/task-control', express.json({ limit: '8kb' }), async (req, res) => {
+    if (!sameOrigin(req) || !taskBroker) return res.sendStatus(403);
+    if (!/^session_[A-Za-z0-9_-]{1,128}$/.test(req.body?.sessionId || '')) return res.sendStatus(400);
+    try { res.json(await taskBroker({ ...req.body, sessionKey: undefined, nativeSessionId: req.body.sessionId })); }
+    catch { res.status(409).json({ errorCode:'browser_task_control_unavailable' }); }
+  });
+  router.post('/internal/task', (req, res, next) => {
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi || !taskBroker) return res.sendStatus(403);
+    requireInstanceSecretApi(req, res, next);
+  }, express.json({ limit: '8kb' }), async (req, res) => {
+    try { res.json(await taskBroker(req.body)); }
+    catch { res.status(409).json({ errorCode:'browser_task_control_unavailable' }); }
+  });
   router.post('/internal/preview', (req, res, next) => {
     if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi || !capturePreview) return res.sendStatus(403);
     requireInstanceSecretApi(req, res, next);
   }, express.json({ limit: '1kb' }), async (req, res) => {
-    try { res.json(await capturePreview(req.body?.targetId)); }
+    try { res.json(await capturePreview(req.body?.targetId, { viewer: req.body?.viewer === true })); }
     catch { res.status(503).json({ errorCode: 'browser_preview_unavailable' }); }
   });
-  router.post('/internal/focus', (req, res, next) => {
+  router.post(['/internal/focus', '/internal/close'], (req, res, next) => {
     if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi) return res.sendStatus(403);
     requireInstanceSecretApi(req, res, next);
   }, express.json({ limit: '4kb' }), async (req, res) => {
     const fields = req.body || {};
     if (!handoff || typeof fields.targetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(fields.targetId)
         || ['runId', 'toolCallId', 'sessionKey'].some(key => typeof fields[key] !== 'string' || !fields[key] || fields[key].length > 512)) return res.status(409).json({ errorCode: 'browser_control_conflict' });
-    try { res.json(await handoff.focusTask(fields)); }
+    try { res.json(await handoff.focusTask(fields, req.path.endsWith('/close') ? 'close' : 'focus')); }
     catch (error) { res.status(409).json({ errorCode: error.browserOperationUncertain ? 'browser_operation_uncertain' : 'browser_focus_failed' }); }
   });
   const controllerToken = (req) => req.headers["x-browser-controller"];
@@ -95,7 +130,7 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     if (!handoff) return res.status(503).json({ error: "Browser Use plugin is not enabled" });
     const action = req.params.action;
     if (!["request", "release", "resume", "recover"].includes(action)) return res.sendStatus(404);
-    try { res.json(await handoff[action](controllerToken(req))); }
+    try { res.json(await handoff[action](controllerToken(req), { browserTaskId: req.query.browserTaskId })); }
     catch (err) { res.status(409).json({ error: err.message, errorCode: 'browser_control_conflict' }); }
   });
   let starting;
@@ -113,6 +148,7 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     res.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors ${browserFrameAncestors(frameOrigin)}`);
     res.sendFile(fileURLToPath(new URL("../public/browser.html", import.meta.url)));
   });
+  router.get("/task-viewer.js", (_req, res) => res.sendFile(fileURLToPath(new URL("../public/browser-task.js", import.meta.url))));
   router.get("/viewer.js", (_req, res) => res.sendFile(fileURLToPath(new URL("../public/browser.js", import.meta.url))));
   router.get("/viewer.css", (_req, res) => res.sendFile(fileURLToPath(new URL("../public/browser.css", import.meta.url))));
   router.use("/novnc", express.static(novncDir, { index: false, dotfiles: "deny" }));

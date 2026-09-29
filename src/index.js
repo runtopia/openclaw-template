@@ -1,3 +1,4 @@
+import { createTaskBroker } from './browser/task-broker.js';
 // index.js — Wrapper 主进程（镜像中由 tini 启动并回收孤儿子进程）
 //
 // 职责：
@@ -431,6 +432,17 @@ const browserHandoff = process.env.ONECLAW_BROWSER_USE_ENABLED === "1"
   ? createBrowserHandoff({ rpc: gatewayRpc, desktop: browserDesktop,
     idleMs: (() => { const ms = Number(process.env.ONECLAW_BROWSER_IDLE_MS ?? 1800000); return ms === 0 || (Number.isFinite(ms) && ms >= 60000 && ms <= 86400000) ? ms : 1800000; })() }) : null;
 const browserPreview = createBrowserRoutes({
+  taskBroker: createTaskBroker({ rpc: gatewayRpc }),
+  viewNativeTask: async (nativeSessionId, selector = {}, action = 'view') => {
+    const frame = await gatewayRpc.rpcGateway('browseruse.control', { action, nativeSessionId, ...selector }, action === 'close-task' ? 60000 : 12000);
+    if (!frame.ok) throw new Error('Browser task view unavailable');
+    return frame.payload;
+  },
+  readTaskPreview: async (nativeSessionId, after, selector = {}) => {
+    const frame = await gatewayRpc.rpcGateway('browseruse.preview', { nativeSessionId, after, ...selector }, 6000);
+    if (!frame.ok) throw new Error('Browser preview unavailable');
+    return frame.payload;
+  },
   capturePreview: createTaskPreview({ rpc: gatewayRpc }),
   handoff: browserHandoff,
   desktop: browserDesktop,

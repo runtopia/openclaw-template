@@ -7,7 +7,7 @@ function localEndpoint(value, protocol) {
 }
 
 export function createTaskPreview({ rpc, fetchImpl = fetch, WebSocketImpl = WebSocket }) {
-  return async (targetId) => {
+  return async (targetId, { viewer = false } = {}) => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(targetId)) throw new Error('Invalid browser target');
     const status = await rpc.rpcGateway('browser.request', { method: 'GET', path: '/', query: { profile: 'openclaw' } }, 3000);
     if (!status.ok || status.payload?.running !== true || status.payload?.cdpReady !== true) throw new Error('Browser is not ready');
@@ -19,11 +19,11 @@ export function createTaskPreview({ rpc, fetchImpl = fetch, WebSocketImpl = WebS
     if (!tab) throw new Error('Browser target closed');
     const socketUrl = localEndpoint(tab.webSocketDebuggerUrl, ['ws:']);
     if (socketUrl.hostname !== endpoint.hostname || socketUrl.port !== endpoint.port || socketUrl.pathname !== `/devtools/page/${targetId}`) throw new Error('Invalid browser target endpoint');
-    return capture(socketUrl.href, WebSocketImpl);
+    return capture(socketUrl.href, WebSocketImpl, viewer);
   };
 }
 
-function capture(url, WebSocketImpl) {
+function capture(url, WebSocketImpl, viewer) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocketImpl(url, { maxPayload: 1024 * 1024 });
     let settled = false;
@@ -43,8 +43,8 @@ function capture(url, WebSocketImpl) {
           const viewport = message.result?.cssVisualViewport;
           if (message.error || !viewport || !Number.isFinite(viewport.clientWidth) || !Number.isFinite(viewport.clientHeight) || viewport.clientWidth <= 0 || viewport.clientHeight <= 0) throw new Error('Preview viewport unavailable');
           socket.send(JSON.stringify({ id: 2, method: 'Page.captureScreenshot', params: {
-            format: 'jpeg', quality: 65, captureBeyondViewport: false, fromSurface: true,
-            clip: { x: viewport.pageX, y: viewport.pageY, width: viewport.clientWidth, height: viewport.clientHeight, scale: Math.min(1, 720 / viewport.clientWidth) },
+            format: 'jpeg', quality: viewer ? 85 : 65, captureBeyondViewport: false, fromSurface: true,
+            clip: { x: viewport.pageX, y: viewport.pageY, width: viewport.clientWidth, height: viewport.clientHeight, scale: Math.min(1, (viewer ? 1440 : 720) / viewport.clientWidth) },
           } }));
         } else if (message.id === 2) {
           const image = message.result?.data;

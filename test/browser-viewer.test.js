@@ -27,9 +27,9 @@ test('native viewer emits a versioned handback only after release and omits cred
     }
     return state;
   } });
-  const source = fs.readFileSync(new URL('../src/public/browser.js', import.meta.url), 'utf8').replace(/^import RFB[^\n]+\n/, '');
+  const source = fs.readFileSync(new URL('../src/public/browser.js', import.meta.url), 'utf8').replace(/^import [^\n]+\n/gm, '');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  await new AsyncFunction('RFB', 'document', 'sessionStorage', 'window', 'fetch', 'setInterval', 'setTimeout', 'clearTimeout', 'location', source)(RFB, document, sessionStorage, { addEventListener() {}, ReactNativeWebView: { postMessage: (message) => sent.push(JSON.parse(message)) } }, fetch, () => 1, () => 1, () => {}, { href: 'https://runtime.example/browser/', protocol: 'https:' });
+  await new AsyncFunction('createScopedTaskViewer', 'RFB', 'document', 'sessionStorage', 'window', 'fetch', 'setInterval', 'setTimeout', 'clearTimeout', 'location', source)(() => ({ active: false }), RFB, document, sessionStorage, { addEventListener() {}, ReactNativeWebView: { postMessage: (message) => sent.push(JSON.parse(message)) } }, fetch, () => 1, () => 1, () => {}, { href: 'https://runtime.example/browser/', protocol: 'https:' });
   assert.equal(sent.filter(message => message.type === 'browser.control.returned').length, 0);
   assert.equal(sent.find(message => message.type === 'browser.viewer.state').mine, true);
   await events.get('#zoom:click')();
@@ -51,7 +51,7 @@ test('mobile keyboard sends committed Chinese, emoji and editing keys only while
     if (!elements.has(selector)) elements.set(selector, { style: {}, value: '', clientWidth: 390, clientHeight: 500, blur() {}, focus() {}, setSelectionRange() {}, setAttribute() {}, addEventListener: (name, fn) => events.set(`${selector}:${name}`, fn) });
     return elements.get(selector);
   };
-  let state = { available: true, mode: 'ai', mine: false, inFlight: 0, epoch: 1, browserReady: true };
+  let state = { available: true, mode: 'ai', mine: false, inFlight: 0, epoch: 1, browserReady: true, browser: { browserTaskId: 'task1', resourceState: 'live' } };
   class RFB {
     listeners = new Map();
     constructor() { instances.push(this); }
@@ -61,17 +61,20 @@ test('mobile keyboard sends committed Chinese, emoji and editing keys only while
   }
   const fetch = async route => ({ ok: true, json: async () => {
     if (route === '/browser/status') return { ready: true };
-    if (route === '/browser/control/request') { state = { ...state, mode: 'human', mine: true, epoch: 2 }; return { token: 'private-test-controller' }; }
+    if (route.startsWith('/browser/control/request')) { state = { ...state, mode: 'human', mine: true, epoch: 2 }; return { token: 'private-test-controller' }; }
     if (route === '/browser/control/release') { state = { ...state, mode: 'ai', mine: false, epoch: 3 }; return { schemaVersion: 1, epoch: 3 }; }
     return state;
   } });
-  const source = fs.readFileSync(new URL('../src/public/browser.js', import.meta.url), 'utf8').replace(/^import RFB[^\n]+\n/, '');
+  const source = fs.readFileSync(new URL('../src/public/browser.js', import.meta.url), 'utf8').replace(/^import [^\n]+\n/gm, '');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  await new AsyncFunction('RFB', 'document', 'sessionStorage', 'window', 'fetch', 'setInterval', 'setTimeout', 'clearTimeout', 'location', source)(RFB,
+  await new AsyncFunction('createScopedTaskViewer', 'RFB', 'document', 'sessionStorage', 'window', 'fetch', 'setInterval', 'setTimeout', 'clearTimeout', 'location', source)(() => ({ active: false }), RFB,
     { hidden: false, querySelector: element, addEventListener() {} },
     { getItem() { return null; }, setItem() {}, removeItem() {} },
     { addEventListener: (name, fn) => events.set(name, fn), ReactNativeWebView: { postMessage: value => sent.push(JSON.parse(value)) } },
     fetch, () => 1, () => 1, () => {}, { href: 'https://runtime.example/browser/', protocol: 'https:' });
+  await events.get('#takeover:click')();
+  assert.equal(instances.length, 1, 'unresolved native task cannot acquire writable transport');
+  await events.get('oneclaw:browser-task')({ detail: { sessionId: 'session_1' } });
   await events.get('#takeover:click')();
   instances.at(-1).listeners.get('connect')();
   await events.get('#keyboard:click')();
@@ -88,4 +91,24 @@ test('mobile keyboard sends committed Chinese, emoji and editing keys only while
   assert.equal(keys.length, 4);
   events.get('oneclaw:browser-command')({ detail: { action: 'release' } });
   assert.equal(sent.at(-1).type, 'browser.viewer.error');
+});
+
+test('native task selection delivered before module startup never opens the shared desktop', async () => {
+  const events = new Map(), elements = new Map(), requests = [], opened = [];
+  const detail = { sessionId: 'session_test', toolCallId: 'exact-call' };
+  const element = selector => {
+    if (!elements.has(selector)) elements.set(selector, { style: {}, addEventListener() {}, blur() {}, setAttribute() {} });
+    return elements.get(selector);
+  };
+  const scoped = { active: false, async open(value) { this.active = true; opened.push(value); } };
+  const window = { __oneclawBrowserTask: detail, addEventListener: (name, fn) => events.set(name, fn), dispatchEvent: event => events.get(event.type)?.(event) };
+  const source = fs.readFileSync(new URL('../src/public/browser.js', import.meta.url), 'utf8').replace(/^import [^\n]+\n/gm, '');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  await new AsyncFunction('createScopedTaskViewer', 'RFB', 'document', 'sessionStorage', 'window', 'fetch', 'setInterval', 'setTimeout', 'clearTimeout', 'location', 'CustomEvent', source)(
+    () => scoped, class { constructor() { throw new Error('Shared desktop must not open'); } },
+    { hidden: false, querySelector: element, addEventListener() {} }, { getItem: () => null }, window,
+    async route => { requests.push(route); throw new Error('Unexpected shared request'); }, () => 1, () => 1, () => {},
+    { href: 'https://runtime.example/browser/' }, class { constructor(type, options) { this.type = type; this.detail = options.detail; } });
+  assert.deepEqual(opened, [detail]);
+  assert.deepEqual(requests, []);
 });

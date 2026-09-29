@@ -85,12 +85,12 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
       return { ...state, ...browserHealth, mine: matches(token) };
     });
   }
-  function request() {
+  function request(_token, fields = {}) {
     return serial(async () => {
       if (stopped || !desktop.status().ready) throw new Error("Desktop is not ready");
       if (owner) throw new Error("Another page has reserved browser control");
       const candidate = crypto.randomBytes(32).toString("hex");
-      await command("request", candidate);
+      await command("request", candidate, fields);
       owner = candidate; lastSeen = now();
       try { return { ...await inspect(), token: owner, mine: true }; }
       catch (err) { await pause().catch(() => {}); throw err; }
@@ -105,11 +105,11 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
       return state;
     });
   }
-  function resume(token) {
+  function resume(token, fields = {}) {
     return serial(async () => {
       requireOwner(token);
       await revoke();
-      await command("resume");
+      await command("resume", owner, fields);
       try { await desktop.startControl(); }
       catch (err) { await command("pause"); throw err; }
       lastSeen = now();
@@ -134,13 +134,13 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
       await serial(() => settleStarts()).catch(() => {});
     }
   }
-  function focusTask(fields) {
+  function focusTask(fields, operation = 'focus') {
     return serial(async () => {
-      await command('validate-focus', null, fields);
+      await command(operation === 'close' ? 'validate-close' : 'validate-focus', null, fields);
       let frame;
       try {
         frame = await rpc.rpcGateway('browser.request', {
-          method: 'POST', path: '/tabs/focus', query: { profile: 'openclaw' }, body: { targetId: fields.targetId }, timeoutMs: 5000,
+          method: operation === 'close' ? 'DELETE' : 'POST', path: operation === 'close' ? '/tabs/' + encodeURIComponent(fields.targetId) : '/tabs/focus', query: { profile: 'openclaw' }, body: { targetId: fields.targetId }, timeoutMs: 5000,
         }, 6000);
       } catch (error) {
         error.browserOperationUncertain = true;
@@ -157,6 +157,12 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
   async function suspendIdleBrowser() {
     if (idleMs <= 0 || now() - lastViewedAt < idleMs || now() - lastIdleCheck < 30000) return;
     lastIdleCheck = now();
+    const { tasks = [] } = await command('idle-tasks');
+    // Close one eligible task at a time after revalidating its ownership.
+    if (tasks.length) {
+      const task = tasks[0];
+      await rpc.rpcGateway('browseruse.control', { action: 'close-task', sessionKey: task.sessionKey, browserTaskId: task.browserTaskId }, 60000);
+    }
     const { candidate } = await command('idle-candidate');
     if (!candidate || !Array.isArray(candidate.targetIds)) return;
     const tabs = await rpc.rpcGateway('browser.request', { method: 'GET', path: '/tabs', query: { profile: 'openclaw' } }, 5000);

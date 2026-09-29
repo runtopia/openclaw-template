@@ -431,6 +431,11 @@ const browserHandoff = process.env.ONECLAW_BROWSER_USE_ENABLED === "1"
   ? createBrowserHandoff({ rpc: gatewayRpc, desktop: browserDesktop,
     idleMs: (() => { const ms = Number(process.env.ONECLAW_BROWSER_IDLE_MS ?? 1800000); return ms === 0 || (Number.isFinite(ms) && ms >= 60000 && ms <= 86400000) ? ms : 1800000; })() }) : null;
 const browserPreview = createBrowserRoutes({
+  readTaskPreview: async (nativeSessionId, after) => {
+    const frame = await gatewayRpc.rpcGateway('browseruse.preview', { nativeSessionId, after }, 6000);
+    if (!frame.ok) throw new Error('Browser preview unavailable');
+    return frame.payload;
+  },
   capturePreview: createTaskPreview({ rpc: gatewayRpc }),
   handoff: browserHandoff,
   desktop: browserDesktop,

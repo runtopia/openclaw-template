@@ -72,6 +72,7 @@ async function connect(mode = "view") {
     const response = await fetch("/browser/status");
     if (!response.ok || response.redirected) throw new Error("暂时无法打开画面，请重新登录后再试");
     const state = await response.json();
+    if (scoped.active) return;
     if (state.width && state.height && state.scaleFactor) displaySize = state;
     updateViewport();
     start.disabled = !state.ready || (controlState?.available && controlState.mode !== "ai");
@@ -199,7 +200,7 @@ async function refreshControl() {
     const response = await fetch("/browser/control/status", { headers: controlHeaders() });
     if (!response.ok) throw new Error("暂时无法切换操作人");
     const nextState = await response.json();
-    if (requestId !== statusRequestId) return;
+    if (scoped.active || requestId !== statusRequestId) return;
     controlState = nextState;
     if (selectedTaskId && nextState.browser?.browserTaskId === selectedTaskId) selectedTask = nextState.browser;
     taskReady = Boolean(selectedTaskId && nextState.browser?.browserTaskId === selectedTaskId && nextState.browser?.resourceState === 'live');
@@ -235,7 +236,7 @@ async function refreshControl() {
     else if (controlState.queuedBrowser) controlStatus.textContent += ` · ${controlState.queuedBrowser} 个浏览器步骤排队中`;
     publishState();
   } catch (err) {
-    if (requestId !== statusRequestId) return;
+    if (scoped.active || requestId !== statusRequestId) return;
     controlState = { available: false };
     controlStatus.textContent = err.message;
     if (connectionMode === "human") { disconnectInput(); connectionMode = 'view'; }
@@ -274,6 +275,9 @@ window.addEventListener('oneclaw:browser-command', event => {
   if (!busy && controlState?.mine && controlState.inFlight === 0) void controlAction('release');
   else postNative({ schemaVersion: 1, type: 'browser.viewer.error' });
 });
+// Native load callbacks can precede module evaluation. Preserve the selector
+// across that race instead of briefly opening a shared desktop for a task.
+if (window.__oneclawBrowserTask) window.dispatchEvent(new CustomEvent('oneclaw:browser-task', { detail: window.__oneclawBrowserTask }));
 await connect();
 await refreshControl();
 setInterval(() => { if (!busy && !document.hidden) refreshControl(); }, 2000);

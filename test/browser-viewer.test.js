@@ -92,3 +92,23 @@ test('mobile keyboard sends committed Chinese, emoji and editing keys only while
   events.get('oneclaw:browser-command')({ detail: { action: 'release' } });
   assert.equal(sent.at(-1).type, 'browser.viewer.error');
 });
+
+test('native task selection delivered before module startup never opens the shared desktop', async () => {
+  const events = new Map(), elements = new Map(), requests = [], opened = [];
+  const detail = { sessionId: 'session_test', toolCallId: 'exact-call' };
+  const element = selector => {
+    if (!elements.has(selector)) elements.set(selector, { style: {}, addEventListener() {}, blur() {}, setAttribute() {} });
+    return elements.get(selector);
+  };
+  const scoped = { active: false, async open(value) { this.active = true; opened.push(value); } };
+  const window = { __oneclawBrowserTask: detail, addEventListener: (name, fn) => events.set(name, fn), dispatchEvent: event => events.get(event.type)?.(event) };
+  const source = fs.readFileSync(new URL('../src/public/browser.js', import.meta.url), 'utf8').replace(/^import [^\n]+\n/gm, '');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  await new AsyncFunction('createScopedTaskViewer', 'RFB', 'document', 'sessionStorage', 'window', 'fetch', 'setInterval', 'setTimeout', 'clearTimeout', 'location', 'CustomEvent', source)(
+    () => scoped, class { constructor() { throw new Error('Shared desktop must not open'); } },
+    { hidden: false, querySelector: element, addEventListener() {} }, { getItem: () => null }, window,
+    async route => { requests.push(route); throw new Error('Unexpected shared request'); }, () => 1, () => 1, () => {},
+    { href: 'https://runtime.example/browser/' }, class { constructor(type, options) { this.type = type; this.detail = options.detail; } });
+  assert.deepEqual(opened, [detail]);
+  assert.deepEqual(requests, []);
+});

@@ -6,7 +6,7 @@ import { createBrowserRoutes } from '../src/browser/routes.js';
 
 test('native task thumbnails keep existing login protection and validate the conversation boundary', async t => {
   let reads = 0, views = 0;
-  const browser = createBrowserRoutes({ desktop: { status: () => ({ enabled: true, ready: true }) }, credentialsConfigured: true, isAuthed: req => req.headers.authorization === 'Bearer owner', readTaskPreview: async (sessionId, after) => { reads++; assert.equal(sessionId, 'session_1'); assert.equal(after, 1000); return { image: 'data:image/jpeg;base64,Zm9v' }; }, viewNativeTask: async sessionId => { views++; assert.equal(sessionId, 'session_1'); return { ok: true }; } });
+  const browser = createBrowserRoutes({ desktop: { status: () => ({ enabled: true, ready: true }) }, credentialsConfigured: true, isAuthed: req => req.headers.authorization === 'Bearer owner', readTaskPreview: async (sessionId, after, selector) => { reads++; assert.equal(selector.toolCallId, 'call-1'); assert.equal(sessionId, 'session_1'); assert.equal(after, 1000); return { image: 'data:image/jpeg;base64,Zm9v' }; }, viewNativeTask: async sessionId => { views++; assert.equal(sessionId, 'session_1'); return { ok: true }; } });
   const app = express(); app.use('/browser', browser.router);
   const server = http.createServer(app);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -16,7 +16,7 @@ test('native task thumbnails keep existing login protection and validate the con
   assert.equal(reads, 0);
   const headers = { Authorization: 'Bearer owner' };
   for (const query of ['sessionId=other&after=1000', 'sessionId=session_1&after=0', 'sessionId=session_1&after=abc']) assert.equal((await fetch(`${base}?${query}`, { headers })).status, 400);
-  const response = await fetch(`${base}?sessionId=session_1&after=1000`, { headers });
+  const response = await fetch(`${base}?sessionId=session_1&after=1000&toolCallId=call-1`, { headers });
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal((await response.json()).image, 'data:image/jpeg;base64,Zm9v'); assert.equal(reads, 1);
   const target = base.replace('task-preview', 'task-view');

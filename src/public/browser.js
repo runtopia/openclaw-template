@@ -1,3 +1,4 @@
+import { createScopedTaskViewer } from '/browser/task-viewer.js';
 import RFB from "/browser/novnc/core/rfb.js";
 const status = document.querySelector("#status");
 const start = document.querySelector("#start");
@@ -14,6 +15,7 @@ let allowHumanConnection = false;
 let viewConnected = false, inputConnected = false, zoomed = false, panMode = false;
 let displaySize = { width: 2560, height: 1600, scaleFactor: 2 };
 let lastBridgeState = '';
+let taskSelection = null, selectedTaskId = null, taskReady = false, selectionVersion = 0, selectedTask = null;
 const stage = document.querySelector('#stage');
 const surface = document.querySelector('#surface');
 const pan = document.querySelector('#pan');
@@ -39,7 +41,11 @@ function publishState() {
   const serialized = JSON.stringify(payload);
   if (serialized !== lastBridgeState) { lastBridgeState = serialized; postNative(payload); }
 }
+const scoped = createScopedTaskViewer({ postNative, stopDesktop: () => {
+  disconnectInput(); clearTimeout(reconnectTimer); const old = rfb; rfb = null; old?.disconnect();
+} });
 function updateViewport() {
+  if (scoped.active) { const canvas = document.querySelector('#task-canvas'); canvas.style.minWidth = zoomed ? '1000px' : ''; document.querySelector('#zoom').textContent = zoomed ? '适合屏幕' : '放大阅读'; return; }
   // Let noVNC perform scaling inside equal-sized surfaces. External CSS
   // transforms would desynchronize its remote pointer coordinates.
   surface.style.width = zoomed ? `${Math.max(stage.clientWidth, displaySize.width / displaySize.scaleFactor)}px` : '100%';
@@ -55,6 +61,7 @@ function updateViewport() {
 if (typeof ResizeObserver !== 'undefined') new ResizeObserver(updateViewport).observe(stage);
 
 async function connect(mode = "view") {
+  if (scoped.active) return;
   if (mode === 'human') return connectInput();
   disconnectInput();
   clearTimeout(reconnectTimer);
@@ -124,20 +131,59 @@ document.querySelector('#zoom').addEventListener('click', () => { zoomed = !zoom
 pan.addEventListener('click', () => { panMode = !panMode; updateViewport(); });
 let composing = false;
 const sentinel = '\u200b';
-const canType = () => inputConnected && inputRfb && controlState?.mode === 'human' && controlState.mine;
+const canType = () => scoped.active ? scoped.canType : (!taskSelection || taskReady) && inputConnected && inputRfb && controlState?.mode === 'human' && controlState.mine;
 window.addEventListener('oneclaw:browser-task', async event => {
   const sessionId = event.detail?.sessionId;
   if (!/^session_[A-Za-z0-9_-]{1,128}$/.test(sessionId || '')) return;
+  const toolCallId = event.detail?.toolCallId || undefined;
+  if (toolCallId) { await scoped.open(event.detail); return; }
+  taskSelection = { sessionId, ...(toolCallId ? { toolCallId } : {}) };
+  taskReady = false; selectedTaskId = null; selectedTask = null; document.querySelector('#task-snapshot').hidden = false; disconnectInput(); takeover.disabled = true;
+  const version = ++selectionVersion;
   try {
-    const response = await fetch('/browser/task-view', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId }) });
-    if (!response.ok) { status.textContent = '当前画面暂时无法切换到此对话，请交还控制或稍后重试。'; return; }
+    const response = await fetch('/browser/task-view', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(taskSelection) });
+    const result = await response.json();
+    if (version !== selectionVersion) return;
+    selectedTask = result.browser; selectedTaskId = result.browser?.browserTaskId || null;
+    if (!response.ok || !selectedTaskId || result.browser.resourceState !== 'live') {
+      await showTaskSnapshot();
+      status.textContent = '此任务页面已释放或暂时不可用，不能接管其他任务。'; return;
+    }
+    selectedTaskId = result.browser.browserTaskId;
     await refreshControl();
   } catch { status.textContent = '暂时无法打开此任务画面，请重试。'; }
 });
+async function showTaskSnapshot() {
+  if (!taskSelection) return;
+  const version = selectionVersion;
+  document.querySelector('#task-snapshot').hidden = false;
+  document.querySelector('#task-snapshot-label').textContent = selectedTask?.resourceState === 'live' ? '所选任务的只读画面 · 其他任务正在使用共享桌面' : '任务页面已释放 · 保留最后截图';
+  try {
+    const query = new URLSearchParams({ sessionId: taskSelection.sessionId, ...(selectedTaskId ? { browserTaskId: selectedTaskId } : { toolCallId: taskSelection.toolCallId || '' }) });
+    const response = await fetch('/browser/task-preview?' + query);
+    const frame = await response.json();
+    if (version === selectionVersion && response.ok && frame.browserTaskId && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(frame.image || '')) { const image = new Image(); image.src = frame.image; await image.decode(); if (version === selectionVersion && !taskReady) document.querySelector('#task-snapshot-image').src = image.src; }
+  } catch { /* Do not substitute the shared desktop for a missing task frame. */ }
+}
+async function manageTask(action) {
+  if (scoped.active) { await scoped.manage(action); return; }
+  if (busy || !taskSelection || !selectedTaskId) return;
+  if (action === 'close-task' && !window.confirm('关闭此任务网页？保存最后截图后关闭；未提交编辑会丢失，登录资料保留。')) return;
+  busy = true;
+  try {
+    const response = await fetch('/browser/task-manage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: taskSelection.sessionId, browserTaskId: selectedTaskId, action }) });
+    const result = await response.json(); if (!response.ok) throw new Error(); selectedTask = result.browser;
+    if (action === 'close-task') { taskReady = false; await showTaskSnapshot(); }
+  } catch { status.textContent = '任务操作未完成，请重试'; }
+  finally { busy = false; await refreshControl(); }
+}
+document.querySelector('#retain-task').addEventListener('click', () => scoped.active ? scoped.retain() : manageTask(selectedTask?.retained ? 'unretain' : 'retain'));
+document.querySelector('#close-task').addEventListener('click', () => manageTask('close-task'));
 keyboard.addEventListener('click', () => { if (!canType()) return; panMode = false; updateViewport(); keyboardInput.value = sentinel; keyboardInput.focus(); keyboardInput.setSelectionRange(1, 1); });
 function sendTypedText() {
   if (composing || !canType()) return;
   const value = keyboardInput.value;
+  if (scoped.active) { const text = value.startsWith(sentinel) ? value.slice(1) : value; if (text) scoped.send({type:'text',text}); else if (!value) scoped.send({type:'key',key:'Backspace'}); keyboardInput.value=sentinel; return; }
   if (!value) inputRfb.sendKey(0xff08);
   else for (const char of value.replace(/^\u200b/, '')) { const point = char.codePointAt(0); inputRfb.sendKey(point <= 255 ? point : 0x01000000 | point); }
   keyboardInput.value = sentinel;
@@ -145,8 +191,9 @@ function sendTypedText() {
 keyboardInput.addEventListener('compositionstart', () => { composing = true; });
 keyboardInput.addEventListener('compositionend', () => { composing = false; sendTypedText(); });
 keyboardInput.addEventListener('input', sendTypedText);
-keyboardInput.addEventListener('keydown', event => { if (!composing && canType() && ['Enter', 'Tab'].includes(event.key)) { event.preventDefault(); inputRfb.sendKey(event.key === 'Enter' ? 0xff0d : 0xff09); } });
+keyboardInput.addEventListener('keydown', event => { if (!composing && canType() && ['Enter', 'Tab'].includes(event.key)) { event.preventDefault(); if (scoped.active) { scoped.send({type:'key',key:event.key}); return; } inputRfb.sendKey(event.key === 'Enter' ? 0xff0d : 0xff09); } });
 async function refreshControl() {
+  if (scoped.active) return;
   const requestId = ++statusRequestId;
   try {
     const response = await fetch("/browser/control/status", { headers: controlHeaders() });
@@ -154,6 +201,13 @@ async function refreshControl() {
     const nextState = await response.json();
     if (requestId !== statusRequestId) return;
     controlState = nextState;
+    if (selectedTaskId && nextState.browser?.browserTaskId === selectedTaskId) selectedTask = nextState.browser;
+    taskReady = Boolean(selectedTaskId && nextState.browser?.browserTaskId === selectedTaskId && nextState.browser?.resourceState === 'live');
+    document.querySelector('#task-snapshot').hidden = !taskSelection || taskReady;
+    if (taskSelection && !taskReady) void showTaskSnapshot();
+    const terminalTask = selectedTask?.resourceState === 'live' && ['completed', 'failed', 'cancelled'].includes(selectedTask?.phase);
+    for (const id of ['#retain-task', '#close-task']) { document.querySelector(id).hidden = !terminalTask; document.querySelector(id).disabled = busy || nextState.mode !== 'ai' || nextState.inFlight > 0; }
+    document.querySelector('#retain-task').textContent = selectedTask?.retained ? '允许空闲释放' : '保留任务页面';
     const { available, mode, mine, inFlight = 0 } = controlState;
     takeover.hidden = !available || !(mode === "ai" || (mode === "paused" && mine));
     takeover.textContent = mode === "paused" ? "继续操作" : "我来操作";
@@ -162,7 +216,7 @@ async function refreshControl() {
     release.disabled = busy || inFlight > 0;
     recover.hidden = !available || mode !== "paused" || mine;
     recover.disabled = busy || inFlight > 0;
-    takeover.disabled = busy || (mode === "paused" && inFlight > 0);
+    takeover.disabled = (embedded && !taskReady) || (taskSelection && !taskReady) || busy || (mode === "paused" && inFlight > 0);
     document.querySelector('#reconnect').disabled = busy || (mode === 'human' && mine);
     if (available) start.disabled = mode !== "ai";
     start.hidden = controlState.browserReady === true;
@@ -172,11 +226,13 @@ async function refreshControl() {
       human: mine ? "现在由你操作 · 助手正在等你" : "另一个页面正在操作 · 你仍可观看",
       paused: inFlight > 0 ? "AI 控制已暂停 · 有未确认结束的操作，需要维护恢复" : "操作已暂停 · 你可以继续操作，或让助手继续",
     }[mode];
-    const desired = available && mode === "human" && mine && allowHumanConnection ? "human" : "view";
+    const desired = available && mode === "human" && mine && allowHumanConnection && (!taskSelection || taskReady) ? "human" : "view";
     if (connectionMode !== desired) {
       if (desired === 'human') await connectInput();
       else { disconnectInput(); connectionMode = 'view'; status.textContent = '已连接 · 你正在观看'; }
     }
+    if (taskSelection && !taskReady) controlStatus.textContent = '当前共享画面不属于所选任务 · 接管已禁用';
+    else if (controlState.queuedBrowser) controlStatus.textContent += ` · ${controlState.queuedBrowser} 个浏览器步骤排队中`;
     publishState();
   } catch (err) {
     if (requestId !== statusRequestId) return;
@@ -188,10 +244,11 @@ async function refreshControl() {
   }
 }
 async function controlAction(action) {
-  if (busy) return;
+  if (scoped.active) { if (action === 'request' || action === 'resume') await scoped.takeover(); else await scoped.action(action); return; }
+  if (busy || (['request', 'resume'].includes(action) && ((embedded && !taskReady) || (taskSelection && !taskReady)))) return;
   busy = true; publishState(); takeover.disabled = release.disabled = recover.disabled = true;
   try {
-    const response = await fetch(`/browser/control/${action}`, { method: "POST", headers: controlHeaders() });
+    const response = await fetch(`/browser/control/${action}${selectedTaskId && ['request', 'resume'].includes(action) ? '?browserTaskId=' + encodeURIComponent(selectedTaskId) : ''}`, { method: "POST", headers: controlHeaders() });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "暂时没能切换操作人");
     if (action === 'request' || action === 'resume') allowHumanConnection = true;
@@ -211,7 +268,9 @@ takeover.addEventListener("click", () => controlAction(controlState?.mode === "p
 release.addEventListener("click", () => controlAction("release"));
 recover.addEventListener("click", () => controlAction("recover"));
 window.addEventListener('oneclaw:browser-command', event => {
+  if (event.detail?.action === 'pause' && scoped.active) { void scoped.action('pause'); return; }
   if (event.detail?.action !== 'release') return;
+  if (scoped.active) { void scoped.action('release'); return; }
   if (!busy && controlState?.mine && controlState.inFlight === 0) void controlAction('release');
   else postNative({ schemaVersion: 1, type: 'browser.viewer.error' });
 });

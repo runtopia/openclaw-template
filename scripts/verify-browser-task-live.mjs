@@ -88,7 +88,7 @@ try {
       )
     ).json();
   const a = await create(
-    '<title>Task A</title><input id="value" style="position:fixed;left:0;top:0;width:400px;height:100px"><div style="height:2500px">A</div>',
+    `<title>Task A</title><input id="value" style="position:fixed;left:0;top:0;width:400px;height:100px"><button id="popup" style="position:fixed;left:450px;top:0;width:100px;height:100px" onclick="window.open('about:blank','child')">Popup</button><div style="height:2500px">A</div>`,
   );
   const b = await create("<title>Task B</title><h1>B original</h1>");
   const work = createBrowserWork(),
@@ -136,7 +136,12 @@ try {
     },
   };
   const broker = createTaskBroker({ rpc }),
-    base = { sessionKey: "a", browserTaskId: taskA.browserTaskId };
+    base = {
+      sessionKey: "a",
+      browserTaskId: taskA.browserTaskId,
+      expectedTargetId: taskA.targetId,
+      generation: taskA.generation,
+    };
   const grant = await broker({ ...base, action: "request" }),
     token = grant.token;
   // The other task really navigates and takes the foreground while A is human controlled.
@@ -162,6 +167,26 @@ try {
     returnByValue: true,
   });
   assert.equal(title.result.value, "Task B finished");
+  const position = await cdp(a.webSocketDebuggerUrl, "Runtime.evaluate", {
+    expression: "JSON.stringify({x:500/innerWidth,y:50/innerHeight})",
+    returnByValue: true,
+  });
+  const point = JSON.parse(position.result.value);
+  await input({ type: "down", ...point });
+  await input({ type: "up", ...point });
+  assert.equal(
+    work.status("a").pages.length,
+    2,
+    "manual popup must stay in the originating task",
+  );
+  await assert.rejects(
+    input({ type: "text", text: "stale frame" }),
+    "old page frame cannot type into new popup",
+  );
+  await broker({ ...base, token, action: "select", targetId: a.id });
+  await assert.rejects(
+    broker({ ...base, token, action: "select", targetId: b.id }),
+  );
   const capture = createTaskPreview({ rpc });
   assert.match((await capture(a.id)).image, /^data:image\/jpeg;base64,/);
   assert.equal(
@@ -189,6 +214,9 @@ try {
       screenshot: true,
       wrongTokenRejected: true,
       handback: true,
+      popupOwnership: true,
+      staleFrameRejected: true,
+      tabSelection: true,
     }),
   );
 } finally {

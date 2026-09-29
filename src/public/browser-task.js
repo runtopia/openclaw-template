@@ -13,6 +13,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     pending = Promise.resolve(),
     queued = 0,
     frameSource = "",
+    frameTarget = null,
+    frameGeneration = null,
     gesture = null;
   const surface = $("#task-canvas"),
     ctx = surface.getContext("2d");
@@ -32,7 +34,15 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       browserTaskId: task.browserTaskId,
       token,
       action,
-      ...(event ? { event } : {}),
+      ...(event
+        ? action === "select"
+          ? { targetId: event.targetId }
+          : {
+              event,
+              expectedTargetId: frameTarget,
+              generation: frameGeneration,
+            }
+        : {}),
     });
   const writable = () =>
     active &&
@@ -40,7 +50,9 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     !busy &&
     state?.mine &&
     state.mode === "human" &&
-    task?.resourceState === "live";
+    task?.resourceState === "live" &&
+    frameTarget === task.targetId &&
+    frameGeneration === task.generation;
   function render() {
     $("#task-snapshot").hidden = true;
     $("#scoped-task").hidden = false;
@@ -60,6 +72,35 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     $("#release").textContent = "完成并返回聊天";
     $("#keyboard").hidden = !writable();
     $("#pan").hidden = true;
+    const tabs = $("#task-tabs");
+    tabs.hidden = !(task?.pages?.length > 1);
+    if (task?.pages?.length > 1) {
+      tabs.replaceChildren();
+      task.pages.forEach((page, index) => {
+        const button = document.createElement("button");
+        button.textContent = page.displayUrl || `页面 ${index + 1}`;
+        button.disabled = !state?.mine || state.mode !== "human" || busy;
+        button.setAttribute(
+          "aria-pressed",
+          String(task.targetId === page.targetId),
+        );
+        button.addEventListener("click", async () => {
+          if (busy) return;
+          busy = true;
+          render();
+          try {
+            state = await command("select", { targetId: page.targetId });
+            task = state.browser;
+          } catch {
+            $("#status").textContent = "切换页面失败";
+          } finally {
+            busy = false;
+            render();
+          }
+        });
+        tabs.append(button);
+      });
+    }
     const terminal =
       task?.resourceState === "live" &&
       ["completed", "failed", "cancelled"].includes(task.phase);
@@ -138,6 +179,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
           ctx.drawImage(image, 0, 0);
           frameSource = frame.image;
         }
+        frameTarget = frame.targetId;
+        frameGeneration = frame.generation;
         $("#status").textContent = task.displayUrl || "任务网页";
         render();
       } catch {
@@ -162,6 +205,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     token = null;
     enabled = false;
     frameSource = "";
+    frameTarget = null;
+    frameGeneration = null;
     ctx.clearRect(0, 0, surface.width, surface.height);
     stopDesktop();
     render();
@@ -219,10 +264,18 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
   function send(event) {
     if (!writable() || queued >= 32) return;
     queued++;
-    const expected = version;
+    const expected = version,
+      expectedTarget = frameTarget,
+      expectedGeneration = frameGeneration;
     pending = pending
       .then(async () => {
-        if (expected === version && writable()) await command("input", event);
+        if (
+          expected === version &&
+          writable() &&
+          expectedTarget === frameTarget &&
+          expectedGeneration === frameGeneration
+        )
+          await command("input", event);
       })
       .catch(() => {
         enabled = false;
@@ -330,7 +383,12 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     if (active) pause();
   });
   return {
-    dispose: () => { if (active) pause(); active=false; version++; clearTimeout(timer); },
+    dispose: () => {
+      if (active) pause();
+      active = false;
+      version++;
+      clearTimeout(timer);
+    },
     get active() {
       return active;
     },

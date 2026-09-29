@@ -4,7 +4,7 @@
   "private": true,
   "description": "Exact plugin versions preinstalled by the OneClaw cloud Runtime image.",
   "dependencies": {
-    "@oneclaw-plugins/channel": "file:tarballs/oneclaw-plugins-channel-0.1.27-88c8c46224cafd9dfd121dbfa3bc741facc54bd1d61c0df0bc3bbd1cfbe5f90b.tgz",
+    "@oneclaw-plugins/channel": "file:tarballs/oneclaw-plugins-channel-0.1.27-fc1215e2c3e9e1327d166ccf37a23d9e8d5e7fe99abe3ac94209d6bd17841663.tgz",
     "@oneclaw-plugins/clawrouters": "0.4.1",
     "@oneclaw-plugins/integrations": "file:tarballs/oneclaw-plugins-integrations-0.1.1-24d1517a0e3f145cc033c1f593a248148fce92fde3c653699b070762070b450b.tgz",
     "@oneclaw-plugins/openclaw-search": "0.2.0",
@@ -14,6 +14,6 @@
     "@openclaw/slack": "2026.7.1",
     "@openclaw/whatsapp": "2026.7.1",
     "@tencent-weixin/openclaw-weixin": "2.4.6",
-    "@oneclaw-plugins/browser-use": "file:tarballs/oneclaw-plugins-browser-use-0.1.0-5ff90e85857b4699431bdcb39cb99157a5e022db26198585686a64c88afb2790.tgz"
+    "@oneclaw-plugins/browser-use": "file:tarballs/oneclaw-plugins-browser-use-0.1.0-d5df8ca34463f677bb4836e9a2b162ee977faa4072c7c6dce9bd11190cac3e1c.tgz"
   }
 }

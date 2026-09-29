@@ -9,6 +9,7 @@ const ACTIONS = new Set([
   "release",
   "recover",
   "input",
+  "select",
 ]);
 export function validateTaskInput(value) {
   if (!value || typeof value !== "object")
@@ -85,6 +86,8 @@ export function createTaskBroker({
         ? { nativeSessionId: fields.nativeSessionId }
         : { sessionKey: fields.sessionKey }),
       token: fields.token,
+      expectedTargetId: fields.expectedTargetId,
+      generation: fields.generation,
     };
     if (fields.action !== "input") {
       const token =
@@ -95,6 +98,7 @@ export function createTaskBroker({
         ...identity,
         token,
         action: fields.action,
+        ...(fields.action === "select" ? { targetId: fields.targetId } : {}),
       });
       return { ...result, ...(fields.action === "request" ? { token } : {}) };
     }
@@ -105,9 +109,14 @@ export function createTaskBroker({
       action: "input-begin",
       callId,
     });
-    let uncertain = false;
+    let uncertain = false,
+      pages;
     try {
-      await dispatch(grant.targetId, input, { rpc, fetchImpl, WebSocketImpl });
+      pages = await dispatch(grant.targetId, input, {
+        rpc,
+        fetchImpl,
+        WebSocketImpl,
+      });
       return { ok: true };
     } catch (error) {
       uncertain = error.browserOperationUncertain === true;
@@ -117,7 +126,13 @@ export function createTaskBroker({
           : "Task input failed",
       );
     } finally {
-      await authority({ ...identity, action: "input-end", callId, uncertain });
+      await authority({
+        ...identity,
+        action: "input-end",
+        callId,
+        uncertain,
+        pages,
+      });
     }
   };
 }
@@ -166,12 +181,12 @@ async function dispatchTaskInput(
     url.hash
   )
     throw new Error("Invalid page endpoint");
-  await new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     const socket = new WebSocketImpl(url.href, { maxPayload: 1024 * 1024 });
     let done = false,
       sentInput = false,
       pending = 0;
-    const finish = (error) => {
+    const finish = (error, result) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -179,7 +194,7 @@ async function dispatchTaskInput(
       if (error) {
         error.browserOperationUncertain = sentInput;
         reject(error);
-      } else resolve();
+      } else resolve(result);
     };
     const timer = setTimeout(() => {
       finish(new Error("Input timeout"));
@@ -194,6 +209,10 @@ async function dispatchTaskInput(
       try {
         const message = JSON.parse(String(data));
         if (!message.id) return;
+        if (message.id === 900) {
+          finish(null, message.result?.targetInfos || []);
+          return;
+        }
         if (message.error) throw new Error("Input rejected");
         if (message.id === 1) {
           const viewport = message.result?.cssVisualViewport;
@@ -274,7 +293,14 @@ async function dispatchTaskInput(
           commands.forEach((command, index) =>
             socket.send(JSON.stringify({ id: index + 2, ...command })),
           );
-        } else if (--pending === 0) finish();
+        } else if (--pending === 0) {
+          sentInput = false;
+          if (input.type === "up" || input.type === "key")
+            socket.send(
+              JSON.stringify({ id: 900, method: "Target.getTargets" }),
+            );
+          else finish();
+        }
       } catch (error) {
         finish(error);
       }

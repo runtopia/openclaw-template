@@ -47,3 +47,6 @@ summary::-webkit-details-marker { display: none; }
 #scoped-task { position: absolute; inset: 0; overflow: auto; }
 #scoped-task[hidden] { display: none; }
 #task-canvas { width: 100%; height: 100%; object-fit: contain; }
+
+#task-tabs { display:flex; gap:8px; overflow-x:auto; padding:6px 12px; }
+#task-tabs[hidden] { display:none; }

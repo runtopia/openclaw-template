@@ -125,6 +125,15 @@ pan.addEventListener('click', () => { panMode = !panMode; updateViewport(); });
 let composing = false;
 const sentinel = '\u200b';
 const canType = () => inputConnected && inputRfb && controlState?.mode === 'human' && controlState.mine;
+window.addEventListener('oneclaw:browser-task', async event => {
+  const sessionId = event.detail?.sessionId;
+  if (!/^session_[A-Za-z0-9_-]{1,128}$/.test(sessionId || '')) return;
+  try {
+    const response = await fetch('/browser/task-view', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId }) });
+    if (!response.ok) { status.textContent = '当前画面暂时无法切换到此对话，请交还控制或稍后重试。'; return; }
+    await refreshControl();
+  } catch { status.textContent = '暂时无法打开此任务画面，请重试。'; }
+});
 keyboard.addEventListener('click', () => { if (!canType()) return; panMode = false; updateViewport(); keyboardInput.value = sentinel; keyboardInput.focus(); keyboardInput.setSelectionRange(1, 1); });
 function sendTypedText() {
   if (composing || !canType()) return;

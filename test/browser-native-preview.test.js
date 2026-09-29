@@ -5,8 +5,8 @@ import express from 'express';
 import { createBrowserRoutes } from '../src/browser/routes.js';
 
 test('native task thumbnails keep existing login protection and validate the conversation boundary', async t => {
-  let reads = 0;
-  const browser = createBrowserRoutes({ desktop: { status: () => ({ enabled: true, ready: true }) }, credentialsConfigured: true, isAuthed: req => req.headers.authorization === 'Bearer owner', readTaskPreview: async (sessionId, after) => { reads++; assert.equal(sessionId, 'session_1'); assert.equal(after, 1000); return { image: 'data:image/jpeg;base64,Zm9v' }; } });
+  let reads = 0, views = 0;
+  const browser = createBrowserRoutes({ desktop: { status: () => ({ enabled: true, ready: true }) }, credentialsConfigured: true, isAuthed: req => req.headers.authorization === 'Bearer owner', readTaskPreview: async (sessionId, after) => { reads++; assert.equal(sessionId, 'session_1'); assert.equal(after, 1000); return { image: 'data:image/jpeg;base64,Zm9v' }; }, viewNativeTask: async sessionId => { views++; assert.equal(sessionId, 'session_1'); return { ok: true }; } });
   const app = express(); app.use('/browser', browser.router);
   const server = http.createServer(app);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -19,4 +19,9 @@ test('native task thumbnails keep existing login protection and validate the con
   const response = await fetch(`${base}?sessionId=session_1&after=1000`, { headers });
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal((await response.json()).image, 'data:image/jpeg;base64,Zm9v'); assert.equal(reads, 1);
+  const target = base.replace('task-preview', 'task-view');
+  const init = { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 'session_1' }) };
+  assert.equal((await fetch(target, init)).status, 403); assert.equal(views, 0);
+  assert.equal((await fetch(target, { ...init, headers: { ...init.headers, Origin: new URL(base).origin } })).status, 200);
+  assert.equal(views, 1);
 });

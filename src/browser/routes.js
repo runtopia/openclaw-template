@@ -45,7 +45,7 @@ export function browserFrameAncestors(webUrl) {
 }
 
 export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser, handoff,
-  requireInstanceSecretApi, capturePreview, readTaskPreview, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
+  requireInstanceSecretApi, capturePreview, readTaskPreview, viewNativeTask, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
   const router = express.Router();
   const controlWs = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const proxy = httpProxy.createProxyServer({ target, ws: true });
@@ -72,6 +72,12 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     if (!readTaskPreview || typeof sessionId !== 'string' || !/^session_[A-Za-z0-9_-]{1,128}$/.test(sessionId) || !Number.isSafeInteger(after) || after <= 0) return res.sendStatus(400);
     try { res.json(await readTaskPreview(sessionId, after)); }
     catch { res.status(503).json({ errorCode: 'browser_preview_unavailable' }); }
+  });
+  router.post('/task-view', express.json({ limit: '1kb' }), async (req, res) => {
+    if (!sameOrigin(req)) return res.sendStatus(403);
+    if (!viewNativeTask || !/^session_[A-Za-z0-9_-]{1,128}$/.test(req.body?.sessionId || '')) return res.sendStatus(400);
+    try { res.json(await viewNativeTask(req.body.sessionId)); }
+    catch { res.status(409).json({ errorCode: 'browser_task_view_unavailable' }); }
   });
   router.post('/internal/preview', (req, res, next) => {
     if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi || !capturePreview) return res.sendStatus(403);

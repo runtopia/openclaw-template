@@ -23,6 +23,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     gesture = null;
   const surface = $("#task-canvas"),
     ctx = surface.getContext("2d");
+  const sessionFields = () => selection?.sessionKey ? { sessionKey: selection.sessionKey } : { sessionId: selection.sessionId };
   const storageKey = () => `browser-task:${task.browserTaskId}`;
   const request = async (path, body) => {
     const response = await fetch(path, {
@@ -194,7 +195,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     mediaAttempted = true;
     const url = new URL('/browser/task-stream', location.href);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.searchParams.set('sessionId', selection.sessionId);
+    for (const [key, value] of Object.entries(sessionFields())) url.searchParams.set(key, value);
     url.searchParams.set('browserTaskId', task.browserTaskId);
     const socket = new WebSocket(url.href); media = socket; socket.binaryType = 'arraybuffer';
     socket.onmessage = event => {
@@ -236,7 +237,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         startMedia(expected);
         if (Date.now() - lastMediaAt >= 2000) {
         const query = new URLSearchParams({
-          sessionId: selection.sessionId,
+          ...sessionFields(),
           browserTaskId: task.browserTaskId,
           viewer: "1",
         });
@@ -266,7 +267,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     clearTimeout(timer);
     active = true;
     busy = false;
-    selection = { sessionId: detail.sessionId, toolCallId: detail.toolCallId, browserTaskId: detail.browserTaskId, viewerId: detail.viewerId };
+    selection = { ...(detail.sessionKey ? { sessionKey: detail.sessionKey } : { sessionId: detail.sessionId }), toolCallId: detail.toolCallId, browserTaskId: detail.browserTaskId, viewerId: detail.viewerId };
     task = null;
     state = null;
     token = null;
@@ -456,7 +457,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     const expected = version;
     try {
       const result = await request("/browser/task-manage", {
-        sessionId: selection.sessionId,
+        ...sessionFields(),
         browserTaskId: task.browserTaskId,
         action: kind,
       });

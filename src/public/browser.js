@@ -262,7 +262,13 @@ window.addEventListener('oneclaw:browser-command', event => {
 });
 // Native load callbacks can precede module evaluation. Preserve the selector
 // across that race instead of briefly opening a shared desktop for a task.
-if (window.__oneclawBrowserTask) window.dispatchEvent(new CustomEvent('oneclaw:browser-task', { detail: window.__oneclawBrowserTask }));
+const sharedQuery = new URLSearchParams(location.search);
+if (sharedQuery.has('sessionKey') || sharedQuery.has('browserTaskId')) {
+  // A task link always enters the isolated viewer, including invalid/expired
+  // selectors. It must never fall back to whichever page owns desktop focus.
+  const sessionKey = sharedQuery.get('sessionKey'), browserTaskId = sharedQuery.get('browserTaskId');
+  await scoped.open({ sessionKey: sessionKey || 'invalid', browserTaskId: browserTaskId || 'invalid' });
+} else if (window.__oneclawBrowserTask) window.dispatchEvent(new CustomEvent('oneclaw:browser-task', { detail: window.__oneclawBrowserTask }));
 await connect();
 await refreshControl();
 setInterval(() => { if (!busy && !document.hidden) refreshControl(); }, 2000);

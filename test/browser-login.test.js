@@ -131,3 +131,16 @@ test("browser cookie login uses cross-site cookie attributes behind https proxy"
   assert.match(cookie, /Secure/);
   assert.match(cookie, /Partitioned/);
 });
+
+test('one-time browser login preserves the exact scoped task selector through nested URL encoding', async t => {
+  const manager=createBrowserSessionManager({signSession:()=> 'owner-session',authCookie:'ocsess',port:8080});
+  const app=express();app.get('/oneclaw-login',(req,res)=>manager.handleLogin(req,res));
+  const server=await listen(app);t.after(()=>server.close());
+  const origin=`http://127.0.0.1:${server.address().port}`;
+  const next='/browser/?'+new URLSearchParams({sessionKey:'agent:main:dashboard:owner',browserTaskId:'exact-task'});
+  const {url}=manager.issueLoginUrl({headers:{host:new URL(origin).host},protocol:'http'},next);
+  assert.equal(new URL(url).searchParams.get('next'),next);
+  const response=await fetch(url,{redirect:'manual'});
+  assert.equal(response.headers.get('location'),next);
+  assert.match(response.headers.get('set-cookie'),/ocsess=owner-session/);
+});

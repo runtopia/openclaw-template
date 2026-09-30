@@ -25,3 +25,31 @@ test('native task thumbnails keep existing login protection and validate the con
   assert.equal((await fetch(target, { ...init, headers: { ...init.headers, Origin: new URL(base).origin } })).status, 200);
   assert.equal(views, 1);
 });
+
+test('task links preserve Dashboard identity through resolve, preview, control and management', async t => {
+  const calls = [], selection = {sessionKey:'agent:main:dashboard:owner',browserTaskId:'task-1'};
+  const browser=createBrowserRoutes({desktop:{status:()=>({enabled:true})},credentialsConfigured:true,isAuthed:()=>true,
+    viewTask:async(fields,action)=>{calls.push({fields,action});return {browser:{...selection,targetId:'page'}};},
+    readTaskFrame:async fields=>{calls.push({fields});return {...selection,image:'data:image/jpeg;base64,YQ=='};},
+    taskBroker:async fields=>{calls.push({fields});return {mode:'ai'};},
+    requireInstanceSecretApi:(req,res,next)=>req.headers.authorization==='Bearer internal' ? next():res.sendStatus(401),
+    resumeOwnerTask:async id=>{calls.push({id});return {accepted:true};}});
+  const app=express();app.use('/browser',browser.router);const server=http.createServer(app);
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{browser.close();server.close();});
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const send=(route,body,extra={})=>fetch(base+'/browser/'+route,{method:'POST',headers:{Origin:base,'Content-Type':'application/json',...extra},body:JSON.stringify(body)});
+  for (const route of ['task-resolve','task-view','task-manage','task-control']) {
+    const body={...selection,action:'status',nativeSessionId:'session_untrusted'};
+    assert.equal((await send(route,body)).status,200);
+    assert.equal(calls.at(-1).fields.sessionKey,selection.sessionKey);
+    assert.equal(calls.at(-1).fields.nativeSessionId,undefined);
+    assert.equal((await send(route,{...body,sessionId:'session_other'})).status,400);
+  }
+  assert.equal((await fetch(base+'/browser/task-preview?'+new URLSearchParams(selection))).status,200);
+  assert.equal(calls.at(-1).fields.sessionKey,selection.sessionKey);
+  assert.equal((await send('task-resolve',{sessionKey:selection.sessionKey})).status,400);
+  assert.equal((await send('internal/handback',{handoffId:'h'})).status,401);
+  assert.equal((await send('internal/handback',{handoffId:'h',sessionKey:'other'},{Authorization:'Bearer internal'})).status,400);
+  assert.equal((await send('internal/handback',{handoffId:'h'},{Authorization:'Bearer internal'})).status,200);
+  assert.deepEqual(calls.at(-1),{id:'h'});
+});

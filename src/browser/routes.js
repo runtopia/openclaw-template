@@ -7,6 +7,13 @@ import { fileURLToPath } from "node:url";
 
 function validSelector(value) { return typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f]/.test(value); }
 
+function taskIdentity(fields) {
+  if (fields?.sessionKey !== undefined && fields?.sessionId !== undefined) return null;
+  if (typeof fields?.sessionId === 'string' && /^session_[A-Za-z0-9_-]{1,128}$/.test(fields.sessionId)) return { nativeSessionId: fields.sessionId };
+  if (typeof fields?.sessionKey === 'string' && /^agent:[A-Za-z0-9_-]+:(?:dashboard:[A-Za-z0-9_-]+|oneclaw:direct:session_[A-Za-z0-9_-]+)$/.test(fields.sessionKey)) return { sessionKey: fields.sessionKey };
+  return null;
+}
+
 export async function startManagedBrowser(gatewayRpc) {
   await gatewayRpc.waitUntilConnected(5000);
   let frame;
@@ -48,7 +55,7 @@ export function browserFrameAncestors(webUrl) {
 }
 
 export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser, handoff,
-  requireInstanceSecretApi, taskBroker, capturePreview, readTaskPreview, readTaskFrame, viewNativeTask, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
+  requireInstanceSecretApi, taskBroker, capturePreview, readTaskPreview, readTaskFrame, viewNativeTask, viewTask, resumeOwnerTask, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
   const router = express.Router();
   const controlWs = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const proxy = httpProxy.createProxyServer({ target, ws: true });
@@ -66,36 +73,48 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     // Desktop viewing reveals logged-in sites: never inherit the wrapper's
     // passwordless-development bypass for this surface.
     if (!credentialsConfigured) return res.status(503).json({ error: "Set SETUP_PASSWORD or ONECLAW_INSTANCE_SECRET to enable browser preview" });
-    if (!isAuthed(req)) return res.redirect(`/login?next=${encodeURIComponent("/browser/")}`);
+    if (!isAuthed(req)) return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl.startsWith("/browser/?") ? req.originalUrl : "/browser/")}`);
     if (!desktop.status().enabled) return res.status(503).json({ error: "Browser desktop disabled" });
     next();
   });
   router.get("/status", (_req, res) => res.json(desktop.status()));
   router.get('/task-preview', async (req, res) => {
     const sessionId = req.query.sessionId, after = Number(req.query.after), toolCallId = req.query.toolCallId, browserTaskId = req.query.browserTaskId;
-    if (!readTaskPreview || typeof sessionId !== 'string' || !/^session_[A-Za-z0-9_-]{1,128}$/.test(sessionId) || (!validSelector(toolCallId) && !validSelector(browserTaskId))) return res.sendStatus(400);
-    try { res.json(await readTaskPreview(sessionId, after, { toolCallId, browserTaskId, viewer: req.query.viewer === '1' })); }
+    const identity = taskIdentity(req.query);
+    if (!identity || !(readTaskFrame || readTaskPreview) || (!validSelector(toolCallId) && !validSelector(browserTaskId))) return res.sendStatus(400);
+    try { res.json(await (readTaskFrame ? readTaskFrame({ ...identity, after, toolCallId, browserTaskId, viewer: req.query.viewer === '1' }) : readTaskPreview(sessionId, after, { toolCallId, browserTaskId, viewer: req.query.viewer === '1' }))); }
     catch { res.status(503).json({ errorCode: 'browser_preview_unavailable' }); }
   });
   router.post(['/task-view', '/task-resolve'], express.json({ limit: '1kb' }), async (req, res) => {
     if (!sameOrigin(req)) return res.sendStatus(403);
     if ((req.body?.toolCallId !== undefined && !validSelector(req.body.toolCallId)) || (req.body?.browserTaskId !== undefined && !validSelector(req.body.browserTaskId))) return res.sendStatus(400);
-    if (!viewNativeTask || !/^session_[A-Za-z0-9_-]{1,128}$/.test(req.body?.sessionId || '')) return res.sendStatus(400);
-    try { res.json(await viewNativeTask(req.body.sessionId, { toolCallId: req.body.toolCallId, browserTaskId: req.body.browserTaskId }, req.path.endsWith('task-resolve') ? 'status' : 'view')); }
+    const identity = taskIdentity(req.body);
+    if (!identity || !(viewTask || (identity.nativeSessionId && viewNativeTask)) || (identity.sessionKey && !validSelector(req.body.toolCallId) && !validSelector(req.body.browserTaskId))) return res.sendStatus(400);
+    try { res.json(await (viewTask ? viewTask({ ...identity, toolCallId: req.body.toolCallId, browserTaskId: req.body.browserTaskId }, req.path.endsWith('task-resolve') ? 'status' : 'view') : viewNativeTask(req.body.sessionId, { toolCallId: req.body.toolCallId, browserTaskId: req.body.browserTaskId }, req.path.endsWith('task-resolve') ? 'status' : 'view'))); }
     catch { res.status(409).json({ errorCode: 'browser_task_view_unavailable' }); }
   });
   router.post('/task-manage', express.json({ limit: '2kb' }), async (req, res) => {
     if (!sameOrigin(req)) return res.sendStatus(403);
     const { sessionId, browserTaskId, action } = req.body || {};
-    if (!viewNativeTask || !/^session_[A-Za-z0-9_-]{1,128}$/.test(sessionId || '') || !validSelector(browserTaskId) || !['retain', 'unretain', 'close-task', 'status'].includes(action)) return res.sendStatus(400);
-    try { res.json(await viewNativeTask(sessionId, { browserTaskId }, action)); }
+    const identity = taskIdentity(req.body);
+    if (!identity || !(viewTask || (identity.nativeSessionId && viewNativeTask)) || !validSelector(browserTaskId) || !['retain', 'unretain', 'close-task', 'status'].includes(action)) return res.sendStatus(400);
+    try { res.json(await (viewTask ? viewTask({ ...identity, browserTaskId }, action) : viewNativeTask(sessionId, { browserTaskId }, action))); }
     catch { res.status(409).json({ errorCode: 'browser_task_action_unavailable' }); }
   });
   router.post('/task-control', express.json({ limit: '8kb' }), async (req, res) => {
     if (!sameOrigin(req) || !taskBroker) return res.sendStatus(403);
-    if (!/^session_[A-Za-z0-9_-]{1,128}$/.test(req.body?.sessionId || '')) return res.sendStatus(400);
-    try { res.json(await taskBroker({ ...req.body, sessionKey: undefined, nativeSessionId: req.body.sessionId })); }
+    const identity = taskIdentity(req.body);
+    if (!identity || !validSelector(req.body?.browserTaskId)) return res.sendStatus(400);
+    try { res.json(await taskBroker({ ...req.body, sessionId: undefined, nativeSessionId: undefined, sessionKey: undefined, ...identity })); }
     catch { res.status(409).json({ errorCode:'browser_task_control_unavailable' }); }
+  });
+  router.post('/internal/handback', (req, res, next) => {
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi || !resumeOwnerTask) return res.sendStatus(403);
+    requireInstanceSecretApi(req, res, next);
+  }, express.json({ limit: '1kb' }), async (req, res) => {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(req.body?.handoffId || '') || Object.keys(req.body).some(key => key !== 'handoffId')) return res.sendStatus(400);
+    try { res.json(await resumeOwnerTask(req.body.handoffId)); }
+    catch { res.status(409).json({ errorCode: 'browser_handback_unavailable' }); }
   });
   router.post('/internal/task', (req, res, next) => {
     if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi || !taskBroker) return res.sendStatus(403);

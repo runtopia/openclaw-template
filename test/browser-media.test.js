@@ -31,3 +31,25 @@ test('task media uses an authenticated read-only binary stream with exact task s
   const unauthorized = new WebSocket(url, { headers: { Origin: origin } });
   await new Promise(resolve => unauthorized.once('error', error => { assert.match(error.message, /403/); resolve(); }));
 });
+
+test('negotiated task input stays bound to ticket identity, requires the lease and rejects duplicate sequence IDs', async t => {
+  const app=express(),server=http.createServer(app),calls=[];
+  const routes=createBrowserRoutes({credentialsConfigured:true,desktop:{status:()=>({enabled:true})},isAuthed:()=>true,
+    readTaskFrame:async()=>({browserTaskId:'task_1',image:'data:image/jpeg;base64,/9j/2Q=='}),
+    taskBroker:async fields=>{calls.push(fields);if(fields.token!=='owner-token')throw new Error('No control lease');return {ok:true};}});
+  app.use('/browser',routes.router);server.on('upgrade',routes.handleUpgrade);
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{routes.close();server.close();});
+  const origin=`http://127.0.0.1:${server.address().port}`,url=origin.replace('http:','ws:')+'/browser/task-stream?sessionKey=agent:main:dashboard:owner&browserTaskId=task_1';
+  const ws=new WebSocket(url,{headers:{Origin:origin}});t.after(()=>ws.terminate());
+  await new Promise(resolve=>ws.once('open',resolve));
+  const send=value=>{const data=Buffer.from(JSON.stringify(value)),header=Buffer.alloc(4);header.writeUInt32BE(data.length);ws.send(Buffer.concat([header,data]));};
+  const receipt=type=>new Promise(resolve=>{const handler=data=>{if(data.readUInt32BE(0)+4===data.length){const value=JSON.parse(data.subarray(4));if(value.type===type){ws.off('message',handler);resolve(value);}}};ws.on('message',handler);});
+  let reply=receipt('browser.task.ready');send({type:'browser.task.hello',version:1});await reply;
+  reply=receipt('browser.task.ack');send({type:'browser.task.input',id:1,token:'not-owner',event:{type:'text',text:'denied'},sessionKey:'victim',browserTaskId:'victim'});
+  assert.equal((await reply).ok,false);
+  reply=receipt('browser.task.ack');send({type:'browser.task.input',id:2,token:'owner-token',event:{type:'text',text:'once'}});
+  assert.equal((await reply).ok,true);
+  assert.equal(calls[1].sessionKey,'agent:main:dashboard:owner');assert.equal(calls[1].browserTaskId,'task_1');
+  const closed=new Promise(resolve=>ws.once('close',resolve));send({type:'browser.task.input',id:2,token:'owner-token',event:{type:'text',text:'duplicate'}});await closed;
+  assert.equal(calls.length,2);
+});

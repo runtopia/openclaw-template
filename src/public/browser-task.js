@@ -1,3 +1,4 @@
+import { createTaskInputChannel, coalesceTaskInput } from './browser-task-input.js';
 /** Task-addressed page transport; no desktop focus or global input connection. */
 export function createScopedTaskViewer({ postNative, stopDesktop }) {
   const $ = (id) => document.querySelector(id);
@@ -20,7 +21,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     frameToken = null,
     frameCapturedAt = 0,
     tabsRevision = "",
-    gesture = null;
+    gesture = null,
+    fastInput = null, lastQueued = null;
   const surface = $("#task-canvas"),
     ctx = surface.getContext("2d");
   const sessionFields = () => selection?.sessionKey ? { sessionKey: selection.sessionKey } : { sessionId: selection.sessionId };
@@ -181,6 +183,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       if (surface.height !== image.naturalHeight) surface.height = image.naturalHeight;
       ctx.drawImage(image, 0, 0);
       frameSource = frame.image;
+      surface.dataset.frameCapturedAt=String(frame.capturedAt || 0);surface.dataset.framePaintedAt=String(Date.now());
     }
     if (revision !== paintRevision) return;
     frameTarget = frame.targetId;
@@ -198,9 +201,11 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     for (const [key, value] of Object.entries(sessionFields())) url.searchParams.set(key, value);
     url.searchParams.set('browserTaskId', task.browserTaskId);
     const socket = new WebSocket(url.href); media = socket; socket.binaryType = 'arraybuffer';
+    const channel=createTaskInputChannel(socket);fastInput=channel;socket.onopen=()=>channel.hello();
     socket.onmessage = event => {
       if (media !== socket || expected !== version || document.hidden) return;
       try {
+        if(channel.receive(event.data))return;
         const bytes = new Uint8Array(event.data);
         if (bytes.length < 5 || bytes.length > 720000) throw new Error('Invalid frame');
         const length = new DataView(event.data).getUint32(0);
@@ -215,7 +220,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       } catch { lastMediaAt = 0; socket.close(); }
     };
     socket.onerror = () => { lastMediaAt = 0; };
-    socket.onclose = () => { if (media === socket) { media = null; lastMediaAt = 0; mediaAttempted = false; retryMediaAt = Date.now() + 5000; } };
+    socket.onclose = () => { channel.close();if(fastInput===channel)fastInput=null;if (media === socket) { media = null; lastMediaAt = 0; mediaAttempted = false; retryMediaAt = Date.now() + 5000; } };
   }
   async function poll(expected) {
     if (expected !== version || !active) return;
@@ -239,7 +244,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         const query = new URLSearchParams({
           ...sessionFields(),
           browserTaskId: task.browserTaskId,
-          viewer: "1",
+          viewer: "1", after:String(state?.grantedAt || 0),
         });
         const response = await fetch("/browser/task-preview?" + query),
           frame = await response.json();
@@ -263,6 +268,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     enabled = false;
     if (active && token && task) await command("pause").catch(() => {});
     version++;
+    fastInput?.close();fastInput=null;lastQueued=null;
     media?.close(); media = null; mediaAttempted = false; lastMediaAt = 0; latestCaptureAt = 0; retryMediaAt = 0;
     clearTimeout(timer);
     active = true;
@@ -313,7 +319,15 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       if (kind === "request" || kind === "resume") {
         enabled = true;
         inputFailed = false;
-        if (result.controlProtocolVersion === 2) { frameTarget = null; frameGeneration = null; frameToken = null; }
+        if (result.controlProtocolVersion === 2) {
+          frameTarget = null; frameGeneration = null; frameToken = null;
+          if(result.mode==='human' && result.mine){
+            const query=new URLSearchParams({...sessionFields(),browserTaskId:task.browserTaskId,viewer:'1',after:String(result.grantedAt || 0)});
+            const response=await fetch('/browser/task-preview?'+query),frame=await response.json();
+            if(expected!==version)return;
+            if(!response.ok)throw new Error('Fresh control frame unavailable');await paint(frame,expected);
+          }
+        }
       }
       if (kind === "pause" || kind === "release" || kind === "recover")
         enabled = false;
@@ -350,7 +364,10 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
   }
   function send(event) {
     if (!writable()) return false;
-    if (queued >= 256 && event.type !== 'up') {
+    if(lastQueued && !lastQueued.started && lastQueued.version===version && lastQueued.epoch===state?.epoch){
+      const merged=coalesceTaskInput(lastQueued.event,event);if(merged){lastQueued.event=merged;return true;}
+    }
+    if (queued >= 64 && event.type !== 'up') {
       $("#status").textContent = "输入仍在处理中，请稍后继续";
       return false;
     }
@@ -359,8 +376,10 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       expectedTarget = frameTarget,
       expectedGeneration = frameGeneration;
     const observed = { targetId: frameTarget, generation: frameGeneration, frameToken, epoch: state?.epoch };
+    const item={event,started:false,version:expected,epoch:observed.epoch};lastQueued=item;
     pending = pending
       .then(async () => {
+        item.started=true;if(lastQueued===item)lastQueued=null;
         if (
           expected === version &&
           observed.epoch === state?.epoch &&
@@ -368,7 +387,12 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
           expectedTarget === frameTarget &&
           expectedGeneration === frameGeneration
         )
-          await command("input", event, observed);
+          {
+            const result=fastInput?.ready
+              ? await fastInput.send({token,expectedControlEpoch:observed.epoch,expectedTargetId:observed.targetId,generation:observed.generation,frameToken:observed.frameToken,event:item.event})
+              : await command('input',item.event,observed);
+            if('roundTripMs' in result){const samples=JSON.parse(surface.dataset.inputAckSamples || '[]');samples.push(result.roundTripMs);surface.dataset.inputAckSamples=JSON.stringify(samples.slice(-64));surface.dataset.inputAckMs=String(result.roundTripMs);}
+          }
       })
       .catch(() => {
         if (expected !== version || observed.epoch !== state?.epoch) return;

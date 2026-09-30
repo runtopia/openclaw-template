@@ -13,7 +13,7 @@ function setup(t) {
   };
   globalThis.clearTimeout = id => timers.has(id) ? timers.delete(id) : originals.clearTimeout(id);
   const element = id => {
-    if (!elements.has(id)) elements.set(id, { style: {}, width: 720, height: 450,
+    if (!elements.has(id)) elements.set(id, { style: {}, dataset:{}, width: 720, height: 450,
       context: { clearRect() {}, drawImage() {} }, getContext() { return this.context; }, listeners: {}, children: [],
       addEventListener(name, callback) { this.listeners[name] = callback; },
       replaceChildren() { this.children = []; }, append(child) { this.children.push(child); }, setAttribute() {},

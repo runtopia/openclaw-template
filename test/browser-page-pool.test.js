@@ -6,8 +6,9 @@ import { createBrowserPagePool } from '../src/browser/page-pool.js';
 function fixture(t, { oversizedAboveQuality = 100 } = {}) {
   let sockets = 0, loader = 'doc-1', scroll = 0, dropInput = false;
   const commands = [];
+  let transport;
   class Socket extends EventEmitter {
-    constructor() { super(); sockets++; queueMicrotask(() => this.emit('open')); }
+    constructor() { super(); transport=this; sockets++; queueMicrotask(() => this.emit('open')); }
     send(raw) {
       const { id, method, params } = JSON.parse(raw); commands.push({ method, params });
       if (dropInput && method.startsWith('Input.')) { queueMicrotask(() => this.emit('close')); return; }
@@ -24,7 +25,7 @@ function fixture(t, { oversizedAboveQuality = 100 } = {}) {
     WebSocketImpl: Socket,
   });
   t.after(pool.close);
-  return { pool, commands, sockets: () => sockets, navigate: () => { loader = 'doc-2'; }, scroll: () => { scroll = 500; }, disconnectInput: () => { dropInput = true; } };
+  return { pool, commands, emit: (method,params) => transport.emit('message',JSON.stringify({method,params})), sockets: () => sockets, navigate: () => { loader = 'doc-2'; }, scroll: () => { scroll = 500; }, disconnectInput: () => { dropInput = true; } };
 }
 
 test('captures and inputs reuse a page connection and reject other page frames', async t => {
@@ -83,3 +84,28 @@ test('large frames lower JPEG quality without shrinking the page and remain boun
   await assert.rejects(tooLarge.pool.capture('a', { viewer: true }), /Invalid browser frame/);
   assert.equal(tooLarge.commands.filter(c => c.method === 'Page.captureScreenshot').length, 3);
 });
+
+ test('screencast shares one renderer stream, acknowledges frames and never emulates a viewport', async t => {
+  const f=fixture(t), framesA=[],framesB=[];
+  const removeA=await f.pool.subscribe('a',frame=>framesA.push(frame));
+  const removeB=await f.pool.subscribe('a',frame=>framesB.push(frame));
+  assert.equal(f.commands.filter(c=>c.method==='Page.startScreencast').length,1);
+  f.emit('Page.screencastFrame',{sessionId:1,data:'aW1hZ2U=',metadata:{scrollOffsetY:0}});
+  for(let i=0;i<8;i++)await Promise.resolve();
+  assert.equal(framesA.length,1);assert.equal(framesB.length,1);
+  assert.equal(f.commands.filter(c=>c.method==='Page.captureScreenshot').length,0);
+  assert.equal(f.commands.filter(c=>c.method==='Page.screencastFrameAck').length,1);
+  assert.equal((await f.pool.capture('a',{viewer:true})).frameToken,framesA[0].frameToken);
+  await f.pool.dispatch('a',{type:'text',text:'once'},{protocolVersion:2,frameToken:framesA[0].frameToken});
+  removeA();assert.equal(f.commands.some(c=>c.method==='Page.stopScreencast'),false);
+  removeB();assert.equal(f.commands.filter(c=>c.method==='Page.stopScreencast').length,1);
+  assert.equal(f.commands.some(c=>c.method.startsWith('Emulation.') || c.method==='Page.bringToFront'),false);
+ });
+ test('continuous scrolling and typing tolerate owned viewport scroll, while new click and navigation remain fenced', async t => {
+  const f=fixture(t), frame=await f.pool.capture('a');f.scroll();
+  await f.pool.dispatch('a',{type:'scroll',x:.5,y:.5,deltaY:100},{protocolVersion:2,frameToken:frame.frameToken});
+  await f.pool.dispatch('a',{type:'key',key:'a',modifiers:2},{protocolVersion:2,frameToken:frame.frameToken});
+  const key=f.commands.find(c=>c.method==='Input.dispatchKeyEvent');assert.equal(key.params.modifiers,2);assert.equal(key.params.code,'KeyA');
+  await assert.rejects(f.pool.dispatch('a',{type:'down',x:.5,y:.5},{protocolVersion:2,frameToken:frame.frameToken}),/Stale/);
+  f.navigate();await assert.rejects(f.pool.dispatch('a',{type:'text',text:'wrong-document'},{protocolVersion:2,frameToken:frame.frameToken}),/Stale/);
+ });

@@ -9,7 +9,7 @@ import { createBrowserHandoff } from '../src/browser/handoff.js';
 
 // Exercise the shipped plugin, including its callback into the Wrapper. A
 // stubbed close-task response hides the serial-queue reentrancy deadlock.
-async function setup(t, { closeFails = false, pausePreview = false } = {}) {
+async function setup(t, { closeFails = false, pausePreview = false, multipleTasks = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-idle-runtime-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const bundle = new URL('../resources/openclaw-plugin-bundle/', import.meta.url);
@@ -28,6 +28,11 @@ async function setup(t, { closeFails = false, pausePreview = false } = {}) {
     toolName: 'browser', params: { action: 'open' }, result: { details: { targetId } },
   }, context);
   work.finish({ success: true }, context);
+  if (multipleTasks) {
+    const other = { sessionKey: 'other', runId: 'other-run' };
+    work.complete({ toolName: 'browser', params: { action: 'open' }, result: { details: { targetId: 'tab3' } } }, other);
+    work.finish({ success: true }, other);
+  }
   const task = work.status(context.sessionKey);
   const methods = new Map(), calls = [];
   let previewStarted, finishPreview;
@@ -105,6 +110,26 @@ test('actual uncertain native closure still retains its lease and prevents brows
   assert.equal(x.control.status().inFlight, 1);
   assert.equal(x.calls.includes('/stop'), false);
   assert.throws(() => x.control.command({ action: 'recover' }), /drained/);
+});
+
+test('idle shutdown preserves final frames for every conversation after handback', async t => {
+  const x = await setup(t, { multipleTasks: true });
+  x.control.requireFreshSnapshots();
+  x.advance();
+  await x.handoff.tick();
+  assert.equal(x.work.status('chat').resourceState, 'expired');
+  assert.equal(x.work.status('other').resourceState, 'live');
+  assert.equal(x.calls.includes('/stop'), false);
+  x.advance(30001);
+  await x.handoff.tick();
+  assert.equal(x.work.status('other').resourceState, 'expired');
+  assert.equal(x.calls.includes('/stop'), false);
+  x.advance(30001);
+  await x.handoff.tick();
+  assert.equal(x.calls.filter(call => call === '/stop').length, 1);
+  for (const session of ['chat', 'other']) assert.equal(x.work.frame(session, { browserTaskId: x.work.status(session).browserTaskId }).image, 'data:image/jpeg;base64,YQ==');
+  assert.equal(x.control.status().mode, 'ai');
+  assert.equal(x.control.status().inFlight, 0);
 });
 
 test('viewing during task capture prevents shared browser suspension', async t => {

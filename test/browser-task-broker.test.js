@@ -80,3 +80,43 @@ test("invalid input and denied authority never open a page transport", async () 
     validateTaskInput({ type: "scroll", x: 0, y: 0, deltaY: 99999 }),
   );
 });
+test("lost completion acknowledgement is reconciled before status without replaying native input", async () => {
+  const calls = [];
+  let fail = true, dispatches = 0;
+  const broker = createTaskBroker({ rpc: { rpcGateway: async (_, fields) => {
+    calls.push(fields);
+    if (fields.action === "input-end" && fail) { fail = false; throw new Error("connection lost"); }
+    return { ok: true, payload: { targetId: "owned" } };
+  } }, dispatch: async () => { dispatches++; } });
+  const identity = { sessionKey: "a", browserTaskId: "a", token: "token" };
+  await assert.rejects(broker({ ...identity, action: "input", event: { type: "text", text: "once" } }));
+  await broker({ ...identity, action: "status" });
+  assert.equal(dispatches, 1);
+  assert.deepEqual(calls.map(c => c.action), ["input-begin", "input-end", "input-end", "status"]);
+  assert.deepEqual(calls[1], calls[2]);
+});
+test("lost admission acknowledgement is drained without ever dispatching input", async () => {
+  const calls = [];
+  let dispatches = 0;
+  const broker = createTaskBroker({ rpc: { rpcGateway: async (_, fields) => {
+    calls.push(fields);
+    if (fields.action === "input-begin") throw new Error("admission acknowledgement lost");
+    return { ok: true, payload: {} };
+  } }, dispatch: async () => { dispatches++; } });
+  await assert.rejects(broker({ sessionKey: "a", browserTaskId: "a", token: "token", action: "input", event: { type: "key", key: "Enter" } }));
+  assert.equal(dispatches, 0);
+  assert.deepEqual(calls.map(c => c.action), ["input-begin", "input-end"]);
+  assert.equal(calls[1].uncertain, false);
+});
+test("rejected admission does not leave a fictitious completion blocking later status", async () => {
+  const calls = [];
+  const broker = createTaskBroker({ rpc: { rpcGateway: async (_, fields) => {
+    calls.push(fields.action);
+    return fields.action === "input-begin" ? { ok: false, error: { message: "Task frame changed; refresh before input" } }
+      : { ok: true, payload: { mode: "paused" } };
+  } } });
+  const identity = { sessionKey: "a", browserTaskId: "a", token: "token" };
+  await assert.rejects(broker({ ...identity, action: "input", event: { type: "text", text: "stale" } }));
+  assert.equal((await broker({ ...identity, action: "status" })).mode, "paused");
+  assert.deepEqual(calls, ["input-begin", "status"]);
+});

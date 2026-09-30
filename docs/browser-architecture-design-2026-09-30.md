@@ -504,3 +504,29 @@ Muse 的公开说明强调后台工作、浏览器执行和确定性的人工交
 弹出页完成导航后，input-end 的原生页面清单只刷新该任务已持有页面的 origin，不改选择、不转移另一任务页面、不暴露 query/fragment。同窗口后台页补充验证：8 次均有帧，输入到画面的中位数 42ms、P95 81ms；原轮询截图路径对应 P95 600ms。该验证允许人工输入激活自己的页，另一页内容未被改动。
 
 自动化验证：Template 全量 332 项、插件 74 项、Web Browser 35 项、当前插件源码生命周期集成 5 项通过；Web TypeScript、定向 ESLint 与 Template syntax 通过。部署与真实 Chrome 结果在实际完成后补录。
+
+## 19. 测试环境部署与 Chrome 全链路验收（2026-09-30）
+
+Plugins `develop` 先推送，随后运行 `npm run update:local-browser-use` 生成新的 SHA-256 命名包，再推送 Template `develop`。101 在 `/home/codoon/openclaw-template` 执行用户指定的 `git pull` 与 `docker buildx build --load -t openclaw:2026.7.1-standard-layered -f Dockerfile .`。只替换 `oc-inst-20c309ee`，保持端口、环境、数据卷与 restart policy，保留停止的旧容器及私有回退配置；另外两个实例没有替换。Web 在 185:3007 经 develop CI 更新至 `e01312d`。API / iOS / Android 本轮没有新增代码或发布。
+
+使用用户 Chrome 创建专用会话 A、B，通过真实 UI 操作与 DOM 上的回执样本验收；没有从用户 Chrome 提取登录令牌，也没有把私有 Profile 复制到隔离容器。输入 ACK 指客户端发送到执行确认，不能称为 input-to-paint：两台机器时钟有偏差，本轮没有同步时钟后的画面延迟统计。
+
+| 场景 | 实际结果 | 证据 |
+| --- | --- | --- |
+| Web 连续英文与数字 | 45 次 ACK，中位数 21ms，P95 60ms，最大 150ms；最终完整显示 `A2-0930-abcdefghijklmnopqrstuvwxyz0123456789` | `a2-streamed-input.jpg`、`input-ack-measurements.json` |
+| 全选、中文文本、emoji 退格、光标定位 | 替换原文字后结果为 `新版链路中文测试ABZC`；未把快捷键作为普通字符插入 | `a2-chinese-edit.jpg` |
+| 连续滚动 | 搜索结果从顶部滚到页底，仍可继续在原任务输入，无重新接管错误 | `a2-scroll.jpg` |
+| B 会话独立完成任务 | A 接管期间 B 新开 example.com 并完成，A 仍显示、输入自己的百度页面 | `b2-isolated-frame.jpg` |
+| 精确独立链接 | 带 B 的 sessionKey/browserTaskId 打开 Runtime，保持 B 的页面，不跟随 A 前台 | `b2-exact-window.jpg` |
+| 旧分享链接 | 不带 selector 的旧 URL 提示回聊天选择具体任务，不进入共享桌面 | `legacy-link-task-required.jpg` |
+| 无 waiter 的交还 | A3 的一次 snapshot 被人工控制阻挡并结束；交还自动生成一个续跑入场，AI 读取到完整 `A2-background-0123456789-abcdefghijklmnopqrstuvwxyz`，未手动发送“继续” | `a3-auto-handback.jpg` |
+| 续跑后的历史卡片 | 实测发现先失败且未绑定页面的调用被当成卡片 selector；修正为优先已完成页面调用。部署后卡片恢复 www.baidu.com 缩略图，点击可打开同一精确任务 | `a4-card-selector-fixed.jpg` |
+| 第二 Viewer | 原连接接管时另一窗口显示“此任务已被接管”，没有接管/输入按钮；同一任务画面可读 | `a4-second-viewer-read-only.jpg` |
+| 更多中的保留与关闭 | B 的保留切换为“恢复自动清理”，取消保留后关闭；保存最后截图，独立 Viewer 显示“任务网页已释放 · 最后截图” | `b2-closed-last-frame.jpg` |
+| 独立 Runtime 输入 | 同任务三个标签切回原页，连续输入完整显示 `RuntimeViewer-0930-0123456789`；该 Viewer 的 38 次点击/键盘/文字 ACK 中位数 31ms、P95 139ms。之后交还 | `a4-runtime-input.jpg`、`input-ack-measurements.json` |
+
+这些截图位于 `docs/browser-acceptance-2026-09-30/`。独立 Runtime 的上述数据采集于弹出页激活收尾补丁部署之前；不拿它充当最终版本的性能结果。
+
+最终部署源码为 Template `f7bd117`、Plugins `433915c`、Web `e01312d`。101 镜像为 `sha256:0fb58c5026b060bb7f93320852784ad12365144e8b708ca68fdc9290ae69e1ec`，容器于 18:08 更新，运行健康；容器内 Page Pool 和 Browser 插件 work.mjs 的 SHA-256 与本地源码一致。更新后新建 A5 任务已实际打开百度并读取标题，Web 与独立 Runtime 均能进入其精确任务页。最后的弹出标签坐标复验因 macOS 原生控制工具报告锁屏暂待继续，不将该项记为最终版本已通过。
+
+边界：这里验收的是桌面 Chrome 的主要操作链路，未覆盖长时间容量压力、上传下载与系统弹框、原生移动端前后台、全部网络中断/Runtime 崩溃组合。中文用例验证的是提交的 Unicode 文本，不是实体设备的拼音输入法 E2E。任务仍共享同一用户 Profile 的登录资料与历史；任务页面隔离不等于账号隔离。采集范围是网页可见视口，Chrome 原生工具栏不在 surface 内；当前展示任务标签和只读站点 origin。example.com 页面在验收中出现多语言轮换，不能把其内容变化当作 Viewer 清屏闪烁。

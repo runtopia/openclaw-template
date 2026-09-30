@@ -473,3 +473,18 @@ Muse 的公开说明强调后台工作、浏览器执行和确定性的人工交
 - 当前任务网址标为只读，可查看完整显示值；人工接管、交还、画面大小、返回聊天仍是主要入口。
 
 验证：页面池并发缩略图/大图不再设置 clip 或执行 Emulation/resize，输入坐标仍对应原页面；大图降质量次数与大小上限；新帧保留 canvas 和标签按钮；旧任务输入及迟到回调隔离测试均通过。Web 30 项 Browser 测试、TypeScript 和定向 ESLint 通过。本地改动需要重新构建并部署 Template 镜像和 Web，才能复验当前测试实例的视觉效果；不改变部署配置或重启现有实例。
+
+## 17. 验收遗留问题修复（2026-09-30）
+
+本轮修复验收中剩余的三类身份/状态问题，并补齐导航请求的截止时间：
+
+- **交还后无需手动再发“继续”**：任务级人工 lease 拦住 Browser 调用时，即使 Runtime 全局仍为 `ai`，也记录当前 Run / Tool Call 为任务的待续跑工作。交还仍先唤醒存活的 `browser_use wait`；没有 waiter 时持久化 handoff 意图。Canonical OneClaw Session 继续通过已有 Channel API 的 Run 检查与幂等入场。当前 Web 的 authenticated owner Dashboard Session 使用已有 native `chat.send`，经 loopback + instance secret 的 Wrapper 适配；注册表验证 owner 工具上下文、原 Run 已结束、未取消、无已观察到的更新 Run。请求只允许携带 handoffId，目标会话及固定幂等 Run ID 来自注册表。SDK 的 `runtime.gateway` 对第三方插件有限制，因此不直接调用它，也不将 Dashboard ID 冒充 Channel Session。工具工厂上下文没有 runId，wait 从当前 prompt 的可信 Run 关联；思考阶段的接管也保留续跑状态。原执行仍活跃时不补发竞争 Run；不确定回执重用同一幂等 ID。
+- **独立窗口不再跟随全局前台页**：`browser_use share` 从可信工具上下文获取当前任务，链接携带 `sessionKey + browserTaskId`。Web 验证两个 selector，再通过现有 owner-checked runtime-session API 换取指向 `/browser/?…` 的短期登录票据。Inline 打开和“更多 → 在新窗口打开”都传递同一精确任务 ID。Wrapper 将 Dashboard / Channel 身份分别交给同一个 task authority，不抢桌面焦点。无效或已释放 selector 也始终进入 scoped viewer，绝不回退 VNC。旧 workspace-only 入口显示回聊天选择具体任务的提示；Runtime 管理员直接访问 `/browser/` 的桌面诊断入口保留。
+- **历史卡片不再回退首个 open 的 example.com**：可见卡片从精确 Tool Call 所属任务读取最终 displayUrl，优先于不完整 transcript 的首个 open 结果。即使已有持久 screenshot 或归档图片暂不可读，也读取只读任务 metadata。缓存保存 displayUrl，离屏卡片不查询，结束卡片不持续轮询；其他 Session 的 metadata 不会改写标题。Web 缩略帧大小上限对齐 Runtime 的 700000 字符限制，避免完整视口截图被客户端错误拒绝。
+- **导航不再与自己的请求超时抢跑**：固定 OpenClaw `2026.7.1-2` 的 `browserNavigate` 请求原为 20 秒，与 Playwright 的默认导航截止时间相同，CDP 建连、重定向安全检查及响应序列化可能使请求先退出。本轮对受管 OneClaw Browser 的本地请求留 60 秒收尾时间，内部导航仍保持原 20 秒截止时间；不延长页面操作、不重试已经产生效果的导航。非 OneClaw 浏览器保持原值。Docker patch 校验唯一编译锚点与 exact version，已对 npm 原版 pinned bundle 实际执行验证。
+
+上一轮已修复的 captureScreenshot.clip 引发 renderer 临时缩放/还原闪烁、相同尺寸 canvas 反复清空，以及页面保留/关闭迁入“更多”保持生效。浏览器任务画面显示当前任务的网页及自己的标签/网址头部；不会捕获或操纵其他会话的 Chrome 原生标签栏。
+
+验证：Browser 插件 72 项，Template 全量 324 项，直接加载当前插件源码的 Wrapper 生命周期集成 5 项，Web Browser 34 项均通过；Template syntax、Web TypeScript / 修改文件 ESLint 通过。新增用例覆盖 lease 阻挡且无 waiter 的交还、原 Run 未结束不续跑、取消/新 Run 抑制旧意图、回执丢失幂等重试、精确 task 身份贯穿 resolve/preview/control/manage、无效链接不连接共享桌面、已有截图和图片失效时的历史网址恢复。
+
+本轮 Chrome 只读检查确认 185 测试站尚在旧前端：B 的旧卡片仍为 example.com，而精确任务页为 12306，“更多”尚无新增的精确任务新窗口入口。因此本节的“通过”指代码与自动化验证，不代表测试环境部署后的验收。需要更新 Template 镜像及 Web 后，重跑上述三个失败场景和实时画面的闪烁/完整视口检查。API / iOS / Android 无须为本轮修改协议或发布；原生任务 viewer 的 sessionId / toolCallId 入口兼容保留，移动端新分享 URL 可通过 Web 精确任务入口打开。

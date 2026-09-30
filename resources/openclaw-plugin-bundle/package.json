@@ -14,6 +14,6 @@
     "@openclaw/slack": "2026.7.1",
     "@openclaw/whatsapp": "2026.7.1",
     "@tencent-weixin/openclaw-weixin": "2.4.6",
-    "@oneclaw-plugins/browser-use": "file:tarballs/oneclaw-plugins-browser-use-0.1.0-d904e3806230445feb9d1c03fec853edccfaf435a8b731985773552cd3a3acf2.tgz"
+    "@oneclaw-plugins/browser-use": "file:tarballs/oneclaw-plugins-browser-use-0.1.0-b0d5bb3f4588f706f38f006de2784b6f6122a660cac96fd0bc5cc8c69e6983a4.tgz"
   }
 }

@@ -112,3 +112,20 @@ test('native task selection delivered before module startup never opens the shar
   assert.deepEqual(opened, [detail]);
   assert.deepEqual(requests, []);
 });
+
+test('shared task boot including an invalid selector never connects to the global desktop', async () => {
+  const source = fs.readFileSync(new URL('../src/public/browser.js', import.meta.url), 'utf8').replace(/^import [^\n]+\n/gm, '');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  for (const search of ['?sessionKey=agent%3Amain%3Adashboard%3Aowner&browserTaskId=task-1','?browserTaskId=missing']) {
+    const events = new Map(), element=selector=>({style:{},addEventListener:(name,fn)=>events.set(`${selector}:${name}`,fn)});
+    const scoped={active:false,async open(detail){this.active=true;this.selection=detail;}};
+    let desktops=0, reads=0;
+    class RFB {constructor(){desktops++;}}
+    await new AsyncFunction('createScopedTaskViewer','RFB','document','sessionStorage','window','fetch','setInterval','setTimeout','clearTimeout','location',source)(
+      ()=>scoped,RFB,{querySelector:element,addEventListener(){},hidden:false},{getItem:()=>null}, {addEventListener(){}},
+      async()=>{reads++;throw new Error('must not access global state');},()=>1,()=>1,()=>{}, {href:'https://runtime.example/browser/'+search,protocol:'https:',search});
+    assert.equal(desktops,0);assert.equal(reads,0);assert.equal(scoped.active,true);
+    assert.equal(scoped.selection.browserTaskId, search.includes('task-1')?'task-1':'missing');
+    assert.equal(scoped.selection.sessionKey, search.includes('task-1')?'agent:main:dashboard:owner':'invalid');
+  }
+});

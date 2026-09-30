@@ -1,3 +1,4 @@
+import { createOwnerHandback } from './browser/owner-handback.js';
 import { createTaskBroker } from './browser/task-broker.js';
 import { createBrowserPagePool } from './browser/page-pool.js';
 // index.js — Wrapper 主进程（镜像中由 tini 启动并回收孤儿子进程）
@@ -437,6 +438,12 @@ const browserPreview = createBrowserRoutes({
   readTaskFrame: async fields => {
     const frame = await gatewayRpc.rpcGateway('browseruse.preview', fields, 6000);
     if (!frame.ok) throw new Error('Browser preview unavailable');
+    return frame.payload;
+  },
+  resumeOwnerTask: createOwnerHandback(gatewayRpc),
+  viewTask: async (fields, action = 'view') => {
+    const frame = await gatewayRpc.rpcGateway('browseruse.control', { ...fields, action }, action === 'close-task' ? 60000 : 12000);
+    if (!frame.ok) throw new Error('Browser task view unavailable');
     return frame.payload;
   },
   viewNativeTask: async (nativeSessionId, selector = {}, action = 'view') => {

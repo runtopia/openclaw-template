@@ -12,9 +12,13 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     timer,
     pending = Promise.resolve(),
     queued = 0,
+    draining = false,
+    inputFailed = false,
     frameSource = "",
     frameTarget = null,
     frameGeneration = null,
+    frameToken = null,
+    frameCapturedAt = 0,
     gesture = null;
   const surface = $("#task-canvas"),
     ctx = surface.getContext("2d");
@@ -28,19 +32,22 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     if (!response.ok) throw new Error("Task unavailable");
     return response.json();
   };
-  const command = (action, event) =>
+  const command = (action, event, observed = { targetId: frameTarget, generation: frameGeneration, frameToken, epoch: state?.epoch }) =>
     request("/browser/task-control", {
       ...selection,
       browserTaskId: task.browserTaskId,
       token,
       action,
+      protocolVersion: 2,
+      expectedControlEpoch: observed.epoch,
       ...(event
         ? action === "select"
           ? { targetId: event.targetId }
           : {
               event,
-              expectedTargetId: frameTarget,
-              generation: frameGeneration,
+              expectedTargetId: observed.targetId,
+              generation: observed.generation,
+              frameToken: observed.frameToken,
             }
         : {}),
     });
@@ -52,7 +59,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     state.mode === "human" &&
     task?.resourceState === "live" &&
     frameTarget === task.targetId &&
-    frameGeneration === task.generation;
+    frameGeneration === task.generation &&
+    (!state.grantedAt || frameCapturedAt >= state.grantedAt);
   function render() {
     $("#task-snapshot").hidden = true;
     $("#scoped-task").hidden = false;
@@ -65,7 +73,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       !task ||
       task.resourceState !== "live" ||
       (state?.mode !== "ai" && !state?.mine);
-    $("#takeover").disabled = busy || !state || state.inFlight > 0;
+    $("#takeover").disabled = busy || !state || (state.mine && state.inFlight > 0);
     $("#takeover").textContent = state?.mine ? "继续操作" : "我来操作";
     $("#release").hidden = !state?.mine;
     $("#release").disabled = busy || state?.inFlight > 0;
@@ -129,6 +137,12 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     surface.style.touchAction = writable() ? "none" : "auto";
     postNative({
       schemaVersion: 1,
+      viewerProtocolVersion: 2,
+      viewerId: selection?.viewerId,
+      sessionId: selection?.sessionId,
+      toolCallId: selection?.toolCallId,
+      browserTaskId: task?.browserTaskId,
+      generation: task?.generation,
       type: "browser.viewer.state",
       connected: Boolean(frameSource),
       mode: state?.mode || "unknown",
@@ -138,9 +152,69 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       busy,
     });
   }
+  let media = null, mediaAttempted = false, lastMediaAt = 0, paintRevision = 0, nativeVisible = true, retryMediaAt = 0, latestCaptureAt = 0;
+  async function paint(frame, expected) {
+    if (expected !== version || !task) return;
+    if (frame.resourceState === 'live' && frame.capturedAt && frame.capturedAt < latestCaptureAt) return;
+    latestCaptureAt = frame.capturedAt || latestCaptureAt;
+    const revision = ++paintRevision;
+    if (
+      frame.browserTaskId !== task.browserTaskId ||
+      (frame.resourceState === "live" &&
+        (frame.generation !== task.generation ||
+          frame.targetId !== task.targetId)) ||
+      frame.image?.length > 700000 ||
+      !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(frame.image || "")
+    )
+      throw new Error("Preview unavailable");
+    if (frameSource !== frame.image) {
+      const image = new Image();
+      image.src = frame.image;
+      await image.decode();
+      if (expected !== version || revision !== paintRevision) return;
+      surface.width = image.naturalWidth;
+      surface.height = image.naturalHeight;
+      ctx.drawImage(image, 0, 0);
+      frameSource = frame.image;
+    }
+    if (revision !== paintRevision) return;
+    frameTarget = frame.targetId;
+    frameGeneration = frame.generation;
+    frameToken = frame.frameToken;
+    frameCapturedAt = frame.capturedAt || 0;
+    $("#status").textContent = task.displayUrl || "任务网页";
+    render();
+  }
+  function startMedia(expected) {
+    if (Date.now() < retryMediaAt || !nativeVisible || mediaAttempted || task?.resourceState !== 'live' || typeof WebSocket === 'undefined' || typeof location === 'undefined') return;
+    mediaAttempted = true;
+    const url = new URL('/browser/task-stream', location.href);
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.searchParams.set('sessionId', selection.sessionId);
+    url.searchParams.set('browserTaskId', task.browserTaskId);
+    const socket = new WebSocket(url.href); media = socket; socket.binaryType = 'arraybuffer';
+    socket.onmessage = event => {
+      if (media !== socket || expected !== version || document.hidden) return;
+      try {
+        const bytes = new Uint8Array(event.data);
+        if (bytes.length < 5 || bytes.length > 720000) throw new Error('Invalid frame');
+        const length = new DataView(event.data).getUint32(0);
+        if (length > 8192 || length + 4 >= bytes.length) throw new Error('Invalid metadata');
+        const frame = JSON.parse(new TextDecoder().decode(bytes.subarray(4, length + 4)));
+        const image = bytes.subarray(length + 4);
+        if (image[0] !== 255 || image[1] !== 216) throw new Error('Invalid JPEG');
+        let binary = '';
+        for (let i = 0; i < image.length; i += 8192) binary += String.fromCharCode(...image.subarray(i, i + 8192));
+        frame.image = 'data:image/jpeg;base64,' + btoa(binary);
+        void paint(frame, expected).then(() => { if (media === socket) lastMediaAt = Date.now(); }).catch(() => { lastMediaAt = 0; });
+      } catch { lastMediaAt = 0; socket.close(); }
+    };
+    socket.onerror = () => { lastMediaAt = 0; };
+    socket.onclose = () => { if (media === socket) { media = null; lastMediaAt = 0; mediaAttempted = false; retryMediaAt = Date.now() + 5000; } };
+  }
   async function poll(expected) {
     if (expected !== version || !active) return;
-    if (!document.hidden && !busy) {
+    if (nativeVisible && !document.hidden && !busy) {
       try {
         const next = await request("/browser/task-resolve", selection);
         if (expected !== version) return;
@@ -149,11 +223,14 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
           throw new Error("Task changed");
         if (!task) {
           task = next.browser;
+          selection.browserTaskId = task.browserTaskId;
           token = sessionStorage.getItem(storageKey());
         } else task = next.browser;
         const nextState = await command("status");
         if (expected !== version) return;
         state = nextState;
+        startMedia(expected);
+        if (Date.now() - lastMediaAt >= 2000) {
         const query = new URLSearchParams({
           sessionId: selection.sessionId,
           browserTaskId: task.browserTaskId,
@@ -162,34 +239,14 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         const response = await fetch("/browser/task-preview?" + query),
           frame = await response.json();
         if (expected !== version) return;
-        if (
-          !response.ok ||
-          frame.browserTaskId !== task.browserTaskId ||
-          (frame.resourceState === "live" &&
-            (frame.generation !== task.generation ||
-              frame.targetId !== task.targetId)) ||
-          frame.image?.length > 700000 ||
-          !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(frame.image || "")
-        )
-          throw new Error("Preview unavailable");
-        if (frameSource !== frame.image) {
-          const image = new Image();
-          image.src = frame.image;
-          await image.decode();
-          if (expected !== version) return;
-          surface.width = image.naturalWidth;
-          surface.height = image.naturalHeight;
-          ctx.drawImage(image, 0, 0);
-          frameSource = frame.image;
+        if (!response.ok) throw new Error("Preview unavailable");
+        await paint(frame, expected);
         }
-        frameTarget = frame.targetId;
-        frameGeneration = frame.generation;
-        $("#status").textContent = task.displayUrl || "任务网页";
-        render();
       } catch {
         if (expected === version) {
           frameTarget = null;
           frameGeneration = null;
+          frameToken = null;
           $("#status").textContent = "任务画面暂不可用，正在重试";
           render();
         }
@@ -201,10 +258,11 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     enabled = false;
     if (active && token && task) await command("pause").catch(() => {});
     version++;
+    media?.close(); media = null; mediaAttempted = false; lastMediaAt = 0; latestCaptureAt = 0; retryMediaAt = 0;
     clearTimeout(timer);
     active = true;
     busy = false;
-    selection = { sessionId: detail.sessionId, toolCallId: detail.toolCallId };
+    selection = { sessionId: detail.sessionId, toolCallId: detail.toolCallId, browserTaskId: detail.browserTaskId, viewerId: detail.viewerId };
     task = null;
     state = null;
     token = null;
@@ -212,8 +270,11 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     frameSource = "";
     frameTarget = null;
     frameGeneration = null;
+    frameToken = null;
     pending = Promise.resolve();
     queued = 0;
+    inputFailed = false;
+    draining = false;
     ctx.clearRect(0, 0, surface.width, surface.height);
     stopDesktop();
     render();
@@ -227,6 +288,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       previousTask = task,
       previousSelection = selection;
     try {
+      if (kind === 'release') { draining = true; await pending; draining = false; if (inputFailed) throw new Error('Inspect interrupted input before handback'); }
       const result = await command(kind);
       if (expected !== version) {
         if (result.token)
@@ -234,6 +296,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
             ...previousSelection,
             browserTaskId: previousTask.browserTaskId,
             token: result.token,
+            expectedControlEpoch: result.epoch,
             action: "pause",
           }).catch(() => {});
         return;
@@ -242,7 +305,11 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         token = result.token;
         sessionStorage.setItem(storageKey(), token);
       }
-      if (kind === "request" || kind === "resume") enabled = true;
+      if (kind === "request" || kind === "resume") {
+        enabled = true;
+        inputFailed = false;
+        if (result.controlProtocolVersion === 2) { frameTarget = null; frameGeneration = null; frameToken = null; }
+      }
       if (kind === "pause" || kind === "release" || kind === "recover")
         enabled = false;
       state = result;
@@ -251,17 +318,24 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         token = null;
         if (result.mode === "ai") postNative({
           schemaVersion: 1,
+          viewerProtocolVersion: 2,
+          viewerId: selection?.viewerId,
+          sessionId: selection?.sessionId,
+          toolCallId: selection?.toolCallId,
+          browserTaskId: task?.browserTaskId,
+          generation: task?.generation,
           type: "browser.control.returned",
           epoch: result.epoch,
           browser: result.browser,
           resumedWaitingTasks: result.resumedWaitingTasks,
+          continuation: result.continuation,
         });
       }
     } catch {
       if (expected !== version) return;
       enabled = false;
       $("#status").textContent = "操作未完成；未知输入保持暂停，请检查后重试";
-      postNative({ schemaVersion: 1, type: "browser.viewer.error" });
+      postNative({ schemaVersion: 1, viewerProtocolVersion: 2, viewerId: selection?.viewerId, sessionId: selection?.sessionId, toolCallId: selection?.toolCallId, type: "browser.viewer.error" });
     } finally {
       if (expected === version) {
         busy = false;
@@ -270,23 +344,31 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     }
   }
   function send(event) {
-    if (!writable() || queued >= 32) return;
+    if (!writable()) return false;
+    if (queued >= 256 && event.type !== 'up') {
+      $("#status").textContent = "输入仍在处理中，请稍后继续";
+      return false;
+    }
     queued++;
     const expected = version,
       expectedTarget = frameTarget,
       expectedGeneration = frameGeneration;
+    const observed = { targetId: frameTarget, generation: frameGeneration, frameToken, epoch: state?.epoch };
     pending = pending
       .then(async () => {
         if (
           expected === version &&
-          writable() &&
+          observed.epoch === state?.epoch &&
+          (writable() || draining) &&
           expectedTarget === frameTarget &&
           expectedGeneration === frameGeneration
         )
-          await command("input", event);
+          await command("input", event, observed);
       })
       .catch(() => {
-        if (expected !== version) return;
+        if (expected !== version || observed.epoch !== state?.epoch) return;
+        draining = false;
+        inputFailed = true;
         enabled = false;
         $("#status").textContent = "输入中断，请检查页面后明确继续";
         render();
@@ -294,6 +376,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       .finally(() => {
         if (expected === version) queued--;
       });
+    return true;
   }
   function point(event) {
     const r = surface.getBoundingClientRect(),
@@ -383,6 +466,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
   }
   const pause = () => {
     enabled = false;
+    media?.close(); media = null; mediaAttempted = false; lastMediaAt = 0;
     if (token && task) void command("pause").catch(() => {});
     render();
   };
@@ -410,6 +494,9 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     },
     open,
     action,
+    pause,
+    suspend: () => { nativeVisible = false; pause(); },
+    foreground: () => { nativeVisible = true; },
     send,
     manage,
     takeover: () => action(state?.mine ? "resume" : "request"),

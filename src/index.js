@@ -1,4 +1,5 @@
 import { createTaskBroker } from './browser/task-broker.js';
+import { createBrowserPagePool } from './browser/page-pool.js';
 // index.js — Wrapper 主进程（镜像中由 tini 启动并回收孤儿子进程）
 //
 // 职责：
@@ -21,7 +22,6 @@ import path from "node:path";
 import express from "express";
 
 import { createBrowserHandoff } from "./browser/handoff.js";
-import { createTaskPreview } from "./browser/preview.js";
 import { createBrowserDesktop } from "./browser/desktop.js";
 import { createBrowserRoutes, startManagedBrowser } from "./browser/routes.js";
 import { createGatewayManager } from "./gateway/manager.js";
@@ -431,8 +431,14 @@ app.use("/skills", createSkillsRouter());
 const browserHandoff = process.env.ONECLAW_BROWSER_USE_ENABLED === "1"
   ? createBrowserHandoff({ rpc: gatewayRpc, desktop: browserDesktop,
     idleMs: (() => { const ms = Number(process.env.ONECLAW_BROWSER_IDLE_MS ?? 1800000); return ms === 0 || (Number.isFinite(ms) && ms >= 60000 && ms <= 86400000) ? ms : 1800000; })() }) : null;
+const browserPages = createBrowserPagePool({ rpc: gatewayRpc });
 const browserPreview = createBrowserRoutes({
-  taskBroker: createTaskBroker({ rpc: gatewayRpc }),
+  taskBroker: createTaskBroker({ rpc: gatewayRpc, dispatch: browserPages.dispatch }),
+  readTaskFrame: async fields => {
+    const frame = await gatewayRpc.rpcGateway('browseruse.preview', fields, 6000);
+    if (!frame.ok) throw new Error('Browser preview unavailable');
+    return frame.payload;
+  },
   viewNativeTask: async (nativeSessionId, selector = {}, action = 'view') => {
     const frame = await gatewayRpc.rpcGateway('browseruse.control', { action, nativeSessionId, ...selector }, action === 'close-task' ? 60000 : 12000);
     if (!frame.ok) throw new Error('Browser task view unavailable');
@@ -443,7 +449,7 @@ const browserPreview = createBrowserRoutes({
     if (!frame.ok) throw new Error('Browser preview unavailable');
     return frame.payload;
   },
-  capturePreview: createTaskPreview({ rpc: gatewayRpc }),
+  capturePreview: browserPages.capture,
   handoff: browserHandoff,
   desktop: browserDesktop,
   isAuthed,
@@ -595,6 +601,7 @@ server.on("upgrade", (req, socket, head) => {
 function shutdown(signal) {
   console.log(`[sidecar] ${signal} received — shutting down`);
   browserPreview.close();
+  browserPages.close();
   browserDesktop.stop();
   oneclaw.stop();
   gatewayRpc.close();

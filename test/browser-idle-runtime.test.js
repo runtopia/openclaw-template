@@ -15,7 +15,8 @@ async function setup(t, { closeFails = false, pausePreview = false, multipleTask
   const bundle = new URL('../resources/openclaw-plugin-bundle/', import.meta.url);
   const manifest = JSON.parse(fs.readFileSync(new URL('package.json', bundle), 'utf8'));
   const spec = manifest.dependencies['@oneclaw-plugins/browser-use'];
-  execFileSync('tar', ['-xzf', new URL(spec.slice('file:'.length), bundle).pathname, '-C', dir]);
+  if (process.env.BROWSER_USE_SOURCE_DIR) fs.cpSync(process.env.BROWSER_USE_SOURCE_DIR, path.join(dir, 'package'), { recursive: true });
+  else execFileSync('tar', ['-xzf', new URL(spec.slice('file:'.length), bundle).pathname, '-C', dir]);
   const load = (name) => import(pathToFileURL(path.join(dir, 'package', name)).href);
   const { createControl } = await load('control.mjs');
   const { createBrowserWork } = await load('work.mjs');
@@ -59,6 +60,7 @@ async function setup(t, { closeFails = false, pausePreview = false, multipleTask
       } finally { clearTimeout(timer); }
     },
   });
+  t.after(() => control.handbackDelivery?.close());
   const rpc = { isGatewayConnected: () => true, rpcGateway: async (method, params) => {
     calls.push(params.action || params.path);
     if (methods.has(method)) {

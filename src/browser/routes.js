@@ -1,4 +1,5 @@
 import express from "express";
+import { createTaskMedia } from './media.js';
 import httpProxy from "http-proxy";
 import net from "node:net";
 import { WebSocketServer } from "ws";
@@ -47,11 +48,12 @@ export function browserFrameAncestors(webUrl) {
 }
 
 export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser, handoff,
-  requireInstanceSecretApi, taskBroker, capturePreview, readTaskPreview, viewNativeTask, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
+  requireInstanceSecretApi, taskBroker, capturePreview, readTaskPreview, readTaskFrame, viewNativeTask, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
   const router = express.Router();
   const controlWs = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const proxy = httpProxy.createProxyServer({ target, ws: true });
   const sockets = new Set();
+  const media = createTaskMedia({ readFrame: readTaskFrame });
   proxy.on("error", (_err, _req, socket) => socket?.destroy?.());
   proxy.on("proxyReqWs", (proxyReq) => {
     proxyReq.removeHeader("authorization");
@@ -159,6 +161,11 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     try { pathname = new URL(req.url, "http://internal").pathname; }
     catch { socket.destroy(); return true; }
     if (pathname !== "/browser" && !pathname.startsWith("/browser/")) return false;
+    if (pathname === '/browser/task-stream') {
+      if (!credentialsConfigured || !isAuthed(req) || !sameOrigin(req)) socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      else media.accept(req, socket, head);
+      return true;
+    }
     if (pathname === "/browser/control/ws") {
       if (!handoff || !credentialsConfigured || !isAuthed(req) || !sameOrigin(req)) {
         socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
@@ -203,6 +210,7 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     proxy.close();
     for (const ws of controlWs.clients) ws.terminate();
     controlWs.close();
+    media.close();
     handoff?.close();
   } };
 }

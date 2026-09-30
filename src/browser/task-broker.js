@@ -92,6 +92,8 @@ export function createTaskBroker({
       token: fields.token,
       expectedTargetId: fields.expectedTargetId,
       generation: fields.generation,
+      protocolVersion: fields.protocolVersion,
+      expectedControlEpoch: fields.expectedControlEpoch,
     };
     const taskKey = JSON.stringify([identity.nativeSessionId || identity.sessionKey, identity.browserTaskId]);
     const settle = async () => {
@@ -137,6 +139,9 @@ export function createTaskBroker({
         rpc,
         fetchImpl,
         WebSocketImpl,
+        frameToken: fields.frameToken,
+        protocolVersion: grant.protocolVersion,
+        minFrameAt: grant.minFrameAt,
       });
       return { ok: true };
     } catch (error) {

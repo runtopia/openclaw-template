@@ -17,16 +17,18 @@ The follow-up review covers task creation, viewing, manual takeover, native inpu
 | Web | Runtime pause prevents task continuation and hides inappropriate task recovery. Existing viewer identity includes Workspace, Session and tool call. |
 | Android | An open modal requests a fresh ticket when Session or tool call changes. |
 | iOS | Reopening clears the previous URL and control epoch so a restarted Runtime's lower epoch can be accepted. |
-| API | Reviewed owner authorization, one-time viewer tickets, runtime binding, redirects and WebSocket forwarding; no API changes were needed. |
+| Docker deployment | An omitted browser flag inherits the image's enabled default. The API now applies the configured host seccomp profile in this case and rejects missing sandbox configuration before replacing a container. The staging host lacked this configuration. |
+| Agent repair | Explicit shell commands that kill/restart shared Gateway or browser processes, or alter browser launch configuration, are rejected before a lease is admitted. Failed native browser startup must be reported to the operator. This is an admission guard for recognized repair commands, not a general shell sandbox. |
+| API authorization | Reviewed owner authorization, one-time viewer tickets, runtime binding, redirects and WebSocket forwarding; these paths required no changes. |
 
 ## Verification
 
-- Plugin: 57 targeted tests passed.
+- Plugin: 58 targeted tests passed.
 - Template: 308 tests passed and syntax lint passed, including real packaged-plugin callbacks, uncertainty retention, multiple-conversation final frame preservation and late page-selection/takeover rejection after switching tasks.
 - Isolated headed Chromium on the 101 test host: passed independent background input, Chinese/emoji input, wrong-token rejection, handback, popup ownership, stale-frame rejection, tab selection, lost acknowledgement reconciliation without input replay, idle reclamation and final snapshots for both conversations. The private test container has no network and uses a disposable profile.
 - Web: 27 browser tests, TypeScript and targeted ESLint passed.
 - Android: 19 browser tests, TypeScript and targeted ESLint passed. No Android device execution is claimed.
-- API: targeted Workspace browser Go tests and source checks passed.
+- API: targeted Workspace/browser deployment Go tests, source size checks, and the complete Go quality gate passed (format, dependencies, contract, test, vet and build).
 - iOS: static verification, physical-device build/install, and all 8 browser XCTest cases passed on the connected iPhone. UI/background acceptance remains on the local Bug Board pending explicit user verification.
 
 ## Recovery constraints

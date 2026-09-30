@@ -8,11 +8,11 @@ function setup(t) {
   const rpc = { isGatewayConnected: () => true, rpcGateway: async (method, params) => {
     calls.push(params.action || params.path);
     if (method === 'browser.request') {
-      if (params.path === '/tabs') return { ok: true, payload: { running: true, tabs: [{ type: 'page', targetId: 'tab1', url: 'https://example.com' }, ...(unowned ? [{ type: 'page', targetId: 'other', url: 'https://user.example/form' }] : [])] } };
+      if (params.path === '/tabs') return { ok: true, payload: { running: true, tabs: [{ type: 'page', targetId: 'default', url: 'about:blank' }, ...(unowned ? [{ type: 'page', targetId: 'other', url: 'https://user.example/form' }] : [])] } };
       if (params.path === '/stop') { assert.equal(calls.includes('idle-begin'), true); if (failStop) throw new Error('timeout'); }
       return { ok: true, payload: {} };
     }
-    if (params.action === 'idle-candidate') return { ok: true, payload: { candidate: candidate && mode === 'ai' ? { revision: 1, targetIds: ['tab1'] } : null } };
+    if (params.action === 'idle-candidate') return { ok: true, payload: { candidate: candidate && mode === 'ai' ? { revision: 1, targetIds: [] } : null } };
     if (params.action === 'idle-end') assert.equal(params.stopped, true);
     if (params.action === 'idle-uncertain') mode = 'paused';
     return { ok: true, payload: { starts: [], mode, inFlight: 0 } };
@@ -21,7 +21,7 @@ function setup(t) {
   t.after(() => h.close());
   return { h, calls, advance: (ms) => { time += ms; }, unowned: () => { unowned = true; }, fail: () => { failStop = true; }, retain: () => { candidate = false; }, mode: () => mode };
 }
-test('idle suspension respects viewing activity and only stops known completed task pages', async (t) => {
+test('idle suspension respects viewing activity and only stops an empty browser', async (t) => {
   const x = setup(t);
   x.advance(999); await x.h.tick(); assert.equal(x.calls.includes('/stop'), false);
   await x.h.status(); x.advance(999); await x.h.tick(); assert.equal(x.calls.includes('/stop'), false);

@@ -63,13 +63,17 @@ export function createTaskBroker({
   WebSocketImpl = WebSocket,
   dispatch = dispatchTaskInput,
 }) {
+  // Retain only completion acknowledgements for inputs that this Wrapper has
+  // finished dispatching. Reconcile before the next action for the same task;
+  // never replay a click/key/text command or expire an unknown input lease.
+  const pendingEnds = new Map();
   const authority = async (fields) => {
     const result = await rpc.rpcGateway(
       "browseruse.task-authority",
       fields,
       5000,
     );
-    if (!result.ok) throw new Error("Task authority refused the request");
+    if (!result.ok) throw Object.assign(new Error(result.error?.message || "Task authority refused the request"), { authorityRejected: true });
     return result.payload;
   };
   return async (fields) => {
@@ -89,6 +93,19 @@ export function createTaskBroker({
       expectedTargetId: fields.expectedTargetId,
       generation: fields.generation,
     };
+    const taskKey = JSON.stringify([identity.nativeSessionId || identity.sessionKey, identity.browserTaskId]);
+    const settle = async () => {
+      const end = pendingEnds.get(taskKey);
+      if (!end) return;
+      try { await authority(end); }
+      catch (error) {
+        // A begin may never have reached the Gateway. This only discards our
+        // unsent-input acknowledgement; it cannot clear another server lease.
+        if (!error.authorityRejected || error.message !== "Input lease mismatch") throw error;
+      }
+      if (pendingEnds.get(taskKey) === end) pendingEnds.delete(taskKey);
+    };
+    await settle();
     if (fields.action !== "input") {
       const token =
         fields.action === "request"
@@ -104,11 +121,15 @@ export function createTaskBroker({
     }
     const input = validateTaskInput(fields.event),
       callId = crypto.randomUUID();
-    const grant = await authority({
-      ...identity,
-      action: "input-begin",
-      callId,
-    });
+    let grant;
+    try { grant = await authority({ ...identity, action: "input-begin", callId }); }
+    catch (error) {
+      if (!error.authorityRejected) {
+        pendingEnds.set(taskKey, { ...identity, action: "input-end", callId, uncertain: false });
+        await settle();
+      }
+      throw error;
+    }
     let uncertain = false,
       pages;
     try {
@@ -126,13 +147,14 @@ export function createTaskBroker({
           : "Task input failed",
       );
     } finally {
-      await authority({
+      pendingEnds.set(taskKey, {
         ...identity,
         action: "input-end",
         callId,
         uncertain,
         pages,
       });
+      await settle();
     }
   };
 }

@@ -59,7 +59,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     $("#screen").hidden = true;
     $("#input-screen").hidden = true;
     $("#start").hidden = true;
-    $("#recover").hidden = state?.mode !== "paused" || state?.mine === true;
+    $("#recover").hidden = state?.mode !== "paused" || state?.mine === true || state?.controlScope === "runtime";
     $("#recover").disabled = busy || state?.inFlight > 0;
     $("#takeover").hidden =
       !task ||
@@ -149,8 +149,9 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
           task = next.browser;
           token = sessionStorage.getItem(storageKey());
         } else task = next.browser;
-        state = await command("status");
+        const nextState = await command("status");
         if (expected !== version) return;
+        state = nextState;
         const query = new URLSearchParams({
           sessionId: selection.sessionId,
           browserTaskId: task.browserTaskId,
@@ -194,7 +195,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     if (expected === version) timer = setTimeout(() => poll(expected), 1000);
   }
   async function open(detail) {
-    if (active && token) await action("pause");
+    enabled = false;
+    if (active && token && task) await command("pause").catch(() => {});
     version++;
     clearTimeout(timer);
     active = true;
@@ -207,6 +209,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     frameSource = "";
     frameTarget = null;
     frameGeneration = null;
+    pending = Promise.resolve();
+    queued = 0;
     ctx.clearRect(0, 0, surface.width, surface.height);
     stopDesktop();
     render();
@@ -242,7 +246,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       if (kind === "release" || kind === "recover") {
         sessionStorage.removeItem(storageKey());
         token = null;
-        postNative({
+        if (result.mode === "ai") postNative({
           schemaVersion: 1,
           type: "browser.control.returned",
           epoch: result.epoch,
@@ -278,12 +282,13 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
           await command("input", event);
       })
       .catch(() => {
+        if (expected !== version) return;
         enabled = false;
         $("#status").textContent = "输入中断，请检查页面后明确继续";
         render();
       })
       .finally(() => {
-        queued--;
+        if (expected === version) queued--;
       });
   }
   function point(event) {
@@ -357,18 +362,19 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     )
       return;
     busy = true;
+    const expected = version;
     try {
       const result = await request("/browser/task-manage", {
         sessionId: selection.sessionId,
         browserTaskId: task.browserTaskId,
         action: kind,
       });
+      if (expected !== version) return;
       task = result.browser;
     } catch {
-      $("#status").textContent = "任务操作未完成，请重试";
+      if (expected === version) $("#status").textContent = "任务操作未完成，请重试";
     } finally {
-      busy = false;
-      render();
+      if (expected === version) { busy = false; render(); }
     }
   }
   const pause = () => {

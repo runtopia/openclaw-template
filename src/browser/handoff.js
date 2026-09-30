@@ -179,7 +179,9 @@ export function createBrowserHandoff({ rpc, desktop, now = Date.now, heartbeatMs
       // the latest task revision and execution leases atomically in the plugin.
       if (stopped || owner || !rpc.isGatewayConnected() || now() - lastViewedAt < idleMs) return;
       const { candidate } = await command('idle-candidate');
-      if (!candidate || !Array.isArray(candidate.targetIds)) return;
+      if (!candidate || !Array.isArray(candidate.targetIds) || candidate.targetIds.length) return;
+      // Every task must capture its final frame and close its own pages before
+      // the shared process stops. Remaining idle tasks are reclaimed next tick.
       const tabs = await rpc.rpcGateway('browser.request', { method: 'GET', path: '/tabs', query: { profile: 'openclaw' } }, 5000);
       if (!tabs.ok || tabs.payload?.running !== true || !Array.isArray(tabs.payload?.tabs)) return;
       // Never close manually created or unrecognized pages. A fresh browser's

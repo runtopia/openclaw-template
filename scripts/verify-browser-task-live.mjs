@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { WebSocket } from "ws";
 import { createTaskBroker } from "../src/browser/task-broker.js";
 import { createTaskPreview } from "../src/browser/preview.js";
+import { createBrowserHandoff } from "../src/browser/handoff.js";
 const source = process.env.BROWSER_USE_SOURCE_DIR;
 if (!source)
   throw new Error(
@@ -17,6 +18,7 @@ const { createControl } = await import(path.join(source, "control.mjs"));
 const { createTaskControl } = await import(
   path.join(source, "task-control.mjs")
 );
+const { registerBrowserUse } = await import(path.join(source, "index.mjs"));
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-task-live-"));
 const display = process.env.BROWSER_TEST_DISPLAY || ":107",
   port = Number(process.env.BROWSER_TEST_PORT || 18813);
@@ -91,7 +93,8 @@ try {
     `<title>Task A</title><input id="value" style="position:fixed;left:0;top:0;width:400px;height:100px"><button id="popup" style="position:fixed;left:450px;top:0;width:100px;height:100px" onclick="window.open('about:blank','child')">Popup</button><div style="height:2500px">A</div>`,
   );
   const b = await create("<title>Task B</title><h1>B original</h1>");
-  const work = createBrowserWork(),
+  let time = Date.now();
+  const work = createBrowserWork({ now: () => time }),
     control = createControl({ file: path.join(dir, "control.json") }),
     authority = createTaskControl({ work, control });
   const bind = (session, target) => {
@@ -135,7 +138,15 @@ try {
       }
     },
   };
-  const broker = createTaskBroker({ rpc }),
+  let dropEndAcknowledgement = false;
+  const broker = createTaskBroker({ rpc: { rpcGateway: async (method, params) => {
+    const result = await rpc.rpcGateway(method, params);
+    if (dropEndAcknowledgement && params.action === "input-end") {
+      dropEndAcknowledgement = false;
+      throw new Error("Test: completion acknowledgement lost");
+    }
+    return result;
+  } } }),
     base = {
       sessionKey: "a",
       browserTaskId: taskA.browserTaskId,
@@ -156,7 +167,9 @@ try {
   const input = (event) => broker({ ...base, token, action: "input", event });
   await input({ type: "down", x: 0.08, y: 0.04 });
   await input({ type: "up", x: 0.08, y: 0.04 });
-  await input({ type: "text", text: "中文 A 😀" });
+  dropEndAcknowledgement = true;
+  await assert.rejects(input({ type: "text", text: "中文 A 😀" }));
+  assert.equal((await broker({ ...base, token, action: "status" })).inFlight, 0);
   const value = await cdp(a.webSocketDebuggerUrl, "Runtime.evaluate", {
     expression: 'document.getElementById("value").value',
     returnByValue: true,
@@ -203,6 +216,50 @@ try {
   );
   await broker({ ...base, token, action: "release" });
   assert.equal((await broker({ ...base, action: "status" })).mode, "ai");
+  // Real plugin -> Wrapper callback -> Chromium closure, with an injected
+  // clock only for idle eligibility. No production profile or instance used.
+  work.setRetained("a", { browserTaskId: taskA.browserTaskId }, false);
+  control.work = work;
+  control.taskControl = authority;
+  const handlers = new Map();
+  let handoff, running = true;
+  const lifecycleRpc = { isGatewayConnected: () => true, rpcGateway: async (method, params) => {
+    if (handlers.has(method)) {
+      let result;
+      await handlers.get(method)({ params, respond: (ok, payload, error) => { result = { ok, payload, error }; } });
+      return result;
+    }
+    if (params.method === "DELETE") {
+      const response = await fetch(`http://127.0.0.1:${port}/json/close/${params.body.targetId}`);
+      return { ok: response.ok };
+    }
+    if (params.path === "/tabs") {
+      const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      return { ok: true, payload: { running, tabs: tabs.map(t => ({ targetId: t.id, type: t.type, url: t.url })) } };
+    }
+    if (params.path === "/stop") {
+      await new Promise(resolve => { chrome.once("exit", resolve); chrome.kill("SIGTERM"); });
+      running = false;
+      return { ok: true };
+    }
+    return { ok: true, payload: { profile: "openclaw", running, cdpReady: running, pid: running ? chrome.pid : null } };
+  } };
+  registerBrowserUse({ on() {}, registerGatewayMethod(name, handler) { handlers.set(name, handler); } }, control, {
+    idleMs: 1000, preview: async target => (await capture(target)).image,
+    close: (event, context) => handoff.focusTask({ runId: event.runId, toolCallId: event.toolCallId,
+      sessionKey: context.sessionKey, targetId: event.params.targetId }, "close"),
+  });
+  handoff = createBrowserHandoff({ rpc: lifecycleRpc, desktop: { controlReady: () => false, stopControl: async () => {} }, now: () => time, idleMs: 1000 });
+  try {
+    for (const delay of [2000, 31000, 31000]) { time += delay; await handoff.tick(); }
+    assert.equal(control.status().mode, "ai");
+    assert.equal(control.status().inFlight, 0);
+    assert.equal(running, false, JSON.stringify({ lifecycle: work.lifecycle(1000), tasks: [work.status("a"), work.status("b")], control: control.status() }));
+    for (const session of ["a", "b"]) {
+      assert.equal(work.status(session).resourceState, "expired");
+      assert.match(work.frame(session, { browserTaskId: work.status(session).browserTaskId }).image, /^data:image\/jpeg;base64,/);
+    }
+  } finally { await handoff.close(); }
   console.log(
     JSON.stringify({
       passed: true,
@@ -217,6 +274,10 @@ try {
       popupOwnership: true,
       staleFrameRejected: true,
       tabSelection: true,
+      lostInputAcknowledgementReconciled: true,
+      inputNotReplayed: true,
+      idleReclamation: true,
+      finalSnapshotsPreserved: true,
     }),
   );
 } finally {

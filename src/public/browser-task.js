@@ -19,6 +19,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     frameGeneration = null,
     frameToken = null,
     frameCapturedAt = 0,
+    tabsRevision = "",
     gesture = null;
   const surface = $("#task-canvas"),
     ctx = surface.getContext("2d");
@@ -82,7 +83,9 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
     $("#pan").hidden = true;
     const tabs = $("#task-tabs");
     tabs.hidden = !(task?.pages?.length > 1);
-    if (task?.pages?.length > 1) {
+    const nextTabsRevision = JSON.stringify([task?.browserTaskId, task?.pages, task?.targetId, state?.mine, state?.mode, busy]);
+    if (task?.pages?.length > 1 && nextTabsRevision !== tabsRevision) {
+      tabsRevision = nextTabsRevision;
       tabs.replaceChildren();
       task.pages.forEach((page, index) => {
         const button = document.createElement("button");
@@ -119,8 +122,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       $(id).disabled = busy || state?.mode !== "ai";
     }
     $("#retain-task").textContent = task?.retained
-      ? "取消页面保留"
-      : "保留任务页面";
+      ? "恢复自动清理"
+      : "保留页面供稍后使用";
     $("#control-status").textContent = !task
       ? "正在定位任务"
       : task.resourceState !== "live"
@@ -172,8 +175,9 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       image.src = frame.image;
       await image.decode();
       if (expected !== version || revision !== paintRevision) return;
-      surface.width = image.naturalWidth;
-      surface.height = image.naturalHeight;
+      // Assigning even the same canvas dimensions clears its current frame.
+      if (surface.width !== image.naturalWidth) surface.width = image.naturalWidth;
+      if (surface.height !== image.naturalHeight) surface.height = image.naturalHeight;
       ctx.drawImage(image, 0, 0);
       frameSource = frame.image;
     }

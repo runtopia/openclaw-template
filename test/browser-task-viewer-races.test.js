@@ -14,7 +14,7 @@ function setup(t) {
   globalThis.clearTimeout = id => timers.has(id) ? timers.delete(id) : originals.clearTimeout(id);
   const element = id => {
     if (!elements.has(id)) elements.set(id, { style: {}, width: 720, height: 450,
-      getContext: () => ({ clearRect() {}, drawImage() {} }), listeners: {}, children: [],
+      context: { clearRect() {}, drawImage() {} }, getContext() { return this.context; }, listeners: {}, children: [],
       addEventListener(name, callback) { this.listeners[name] = callback; },
       replaceChildren() { this.children = []; }, append(child) { this.children.push(child); }, setAttribute() {},
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 720, height: 450 }) });
@@ -55,6 +55,23 @@ function setup(t) {
   const poll = async () => { const [id, fn] = timers.entries().next().value; timers.delete(id); await fn(); await flush(); };
   return { viewer, requests, tasks, elements, flush, poll, intercept: fn => { intercept = fn; } };
 }
+
+test('new frames preserve the existing surface and task tab buttons instead of clearing or replacing them', async t => {
+  const x = setup(t), surface = x.elements.get('#task-canvas');
+  let widthWrites = 0, heightWrites = 0, draws = 0, frameNumber = 0;
+  Object.defineProperty(surface, 'width', { get: () => 720, set: () => { widthWrites++; } });
+  Object.defineProperty(surface, 'height', { get: () => 450, set: () => { heightWrites++; } });
+  surface.context.drawImage = () => { draws++; };
+  x.tasks.a.pages = [{ targetId: 'tab-a', displayUrl: 'https://example.com' }, { targetId: 'tab-a2', displayUrl: 'https://www.baidu.com' }];
+  x.intercept(url => url.startsWith('/browser/task-preview') ? { ...x.tasks.a, image: 'data:image/jpeg;base64,' + (++frameNumber === 1 ? 'YQ==' : 'Yg==') } : undefined);
+  await x.viewer.open({ sessionId: 'a', toolCallId: 'a' }); await x.flush();
+  const buttons = [...x.elements.get('#task-tabs').children];
+  await x.poll();
+  assert.equal(draws, 2, 'the updated picture is painted');
+  assert.equal(widthWrites + heightWrites, 0, 'same-size frames must not reset the canvas');
+  assert.equal(x.elements.get('#task-tabs').children[0], buttons[0], 'focused tab controls survive frame updates');
+  assert.equal(x.elements.get('#task-tabs').children[1], buttons[1]);
+});
 
 test('late old-task management response cannot replace the selected task', async t => {
   const x = setup(t);

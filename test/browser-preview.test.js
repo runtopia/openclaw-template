@@ -24,12 +24,12 @@ function setup({ cdpUrl = 'http://127.0.0.1:18800', wsUrl = 'ws://127.0.0.1:1880
   return { capture, commands, fetches: () => fetches };
 }
 
-test('preview captures only the requested tab with bounded JPEG resolution, without input or focus', async () => {
+test('preview captures only the requested tab without mutating its viewport, input or focus', async () => {
   const f = setup();
   assert.deepEqual(await f.capture('tab1'), { image: 'data:image/jpeg;base64,ZnJhbWU=' });
   assert.deepEqual(f.commands.map(command => command.method), ['Page.getLayoutMetrics', 'Page.captureScreenshot']);
-  const clip = f.commands[1].params.clip;
-  assert.equal(clip.width * clip.scale, 720); assert.equal(clip.y, 20);
+  assert.equal(f.commands[1].params.clip, undefined, 'CDP clip re-emulates the visible renderer');
+  assert.equal(f.commands[1].params.captureBeyondViewport, false);
   await assert.rejects(f.capture('other'), /closed/);
 });
 

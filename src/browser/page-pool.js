@@ -87,10 +87,18 @@ export function createBrowserPagePool({ rpc, fetchImpl = fetch, WebSocketImpl = 
   async function capture(targetId, { viewer = false } = {}) {
     const startedAt = now();
     const connection = await connect(targetId), before = await view(connection);
-    const result = await connection.call('Page.captureScreenshot', {
-      format: 'jpeg', quality: viewer ? 80 : 60, captureBeyondViewport: false, fromSurface: true,
-      clip: { x: before.pageX, y: before.pageY, width: before.clientWidth, height: before.clientHeight, scale: Math.min(1, (viewer ? 1440 : 720) / before.clientWidth) },
-    });
+    // A CDP clip temporarily emulates/resizes the renderer, even for a read-only
+    // screenshot. Concurrent thumbnail/live captures then disturb the headed
+    // desktop and can restore each other's temporary viewport. Capture the
+    // existing surface whole; bound bandwidth with JPEG quality, never geometry.
+    let result;
+    for (const quality of viewer ? [80, 60, 40] : [60, 40]) {
+      result = await connection.call('Page.captureScreenshot', {
+        format: 'jpeg', quality, captureBeyondViewport: false, fromSurface: true,
+      });
+      if (typeof result.data !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(result.data)) throw new Error('Invalid browser frame');
+      if (result.data.length <= 680000) break;
+    }
     const after = await view(connection);
     if (signature(before) !== signature(after)) throw new Error('Page changed during capture');
     if (typeof result.data !== 'string' || result.data.length > 680000 || !/^[A-Za-z0-9+/=]+$/.test(result.data)) throw new Error('Invalid browser frame');

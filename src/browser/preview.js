@@ -44,7 +44,6 @@ function capture(url, WebSocketImpl, viewer) {
           if (message.error || !viewport || !Number.isFinite(viewport.clientWidth) || !Number.isFinite(viewport.clientHeight) || viewport.clientWidth <= 0 || viewport.clientHeight <= 0) throw new Error('Preview viewport unavailable');
           socket.send(JSON.stringify({ id: 2, method: 'Page.captureScreenshot', params: {
             format: 'jpeg', quality: viewer ? 85 : 65, captureBeyondViewport: false, fromSurface: true,
-            clip: { x: viewport.pageX, y: viewport.pageY, width: viewport.clientWidth, height: viewport.clientHeight, scale: Math.min(1, (viewer ? 1440 : 720) / viewport.clientWidth) },
           } }));
         } else if (message.id === 2) {
           const image = message.result?.data;

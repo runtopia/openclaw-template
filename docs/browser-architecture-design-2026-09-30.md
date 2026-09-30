@@ -493,7 +493,7 @@ Muse 的公开说明强调后台工作、浏览器执行和确定性的人工交
 
 人工接管时的瓶颈横跨传输、渲染与任务调度：原输入逐次经过 Gateway RPC、插件 loopback、lease admission、CDP 与 completion；画面按 200ms 截图；同一 Chrome 窗口的后台标签不能持续产生 screencast 帧。只缩短轮询周期会增加负载，不能消除后台页面停帧。
 
-本轮使用持久 CDP Page.screencastFrame 推送当前任务页面，立即 ACK，保留最新帧、丢弃积压帧；现有截图只作恢复兜底。任务切页、导航、窗口尺寸变化与关闭均重新验证目标身份。受管新页面使用独立 Chrome 窗口，仅最大化自己新建的窗口，并关闭后台渲染节流；不激活其他任务。固定 OpenClaw 版本的 native creator patch 继续校验唯一编译锚点，其他浏览器行为保持原值。
+本轮使用持久 CDP Page.screencastFrame 推送当前任务页面，立即 ACK，保留最新帧、丢弃积压帧；现有截图只作恢复兜底。任务切页、导航、窗口尺寸变化与关闭均重新验证目标身份。受管新页面使用独立 Chrome 窗口，仅最大化自己新建的窗口，并关闭后台渲染节流；不激活其他任务。网页自身的 window.open 仍可能创建同窗口标签；仅已获得 lease admission 且已验证帧身份的人工输入可激活自己的目标，激活后重新验证文档/几何，查看和截图不抢焦点。固定 OpenClaw 版本的 native creator patch 继续校验唯一编译锚点，其他浏览器行为保持原值。
 
 人工输入在现有 owner ticket 绑定的任务媒体 WebSocket 上显式协商，顺序编号与 ACK；lease 获取、交还仍走原任务 authority。每次输入仍验证 controller token、control epoch、task generation、目标与帧文档几何。仅合并尚未发送的相邻文字、移动和滚动，保留按下/抬起与键盘顺序；丢失 ACK 不重发已执行输入。接管成功后取真实时间晚于 grant 的新帧，避免第一下输入用到旧画面。Web 与 Runtime viewer 使用相同输入实现；旧客户端仍是只读媒体，API 的现有二进制代理无须变更。
 
@@ -501,4 +501,6 @@ Muse 的公开说明强调后台工作、浏览器执行和确定性的人工交
 
 隔离验证在 101 使用相同镜像、独立临时 Chromium profile 与无网络容器，输入 A 时 B 保持前台：同窗口背景标签 12 次中缺失 6 次 screencast；改为独立窗口后 12 次均有帧，输入到下一画面的中位数 35ms、P95 63ms，顺序与另一任务未被修改检查通过。此数据只衡量 renderer/CDP，不包含真实 Web/API 链路，不能代替部署后 Chrome 验收。可复现脚本为 `scripts/verify-browser-latency-live.mjs`。
 
-自动化验证：Template 全量 331 项、插件 73 项、Web Browser 34 项、当前插件源码生命周期集成 5 项通过；Web TypeScript、定向 ESLint 与 Template syntax 通过。部署与真实 Chrome 结果在实际完成后补录。
+弹出页完成导航后，input-end 的原生页面清单只刷新该任务已持有页面的 origin，不改选择、不转移另一任务页面、不暴露 query/fragment。同窗口后台页补充验证：8 次均有帧，输入到画面的中位数 42ms、P95 81ms；原轮询截图路径对应 P95 600ms。该验证允许人工输入激活自己的页，另一页内容未被改动。
+
+自动化验证：Template 全量 332 项、插件 74 项、Web Browser 35 项、当前插件源码生命周期集成 5 项通过；Web TypeScript、定向 ESLint 与 Template syntax 通过。部署与真实 Chrome 结果在实际完成后补录。

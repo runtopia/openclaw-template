@@ -121,11 +121,25 @@ export function createBrowserPagePool({ rpc, fetchImpl = fetch, WebSocketImpl = 
     return { image: `data:image/jpeg;base64,${result.data}`, frameToken, capturedAt:startedAt };
   }
   async function dispatch(targetId, input, options = {}) {
-    const connection = await connect(targetId), viewport = await view(connection);
+    const connection = await connect(targetId);
+    let viewport = await view(connection);
+    function validateFrame() {
     if (options.protocolVersion === 2) {
       const frame = frames.get(options.frameToken);
       if (!frame || frame.targetId !== targetId || frame.at < (options.minFrameAt || 0) || now() - frame.at > 10000 || (frame.signature !== signature(viewport) && !( ['text', 'key', 'scroll', 'move', 'up'].includes(input.type) && frame.geometry === geometry(viewport) )))
         throw new Error('Stale task frame; refresh before input');
+    }
+    }
+    validateFrame();
+    // window.open may put another owned tab in the same Chrome window. Only
+    // admitted human input may activate its exact target; viewers never focus.
+    const cast = casts.get(targetId);
+    if (cast && (cast.visible === false || !cast.frame || now() - cast.frame.capturedAt > 500)) {
+      try {
+        await connection.call('Page.bringToFront', {}, true);
+        viewport = await view(connection);
+      } catch (error) { error.browserOperationUncertain = true; throw error; }
+      validateFrame();
     }
     try {
     if (input.type === 'text') await connection.call('Input.insertText', { text: input.text }, true);
@@ -150,8 +164,9 @@ export function createBrowserPagePool({ rpc, fetchImpl = fetch, WebSocketImpl = 
     const connection = await connect(targetId);
     let cast = casts.get(targetId);
     if (!cast) {
-      cast = { listeners: new Set(), closed: false, epoch: 0, busy: false, latest: null, frame: null };
+      cast = { listeners: new Set(), closed: false, epoch: 0, busy: false, latest: null, frame: null, visible: null };
       casts.set(targetId, cast);
+      const visibility = connection.on('Page.screencastVisibilityChanged', ({visible}) => { cast.visible = visible === true; });
       const navigate = connection.on('Page.frameNavigated', ({frame}) => { if (!frame?.parentId) cast.epoch++; });
       const receive = connection.on('Page.screencastFrame', frame => {
         void connection.call('Page.screencastFrameAck', {sessionId:frame.sessionId}).catch(() => {});
@@ -160,7 +175,7 @@ export function createBrowserPagePool({ rpc, fetchImpl = fetch, WebSocketImpl = 
         cast.latest = {frame, epoch:cast.epoch, at:Number.isFinite(timestamp) && timestamp>0 ? Math.min(now(),Math.round(timestamp)) : now()};
         void paintLatest();
       });
-      cast.detach = () => { navigate(); receive(); };
+      cast.detach = () => { navigate(); receive(); visibility(); };
       async function paintLatest() {
         if (cast.busy || cast.closed || !cast.latest) return;
         cast.busy = true;

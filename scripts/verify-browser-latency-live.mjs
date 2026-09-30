@@ -49,5 +49,5 @@ try{
  assert.equal(value.result.value,'a'.repeat(10)+'b'.repeat(samples));
  const untouched=await cdp(b.webSocketDebuggerUrl,'Runtime.evaluate',{expression:"document.querySelector('#field').value",returnByValue:true});assert.equal(untouched.result.value,'');
  const stats=values=>{const valid=values.filter(Number.isFinite).sort((a,b)=>a-b);return {samples:values.length,missing:values.length-valid.length,medianMs:valid[Math.floor(valid.length*.5)],p95Ms:valid[Math.min(valid.length-1,Math.floor(valid.length*.95))]};};
- console.log(JSON.stringify({backgroundTarget:true,separateWindows:process.env.BROWSER_BENCH_WINDOWS==='1',baseline:stats(baseline),screencast:stats(stream),inputOrdering:'PASS',otherTargetUntouched:'PASS'}));
+ console.log(JSON.stringify({backgroundTargetAtStart:true,humanInputMayActivateOwnedTarget:true,separateWindows:process.env.BROWSER_BENCH_WINDOWS==='1',baseline:stats(baseline),screencast:stats(stream),inputOrdering:'PASS',otherTargetUntouched:'PASS'}));
 }finally{remove?.();pool.close();chrome.kill('SIGTERM');xvfb.kill('SIGTERM');await sleep(300);await fs.rm(dir,{recursive:true,force:true});}

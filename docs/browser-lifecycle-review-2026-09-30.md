@@ -14,6 +14,8 @@ The follow-up review covers task creation, viewing, manual takeover, native inpu
 | Handback and idle stop | A validated Wrapper stop lease is independent of page element snapshots. Model-authored page actions still require a new snapshot after handback. |
 | Read-only diagnosis | `browser_use action=status` reports control state even while paused. It does not bypass admission or release unfinished leases. |
 | Shared native viewer | Old input failures, polling responses and task-management responses cannot mutate a newly selected task. Global recovery is not offered as task-local recovery. |
+| Preview readiness | A transient read-only capture failure invalidates the input frame until a fresh matching frame arrives; it does not discard the user's manual-control intent. Explicit visibility pause and uncertain input still require resumption. |
+| Compact targets | Agent page actions reject compact aliases such as `t2` before admission and provide the current task's full target ID. A bare focus result cannot invent an alias page or bypass canonical task ownership. |
 | Web | Runtime pause prevents task continuation and hides inappropriate task recovery. Existing viewer identity includes Workspace, Session and tool call. |
 | Android | An open modal requests a fresh ticket when Session or tool call changes. |
 | iOS | Reopening clears the previous URL and control epoch so a restarted Runtime's lower epoch can be accepted. |
@@ -23,8 +25,8 @@ The follow-up review covers task creation, viewing, manual takeover, native inpu
 
 ## Verification
 
-- Plugin: 58 targeted tests passed.
-- Template: 308 tests passed and syntax lint passed, including real packaged-plugin callbacks, uncertainty retention, multiple-conversation final frame preservation and late page-selection/takeover rejection after switching tasks.
+- Plugin: 60 targeted tests passed.
+- Template: 309 tests passed and syntax lint passed, including real packaged-plugin callbacks, uncertainty retention, multiple-conversation final frame preservation, stale responses after task switching and recovery from transient preview failures.
 - Isolated headed Chromium on the 101 test host: passed independent background input, Chinese/emoji input, wrong-token rejection, handback, popup ownership, stale-frame rejection, tab selection, lost acknowledgement reconciliation without input replay, idle reclamation and final snapshots for both conversations. The private test container has no network and uses a disposable profile.
 - Web: 27 browser tests, TypeScript and targeted ESLint passed.
 - Android: 19 browser tests, TypeScript and targeted ESLint passed. No Android device execution is claimed.

@@ -111,7 +111,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
       $(id).disabled = busy || state?.mode !== "ai";
     }
     $("#retain-task").textContent = task?.retained
-      ? "允许空闲释放"
+      ? "取消页面保留"
       : "保留任务页面";
     $("#control-status").textContent = !task
       ? "正在定位任务"
@@ -120,11 +120,11 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         : state?.mode === "waiting"
           ? "等待此任务当前步骤结束"
           : state?.mode === "paused"
-            ? "此任务已暂停"
+            ? state?.mine ? "你已暂停操作 · 可继续或交还 AI" : "此任务已暂停"
             : writable()
               ? "你正在操作此任务 · 其他任务可继续"
               : state?.mode === "human"
-                ? "此任务已被接管"
+                ? state?.mine ? "已接管 · 点击继续操作" : "此任务已被接管"
                 : "此任务的实时画面";
     surface.style.touchAction = writable() ? "none" : "auto";
     postNative({
@@ -188,7 +188,8 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         render();
       } catch {
         if (expected === version) {
-          enabled = false;
+          frameTarget = null;
+          frameGeneration = null;
           $("#status").textContent = "任务画面暂不可用，正在重试";
           render();
         }

@@ -4,9 +4,14 @@ import { setImmediate } from 'node:timers/promises';
 import { createScopedTaskViewer } from '../src/public/browser-task.js';
 
 function setup(t) {
-  const globals = ['document', 'window', 'sessionStorage', 'fetch', 'Image'];
+  const globals = ['document', 'window', 'sessionStorage', 'fetch', 'Image', 'setTimeout', 'clearTimeout'];
   const originals = Object.fromEntries(globals.map(k => [k, globalThis[k]]));
-  const elements = new Map(), requests = [];
+  const elements = new Map(), requests = [], timers = new Map();
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    if (ms !== 1000) return originals.setTimeout(fn, ms, ...args);
+    const id = {}; timers.set(id, fn); return id;
+  };
+  globalThis.clearTimeout = id => timers.has(id) ? timers.delete(id) : originals.clearTimeout(id);
   const element = id => {
     if (!elements.has(id)) elements.set(id, { style: {}, width: 720, height: 450,
       getContext: () => ({ clearRect() {}, drawImage() {} }), listeners: {}, children: [],
@@ -47,7 +52,8 @@ function setup(t) {
     if (originals[key] === undefined) delete globalThis[key]; else globalThis[key] = originals[key];
   } });
   const flush = async () => { for (let i = 0; i < 8; i++) await setImmediate(); };
-  return { viewer, requests, tasks, elements, flush, intercept: fn => { intercept = fn; } };
+  const poll = async () => { const [id, fn] = timers.entries().next().value; timers.delete(id); await fn(); await flush(); };
+  return { viewer, requests, tasks, elements, flush, poll, intercept: fn => { intercept = fn; } };
 }
 
 test('late old-task management response cannot replace the selected task', async t => {
@@ -103,4 +109,16 @@ test('late old-task takeover failure cannot disable the new task', async t => {
   await x.viewer.open({ sessionId: 'b', toolCallId: 'b' }); await x.flush(); await x.viewer.takeover();
   fail(new Error('old takeover lost')); await takeover;
   assert.equal(x.viewer.canType, true);
+});
+
+test('a transient preview failure blocks stale-frame input and resumes after a valid frame', async t => {
+  const x = setup(t);
+  await x.viewer.open({ sessionId: 'a', toolCallId: 'a' }); await x.flush(); await x.viewer.takeover();
+  assert.equal(x.viewer.canType, true);
+  x.intercept(url => { if (url.startsWith('/browser/task-preview')) throw new Error('Preview busy'); });
+  await x.poll();
+  assert.equal(x.viewer.canType, false, 'stale image cannot receive input');
+  x.intercept(() => undefined);
+  await x.poll();
+  assert.equal(x.viewer.canType, true, 'read-only preview failure does not discard manual control intent');
 });

@@ -87,15 +87,17 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         button.addEventListener("click", async () => {
           if (busy) return;
           busy = true;
+          const expected = version;
           render();
           try {
-            state = await command("select", { targetId: page.targetId });
+            const nextState = await command("select", { targetId: page.targetId });
+            if (expected !== version) return;
+            state = nextState;
             task = state.browser;
           } catch {
-            $("#status").textContent = "切换页面失败";
+            if (expected === version) $("#status").textContent = "切换页面失败";
           } finally {
-            busy = false;
-            render();
+            if (expected === version) { busy = false; render(); }
           }
         });
         tabs.append(button);
@@ -255,6 +257,7 @@ export function createScopedTaskViewer({ postNative, stopDesktop }) {
         });
       }
     } catch {
+      if (expected !== version) return;
       enabled = false;
       $("#status").textContent = "操作未完成；未知输入保持暂停，请检查后重试";
       postNative({ schemaVersion: 1, type: "browser.viewer.error" });

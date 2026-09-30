@@ -67,6 +67,9 @@ export function applyBrowserDefaults(cfg, env = process.env) {
     }
   }
   if (env.ONECLAW_BROWSER_USE_ENABLED === "1") {
+    // OneClaw owns retained/human-controlled pages. Native idle/limit sweeps
+    // cannot see those leases and must not close them behind the authority.
+    cfg.browser.tabCleanup = { ...cfg.browser.tabCleanup, enabled: false };
     cfg.browser.defaultProfile = "openclaw";
     cfg.plugins ??= {};
     cfg.plugins.entries ??= {};

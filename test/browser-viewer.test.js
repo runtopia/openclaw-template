@@ -45,7 +45,7 @@ test('native viewer emits a versioned handback only after release and omits cred
   assert.equal(storage.has('browser-use-controller'), false);
 });
 
-test('mobile keyboard sends committed Chinese, emoji and editing keys only while owned', async () => {
+test('native keyboard sends committed text to the scoped task without a writable desktop', async () => {
   const elements = new Map(), events = new Map(), instances = [], sent = [], keys = [];
   const element = selector => {
     if (!elements.has(selector)) elements.set(selector, { style: {}, value: '', clientWidth: 390, clientHeight: 500, blur() {}, focus() {}, setSelectionRange() {}, setAttribute() {}, addEventListener: (name, fn) => events.set(`${selector}:${name}`, fn) });
@@ -67,7 +67,8 @@ test('mobile keyboard sends committed Chinese, emoji and editing keys only while
   } });
   const source = fs.readFileSync(new URL('../src/public/browser.js', import.meta.url), 'utf8').replace(/^import [^\n]+\n/gm, '');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  await new AsyncFunction('createScopedTaskViewer', 'RFB', 'document', 'sessionStorage', 'window', 'fetch', 'setInterval', 'setTimeout', 'clearTimeout', 'location', source)(() => ({ active: false }), RFB,
+  const scoped = { active: false, canType: false, async open() { this.active = true; }, async takeover() { this.canType = true; }, async action() { this.canType = false; }, send(event) { keys.push(event); return true; } };
+  await new AsyncFunction('createScopedTaskViewer', 'RFB', 'document', 'sessionStorage', 'window', 'fetch', 'setInterval', 'setTimeout', 'clearTimeout', 'location', source)(() => scoped, RFB,
     { hidden: false, querySelector: element, addEventListener() {} },
     { getItem() { return null; }, setItem() {}, removeItem() {} },
     { addEventListener: (name, fn) => events.set(name, fn), ReactNativeWebView: { postMessage: value => sent.push(JSON.parse(value)) } },
@@ -76,7 +77,7 @@ test('mobile keyboard sends committed Chinese, emoji and editing keys only while
   assert.equal(instances.length, 1, 'unresolved native task cannot acquire writable transport');
   await events.get('oneclaw:browser-task')({ detail: { sessionId: 'session_1' } });
   await events.get('#takeover:click')();
-  instances.at(-1).listeners.get('connect')();
+  assert.equal(instances.length, 1, 'task control does not create a writable VNC connection');
   await events.get('#keyboard:click')();
   const input = element('#keyboard-input');
   events.get('#keyboard-input:compositionstart')(); input.value = '\u200b你'; events.get('#keyboard-input:input')();
@@ -85,12 +86,11 @@ test('mobile keyboard sends committed Chinese, emoji and editing keys only while
   input.value = '\u200b😀'; events.get('#keyboard-input:input')();
   input.value = ''; events.get('#keyboard-input:input')();
   events.get('#keyboard-input:keydown')({ key: 'Enter', preventDefault() {} });
-  assert.deepEqual(keys, [0x01004f60, 0x0101f600, 0xff08, 0xff0d]);
+  assert.deepEqual(keys, [{ type: 'text', text: '你' }, { type: 'text', text: '😀' }, { type: 'key', key: 'Backspace' }, { type: 'key', key: 'Enter' }]);
   await events.get('#release:click')();
   input.value = 'x'; events.get('#keyboard-input:input')();
   assert.equal(keys.length, 4);
-  events.get('oneclaw:browser-command')({ detail: { action: 'release' } });
-  assert.equal(sent.at(-1).type, 'browser.viewer.error');
+  assert.equal(scoped.canType, false);
 });
 
 test('native task selection delivered before module startup never opens the shared desktop', async () => {

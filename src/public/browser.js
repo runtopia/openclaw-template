@@ -136,23 +136,7 @@ const canType = () => scoped.active ? scoped.canType : (!taskSelection || taskRe
 window.addEventListener('oneclaw:browser-task', async event => {
   const sessionId = event.detail?.sessionId;
   if (!/^session_[A-Za-z0-9_-]{1,128}$/.test(sessionId || '')) return;
-  const toolCallId = event.detail?.toolCallId || undefined;
-  if (toolCallId) { await scoped.open(event.detail); return; }
-  taskSelection = { sessionId, ...(toolCallId ? { toolCallId } : {}) };
-  taskReady = false; selectedTaskId = null; selectedTask = null; document.querySelector('#task-snapshot').hidden = false; disconnectInput(); takeover.disabled = true;
-  const version = ++selectionVersion;
-  try {
-    const response = await fetch('/browser/task-view', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(taskSelection) });
-    const result = await response.json();
-    if (version !== selectionVersion) return;
-    selectedTask = result.browser; selectedTaskId = result.browser?.browserTaskId || null;
-    if (!response.ok || !selectedTaskId || result.browser.resourceState !== 'live') {
-      await showTaskSnapshot();
-      status.textContent = '此任务页面已释放或暂时不可用，不能接管其他任务。'; return;
-    }
-    selectedTaskId = result.browser.browserTaskId;
-    await refreshControl();
-  } catch { status.textContent = '暂时无法打开此任务画面，请重试。'; }
+  await scoped.open(event.detail);
 });
 async function showTaskSnapshot() {
   if (!taskSelection) return;
@@ -184,7 +168,7 @@ keyboard.addEventListener('click', () => { if (!canType()) return; panMode = fal
 function sendTypedText() {
   if (composing || !canType()) return;
   const value = keyboardInput.value;
-  if (scoped.active) { const text = value.startsWith(sentinel) ? value.slice(1) : value; if (text) scoped.send({type:'text',text}); else if (!value) scoped.send({type:'key',key:'Backspace'}); keyboardInput.value=sentinel; return; }
+  if (scoped.active) { const text = value.startsWith(sentinel) ? value.slice(1) : value; if (text && !scoped.send({type:'text',text})) return; else if (!value) scoped.send({type:'key',key:'Backspace'}); keyboardInput.value=sentinel; return; }
   if (!value) inputRfb.sendKey(0xff08);
   else for (const char of value.replace(/^\u200b/, '')) { const point = char.codePointAt(0); inputRfb.sendKey(point <= 255 ? point : 0x01000000 | point); }
   keyboardInput.value = sentinel;
@@ -269,7 +253,8 @@ takeover.addEventListener("click", () => controlAction(controlState?.mode === "p
 release.addEventListener("click", () => controlAction("release"));
 recover.addEventListener("click", () => controlAction("recover"));
 window.addEventListener('oneclaw:browser-command', event => {
-  if (event.detail?.action === 'pause' && scoped.active) { void scoped.action('pause'); return; }
+  if (event.detail?.action === 'pause' && scoped.active) { scoped.suspend(); return; }
+  if (event.detail?.action === 'foreground' && scoped.active) { scoped.foreground(); return; }
   if (event.detail?.action !== 'release') return;
   if (scoped.active) { void scoped.action('release'); return; }
   if (!busy && controlState?.mine && controlState.inFlight === 0) void controlAction('release');

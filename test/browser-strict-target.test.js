@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { patchStrictBrowserTarget, patchBrowserNavigationDeadline } from '../scripts/patch-openclaw-browser-target.mjs';
+import { patchStrictBrowserTarget, patchBrowserNavigationDeadline, patchTaskBrowserWindows } from '../scripts/patch-openclaw-browser-target.mjs';
 import { applyBrowserDefaults } from '../src/config/browser.js';
 
 test('managed browser never falls back to another session sole remaining page', async () => {
@@ -42,4 +42,21 @@ async function browserArmDialog(baseUrl, opts) { return 'untouched'; }`;
   assert.equal(await evaluate('1'), 60000); assert.equal(await evaluate('0'), 20000);
   assert.equal(requests, 2, 'one navigation per invocation, never retry a partially completed action');
   assert.throws(() => patchBrowserNavigationDeadline(source.replace('2e4', '3e4')), /anchor/);
+ });
+
+ test('managed pages create their own maximized window while other hosts keep native tab behavior',async()=>{
+  const source=`async function createTargetViaCdp(opts) {
+    const targetId=(await send("Target.createTarget", { url: opts.url }))?.targetId;
+    await prepareCdpTargetSession(send, targetId);
+    return {targetId};
+  }
+async function prepareCdpTargetSession(send,targetId) {}`;
+  const patched=patchTaskBrowserWindows(source);assert.equal(patchTaskBrowserWindows(patched),patched);
+  for(const enabled of ['1','0']){
+    const calls=[];
+    const result=await vm.runInNewContext(patched+'\ncreateTargetViaCdp({url:"https://example.com"})',{process:{env:{ONECLAW_BROWSER_USE_ENABLED:enabled}},send:async(method,params)=>{calls.push({method,params});return method==='Target.createTarget'?{targetId:'new-owned-page'}:{windowId:7};}});
+    assert.equal(result.targetId,'new-owned-page');assert.equal(calls[0].params.newWindow,enabled==='1'?true:undefined);
+    assert.equal(calls.filter(c=>c.method==='Browser.setWindowBounds').length,enabled==='1'?1:0);
+  }
+  assert.throws(()=>patchTaskBrowserWindows(source.replace('url: opts.url','url: other')),/anchor/);
  });

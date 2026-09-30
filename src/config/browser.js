@@ -50,6 +50,9 @@ export function applyBrowserDefaults(cfg, env = process.env) {
   if (cfg.browser.profiles?.openclaw) cfg.browser.profiles.openclaw.headless = false;
   cfg.browser.attachOnly ??= false;
   cfg.browser.extraArgs = [...headedArgs(cfg.browser.extraArgs ?? ["--start-maximized", "--noerrdialogs"]), `--force-device-scale-factor=${browserDisplaySettings(env).scaleFactor}`];
+  if (env.ONECLAW_BROWSER_USE_ENABLED === '1' && Array.isArray(cfg.browser.extraArgs)) {
+    cfg.browser.extraArgs=[...new Set([...cfg.browser.extraArgs.filter(arg=>typeof arg!=='string' || !arg.startsWith('--force-device-scale-factor=')),'--disable-background-timer-throttling','--disable-backgrounding-occluded-windows','--disable-renderer-backgrounding']),`--force-device-scale-factor=${browserDisplaySettings(env).scaleFactor}`];
+  }
   if (env.ONECLAW_BROWSER_NO_SANDBOX === "1") cfg.browser.noSandbox = true;
   if (env.ONECLAW_BROWSER_NO_SANDBOX === "0") cfg.browser.noSandbox = false;
   cfg.browser.ssrfPolicy ??= {};

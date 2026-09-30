@@ -1,3 +1,4 @@
+import { createTaskStream } from './browser/task-stream.js';
 import { createOwnerHandback } from './browser/owner-handback.js';
 import { createTaskBroker } from './browser/task-broker.js';
 import { createBrowserPagePool } from './browser/page-pool.js';
@@ -435,6 +436,7 @@ const browserHandoff = process.env.ONECLAW_BROWSER_USE_ENABLED === "1"
 const browserPages = createBrowserPagePool({ rpc: gatewayRpc });
 const browserPreview = createBrowserRoutes({
   taskBroker: createTaskBroker({ rpc: gatewayRpc, dispatch: browserPages.dispatch }),
+  subscribeTaskFrames: createTaskStream({ rpc: gatewayRpc, pages: browserPages }),
   readTaskFrame: async fields => {
     const frame = await gatewayRpc.rpcGateway('browseruse.preview', fields, 6000);
     if (!frame.ok) throw new Error('Browser preview unavailable');

@@ -35,9 +35,14 @@ export function validateTaskInput(value) {
       "ArrowRight",
       "Home",
       "End",
+      "a", "z", "y",
     ].includes(value.key)
   )
-    return { type: "key", key: value.key };
+    {
+      const modifiers=value.modifiers ?? 0;
+      if(!Number.isInteger(modifiers) || modifiers<0 || modifiers>15 || (['a','z','y'].includes(value.key) && !(modifiers&2)))throw new Error('Invalid keyboard shortcut');
+      return {type:'key',key:value.key,...(modifiers ? {modifiers} : {})};
+    }
   if (
     ["down", "up", "move", "scroll"].includes(value.type) &&
     [value.x, value.y].every((n) => Number.isFinite(n) && n >= 0 && n <= 1)
@@ -269,14 +274,18 @@ async function dispatchTaskInput(
               ArrowRight: 39,
               Home: 36,
               End: 35,
+              a: 65,
+              z: 90,
+              y: 89,
             };
             commands = ["keyDown", "keyUp"].map((type) => ({
               method: "Input.dispatchKeyEvent",
               params: {
                 type,
                 key: input.key,
-                code: input.key,
+                code: /^[azy]$/.test(input.key) ? `Key${input.key.toUpperCase()}` : input.key,
                 windowsVirtualKeyCode: codes[input.key],
+                ...(input.modifiers ? { modifiers: input.modifiers } : {}),
                 ...(type === "keyDown" && input.key === "Enter"
                   ? { text: "\r" }
                   : {}),

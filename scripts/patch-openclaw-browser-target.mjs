@@ -28,6 +28,29 @@ export function patchBrowserNavigationDeadline(source) {
   return source.slice(0, start) + section.replace(before, after) + source.slice(end);
 }
 
+// Each owned page needs its own active Chrome window. Background tabs stop
+// producing compositor frames even when background throttling flags are off.
+export function patchTaskBrowserWindows(source) {
+  const start=source.indexOf('async function createTargetViaCdp(opts) {');
+  const end=source.indexOf('async function prepareCdpTargetSession(',start);
+  if(start<0 || end<start)throw new Error('Pinned browser page creation missing');
+  const section=source.slice(start,end);
+  const before='send("Target.createTarget", { url: opts.url })';
+  const after='send("Target.createTarget", { url: opts.url, ...(process.env.ONECLAW_BROWSER_USE_ENABLED === "1" ? {newWindow:true} : {}) })';
+  if(section.includes(after))return source;
+  if(section.split(before).length!==2)throw new Error('Pinned browser window anchor changed');
+  const ready='await prepareCdpTargetSession(send, targetId);';
+  if(section.split(ready).length!==2)throw new Error('Pinned browser target preparation changed');
+  const maximize=`if (process.env.ONECLAW_BROWSER_USE_ENABLED === "1") {
+      try {
+        const window = await send("Browser.getWindowForTarget", {targetId});
+        await send("Browser.setWindowBounds", {windowId:window.windowId,bounds:{windowState:"maximized"}});
+      } catch { /* A bounds error must never create a duplicate page. */ }
+    }
+    ${ready}`;
+  return source.slice(0,start)+section.replace(before,after).replace(ready,maximize)+source.slice(end);
+}
+
 export function patchBundle(root) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   if (pkg.version !== '2026.7.1-2') throw new Error('Revalidate strict-target patch for this OpenClaw version');
@@ -38,10 +61,15 @@ export function patchBundle(root) {
   const clients = fs.readdirSync(dist).filter(name => name.endsWith('.js')).map(name => path.join(dist, name))
     .filter(file => fs.readFileSync(file, 'utf8').includes('async function browserNavigate(baseUrl, opts) {'));
   if (clients.length !== 1) throw new Error('Expected one pinned browser navigation client');
-  // Validate both transformations before writing either bundle.
+  const creators = fs.readdirSync(dist).filter(name => name.endsWith('.js')).map(name => path.join(dist, name))
+    .filter(file => fs.readFileSync(file, 'utf8').includes('async function createTargetViaCdp(opts) {'));
+  if(creators.length!==1)throw new Error('Expected one pinned browser page creator');
+  // Validate every transformation before writing any bundle.
   const resolver = patchStrictBrowserTarget(fs.readFileSync(files[0], 'utf8'));
   const client = patchBrowserNavigationDeadline(fs.readFileSync(clients[0], 'utf8'));
+  const creator=patchTaskBrowserWindows(fs.readFileSync(creators[0],'utf8'));
   fs.writeFileSync(files[0], resolver);
   fs.writeFileSync(clients[0], client);
+  fs.writeFileSync(creators[0],creator);
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) patchBundle(process.argv[2]);

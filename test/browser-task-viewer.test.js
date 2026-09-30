@@ -6,7 +6,7 @@ import {createScopedTaskViewer} from '../src/public/browser-task.js';
 test('changing tasks drops queued old input and never sends it with the next task token',async t=>{
  const originals=Object.fromEntries(['document','window','sessionStorage','fetch','Image'].map(k=>[k,globalThis[k]]));
  const elements=new Map(),events=new Map(),requests=[],messages=[];let pendingInput;
- const element=id=>{if(!elements.has(id))elements.set(id,{style:{},width:720,height:450,getContext:()=>({clearRect(){},drawImage(){}}),addEventListener:(name,fn)=>events.set(id+name,fn),getBoundingClientRect:()=>({left:0,top:0,width:720,height:450}),setPointerCapture(){}});return elements.get(id);};
+ const element=id=>{if(!elements.has(id))elements.set(id,{style:{},dataset:{},width:720,height:450,getContext:()=>({clearRect(){},drawImage(){}}),addEventListener:(name,fn)=>events.set(id+name,fn),getBoundingClientRect:()=>({left:0,top:0,width:720,height:450}),setPointerCapture(){}});return elements.get(id);};
  globalThis.document={hidden:false,querySelector:element,addEventListener(){}};globalThis.window={addEventListener(){},confirm:()=>true};
  globalThis.sessionStorage={getItem:()=>null,setItem(){},removeItem(){}};
  globalThis.Image=class{naturalWidth=720;naturalHeight=450;decode(){return Promise.resolve();}};

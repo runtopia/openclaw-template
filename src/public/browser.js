@@ -176,7 +176,14 @@ function sendTypedText() {
 keyboardInput.addEventListener('compositionstart', () => { composing = true; });
 keyboardInput.addEventListener('compositionend', () => { composing = false; sendTypedText(); });
 keyboardInput.addEventListener('input', sendTypedText);
-keyboardInput.addEventListener('keydown', event => { if (!composing && canType() && ['Enter', 'Tab'].includes(event.key)) { event.preventDefault(); if (scoped.active) { scoped.send({type:'key',key:event.key}); return; } inputRfb.sendKey(event.key === 'Enter' ? 0xff0d : 0xff09); } });
+keyboardInput.addEventListener('keydown', event => {
+  if(composing || !canType())return;
+  const shortcut=(event.ctrlKey || event.metaKey) && ['a','z','y'].includes(event.key.toLowerCase());
+  if(scoped.active && (shortcut || ['Enter','Tab','Backspace','Delete','Escape','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End'].includes(event.key))) {
+    event.preventDefault();const modifiers=(event.altKey?1:0)|((event.ctrlKey || event.metaKey)?2:0)|(event.shiftKey?8:0);scoped.send({type:'key',key:shortcut ? event.key.toLowerCase() : event.key,...(modifiers ? {modifiers} : {})});return;
+  }
+  if(['Enter','Tab'].includes(event.key)){event.preventDefault();inputRfb.sendKey(event.key==='Enter'?0xff0d:0xff09);}
+});
 async function refreshControl() {
   if (scoped.active) return;
   const requestId = ++statusRequestId;

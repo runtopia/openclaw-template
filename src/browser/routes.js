@@ -55,12 +55,12 @@ export function browserFrameAncestors(webUrl) {
 }
 
 export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, startBrowser, handoff,
-  requireInstanceSecretApi, taskBroker, capturePreview, readTaskPreview, readTaskFrame, viewNativeTask, viewTask, resumeOwnerTask, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
+  requireInstanceSecretApi, taskBroker, capturePreview, readTaskPreview, readTaskFrame, subscribeTaskFrames, viewNativeTask, viewTask, resumeOwnerTask, frameOrigin, novncDir = "/usr/share/novnc", target = "http://127.0.0.1:6080" }) {
   const router = express.Router();
   const controlWs = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const proxy = httpProxy.createProxyServer({ target, ws: true });
   const sockets = new Set();
-  const media = createTaskMedia({ readFrame: readTaskFrame });
+  const media = createTaskMedia({ readFrame: readTaskFrame, subscribeFrames: subscribeTaskFrames, taskBroker });
   proxy.on("error", (_err, _req, socket) => socket?.destroy?.());
   proxy.on("proxyReqWs", (proxyReq) => {
     proxyReq.removeHeader("authorization");
@@ -127,7 +127,7 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) || !requireInstanceSecretApi || !capturePreview) return res.sendStatus(403);
     requireInstanceSecretApi(req, res, next);
   }, express.json({ limit: '1kb' }), async (req, res) => {
-    try { res.json(await capturePreview(req.body?.targetId, { viewer: req.body?.viewer === true })); }
+    try { res.json(await capturePreview(req.body?.targetId, { viewer: req.body?.viewer === true, minFrameAt:Number.isFinite(req.body?.minFrameAt) ? req.body.minFrameAt : 0 })); }
     catch { res.status(503).json({ errorCode: 'browser_preview_unavailable' }); }
   });
   router.post(['/internal/focus', '/internal/close'], (req, res, next) => {
@@ -169,6 +169,7 @@ export function createBrowserRoutes({ desktop, isAuthed, credentialsConfigured, 
     res.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors ${browserFrameAncestors(frameOrigin)}`);
     res.sendFile(fileURLToPath(new URL("../public/browser.html", import.meta.url)));
   });
+  router.get("/browser-task-input.js", (_req, res) => res.sendFile(fileURLToPath(new URL("../public/browser-task-input.js", import.meta.url))));
   router.get("/task-viewer.js", (_req, res) => res.sendFile(fileURLToPath(new URL("../public/browser-task.js", import.meta.url))));
   router.get("/viewer.js", (_req, res) => res.sendFile(fileURLToPath(new URL("../public/browser.js", import.meta.url))));
   router.get("/viewer.css", (_req, res) => res.sendFile(fileURLToPath(new URL("../public/browser.css", import.meta.url))));

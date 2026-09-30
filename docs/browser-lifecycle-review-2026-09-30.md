@@ -36,3 +36,11 @@ The follow-up review covers task creation, viewing, manual takeover, native inpu
 Do not clear unknown execution leases, expire leases by age, replay browser inputs, or bypass pause through `exec`/CDP. Back up incident state before reconciling an exactly identified stale viewer close. Recheck that no other execution is pending, deploy the corrected Wrapper, and verify effective global and task state after restart.
 
 The local ChatGPT Chrome extension connection is a separate incident: Chrome reported `Specified native messaging host not found` for the desktop bridge. The extension was installed and enabled. OneClaw Runtime changes cannot register that desktop application's bridge.
+
+## Actual staging instance verification
+
+The user's rebuilt staging container inherited browser-enabled image defaults but had no seccomp configuration. Native OpenClaw browser startup failed with namespace `Operation not permitted`; an Agent then sent SIGTERM to the shared Gateway through `exec`, interrupting two conversations. This explained the new paused state during acceptance testing, independently of the earlier idle callback deadlock.
+
+On the test environment only, the API sandbox profile setting was backed up and configured, the API deployment fix was built and installed, and the target Runtime was recreated from develop commit `29bec4b` with the existing data volume, environment and port. The stopped previous container remains available for rollback. The two exactly identified interrupted `exec` records were backed up and drained only after the old process stopped; explicit operator recovery returned control to AI.
+
+At 2026-09-30 11:16 (UTC+8), the actual Runtime's authenticated `/browser/start` and control status passed: `mode=ai`, `inFlight=0`, `browserReady=true`, with matching persisted control state. The same built candidate passed the isolated headed Chromium multi-conversation lifecycle checks again. User UI acceptance remains pending. No production state was reconciled or production instance updated in this acceptance stage; production has only the independent incident-state backup.

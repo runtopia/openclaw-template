@@ -9,12 +9,13 @@ function setup(t) {
   const elements = new Map(), requests = [];
   const element = id => {
     if (!elements.has(id)) elements.set(id, { style: {}, width: 720, height: 450,
-      getContext: () => ({ clearRect() {}, drawImage() {} }), addEventListener() {},
-      replaceChildren() {}, append() {}, setAttribute() {},
+      getContext: () => ({ clearRect() {}, drawImage() {} }), listeners: {}, children: [],
+      addEventListener(name, callback) { this.listeners[name] = callback; },
+      replaceChildren() { this.children = []; }, append(child) { this.children.push(child); }, setAttribute() {},
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 720, height: 450 }) });
     return elements.get(id);
   };
-  globalThis.document = { hidden: false, querySelector: element, addEventListener() {} };
+  globalThis.document = { hidden: false, querySelector: element, createElement: () => element(Symbol()), addEventListener() {} };
   globalThis.window = { addEventListener() {}, confirm: () => true };
   globalThis.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
   globalThis.Image = class { naturalWidth = 720; naturalHeight = 450; decode() { return Promise.resolve(); } };
@@ -46,7 +47,7 @@ function setup(t) {
     if (originals[key] === undefined) delete globalThis[key]; else globalThis[key] = originals[key];
   } });
   const flush = async () => { for (let i = 0; i < 8; i++) await setImmediate(); };
-  return { viewer, requests, tasks, flush, intercept: fn => { intercept = fn; } };
+  return { viewer, requests, tasks, elements, flush, intercept: fn => { intercept = fn; } };
 }
 
 test('late old-task management response cannot replace the selected task', async t => {
@@ -75,4 +76,31 @@ test('old-task input failure cannot disable newly selected task input', async t 
   assert.equal(x.viewer.canType, true);
   x.viewer.send({ type: 'text', text: 'new' }); await x.flush();
   assert.equal(x.requests.at(-1).browserTaskId, 'task-b');
+});
+
+test('late old-task page selection cannot replace a newly selected conversation', async t => {
+  const x = setup(t);
+  x.tasks.a.pages = [{ targetId: 'tab-a' }, { targetId: 'popup-a' }];
+  await x.viewer.open({ sessionId: 'a', toolCallId: 'a' }); await x.flush(); await x.viewer.takeover();
+  let complete;
+  x.intercept((_url, body) => body?.action === 'select'
+    ? new Promise(resolve => { complete = resolve; }) : undefined);
+  const selecting = x.elements.get('#task-tabs').children[1].listeners.click(); await x.flush();
+  await x.viewer.open({ sessionId: 'b', toolCallId: 'b' }); await x.flush(); await x.viewer.takeover();
+  complete({ mode: 'human', mine: true, browser: { ...x.tasks.a, targetId: 'popup-a' } }); await selecting;
+  assert.equal(x.viewer.canType, true);
+  x.viewer.send({ type: 'text', text: 'new task' }); await x.flush();
+  assert.equal(x.requests.at(-1).browserTaskId, 'task-b');
+});
+
+test('late old-task takeover failure cannot disable the new task', async t => {
+  const x = setup(t);
+  await x.viewer.open({ sessionId: 'a', toolCallId: 'a' }); await x.flush();
+  let fail;
+  x.intercept((_url, body) => body?.action === 'request' && body.sessionId === 'a'
+    ? new Promise((_, reject) => { fail = reject; }) : undefined);
+  const takeover = x.viewer.takeover(); await x.flush();
+  await x.viewer.open({ sessionId: 'b', toolCallId: 'b' }); await x.flush(); await x.viewer.takeover();
+  fail(new Error('old takeover lost')); await takeover;
+  assert.equal(x.viewer.canType, true);
 });

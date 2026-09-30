@@ -22,7 +22,7 @@ The follow-up review covers task creation, viewing, manual takeover, native inpu
 ## Verification
 
 - Plugin: 57 targeted tests passed.
-- Template: 306 tests passed and syntax lint passed, including real packaged-plugin callbacks, uncertainty retention and multiple-conversation final frame preservation.
+- Template: 308 tests passed and syntax lint passed, including real packaged-plugin callbacks, uncertainty retention, multiple-conversation final frame preservation and late page-selection/takeover rejection after switching tasks.
 - Isolated headed Chromium on the 101 test host: passed independent background input, Chinese/emoji input, wrong-token rejection, handback, popup ownership, stale-frame rejection, tab selection, lost acknowledgement reconciliation without input replay, idle reclamation and final snapshots for both conversations. The private test container has no network and uses a disposable profile.
 - Web: 27 browser tests, TypeScript and targeted ESLint passed.
 - Android: 19 browser tests, TypeScript and targeted ESLint passed. No Android device execution is claimed.
